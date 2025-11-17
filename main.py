@@ -9,15 +9,20 @@ from datetime import datetime
 import sys
 import os
 
-# 配置日誌
+# 配置日誌（使用 UTF-8 編碼）
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler(f"logs/main_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"),
-        logging.StreamHandler()
+        logging.FileHandler(f"logs/main_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log", encoding='utf-8'),
+        logging.StreamHandler(sys.stdout)
     ]
 )
+
+# 設置 StreamHandler 使用 UTF-8
+for handler in logging.root.handlers:
+    if isinstance(handler, logging.StreamHandler) and handler.stream == sys.stdout:
+        handler.stream = open(sys.stdout.fileno(), mode='w', encoding='utf-8', buffering=1)
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +44,12 @@ from calculation_layer.module11_synthetic_stock import SyntheticStockCalculator
 from calculation_layer.module12_annual_yield import AnnualYieldCalculator
 from calculation_layer.module13_position_analysis import PositionAnalysisCalculator
 from calculation_layer.module14_monitoring_posts import MonitoringPostsCalculator
+# 新增模塊 (Module 15-19)
+from calculation_layer.module15_black_scholes import BlackScholesCalculator
+from calculation_layer.module16_greeks import GreeksCalculator
+from calculation_layer.module17_implied_volatility import ImpliedVolatilityCalculator
+from calculation_layer.module18_historical_volatility import HistoricalVolatilityCalculator
+from calculation_layer.module19_put_call_parity import PutCallParityValidator
 from output_layer.report_generator import ReportGenerator
 
 
@@ -423,42 +434,201 @@ class OptionsAnalysisSystem:
             except Exception as exc:
                 logger.warning("⚠ 模塊14執行失敗: %s", exc)
             
-            # 模塊14 (可選): 12監察崗位 - 需要完整數據
-            # 如需運行module14，請取消下面代碼的註釋：
-            """
-            from calculation_layer.module14_monitoring_posts import MonitoringPostsCalculator
+            # ========== 新增模塊 (Module 15-19) ==========
+            logger.info("\n→ 運行新增模塊 (Module 15-19)...")
             
-            # 從期權鏈獲取必要數據
-            option_chain = analysis_data.get('option_chain', {})
-            if option_chain and 'calls' in option_chain:
-                calls = option_chain['calls']
-                
-                # 獲取ATM期權數據
-                current_price = analysis_data['current_price']
-                atm_calls = calls[abs(calls['strike'] - current_price) < 5]
-                
-                if not atm_calls.empty:
-                    atm_option = atm_calls.iloc[0]
+            # 準備新模塊所需的共同參數
+            risk_free_rate = analysis_data.get('risk_free_rate', 0.045) or 0.045
+            time_to_expiration_years = days_to_expiration / 365.0 if days_to_expiration else 0.1
+            volatility_estimate = analysis_data.get('implied_volatility', 0.25) or 0.25
+            
+            logger.info(f"共同參數: risk_free_rate={risk_free_rate:.4f}, "
+                       f"time_to_expiration={time_to_expiration_years:.4f}年, "
+                       f"volatility={volatility_estimate:.4f}")
+            
+            # 模塊15: Black-Scholes 期權定價
+            try:
+                if strike_price and strike_price > 0:
+                    bs_calc = BlackScholesCalculator()
                     
-                    monitor_calc = MonitoringPostsCalculator()
-                    monitor_result = monitor_calc.calculate(
-                        stock_price=analysis_data['current_price'],
-                        option_premium=atm_option.get('lastPrice', 0),
-                        iv=analysis_data['implied_volatility'],
-                        delta=0.12,  # 或從期權鏈獲取
-                        open_interest=atm_option.get('openInterest', 0),
-                        volume=analysis_data.get('volume', 0),
-                        bid_ask_spread=abs(atm_option.get('bid', 0) - atm_option.get('ask', 0)),
-                        atr=2.5,  # 需要從歷史數據計算
-                        vix=analysis_data.get('vix', 0),
-                        dividend_date=analysis_data.get('ex_dividend_date', ''),
-                        earnings_date=analysis_data.get('next_earnings_date', ''),
-                        expiration_date=analysis_data.get('expiration_date', '')
+                    # 計算 Call 期權理論價格
+                    bs_call_result = bs_calc.calculate_option_price(
+                        stock_price=current_price,
+                        strike_price=strike_price,
+                        risk_free_rate=risk_free_rate,
+                        time_to_expiration=time_to_expiration_years,
+                        volatility=volatility_estimate,
+                        option_type='call'
                     )
                     
-                    self.analysis_results['module14_monitoring_posts'] = monitor_result.to_dict()
-                    logger.info("✓ 模塊14完成: 12監察崗位")
-            """
+                    # 計算 Put 期權理論價格
+                    bs_put_result = bs_calc.calculate_option_price(
+                        stock_price=current_price,
+                        strike_price=strike_price,
+                        risk_free_rate=risk_free_rate,
+                        time_to_expiration=time_to_expiration_years,
+                        volatility=volatility_estimate,
+                        option_type='put'
+                    )
+                    
+                    self.analysis_results['module15_black_scholes'] = {
+                        'call': bs_call_result.to_dict(),
+                        'put': bs_put_result.to_dict(),
+                        'parameters': {
+                            'stock_price': current_price,
+                            'strike_price': strike_price,
+                            'risk_free_rate': risk_free_rate,
+                            'time_to_expiration': time_to_expiration_years,
+                            'volatility': volatility_estimate
+                        }
+                    }
+                    logger.info(f"✓ 模塊15完成: Black-Scholes 定價 (Call=${bs_call_result.option_price:.2f}, Put=${bs_put_result.option_price:.2f})")
+            except Exception as exc:
+                logger.warning("⚠ 模塊15執行失敗: %s", exc)
+            
+            # 模塊16: Greeks 計算
+            try:
+                if strike_price and strike_price > 0:
+                    greeks_calc = GreeksCalculator()
+                    
+                    # 計算 Call Greeks
+                    call_greeks = greeks_calc.calculate_all_greeks(
+                        stock_price=current_price,
+                        strike_price=strike_price,
+                        risk_free_rate=risk_free_rate,
+                        time_to_expiration=time_to_expiration_years,
+                        volatility=volatility_estimate,
+                        option_type='call'
+                    )
+                    
+                    # 計算 Put Greeks
+                    put_greeks = greeks_calc.calculate_all_greeks(
+                        stock_price=current_price,
+                        strike_price=strike_price,
+                        risk_free_rate=risk_free_rate,
+                        time_to_expiration=time_to_expiration_years,
+                        volatility=volatility_estimate,
+                        option_type='put'
+                    )
+                    
+                    self.analysis_results['module16_greeks'] = {
+                        'call': call_greeks.to_dict(),
+                        'put': put_greeks.to_dict()
+                    }
+                    logger.info(f"✓ 模塊16完成: Greeks 計算 (Call Delta={call_greeks.delta:.4f}, Gamma={call_greeks.gamma:.6f})")
+            except Exception as exc:
+                logger.warning("⚠ 模塊16執行失敗: %s", exc)
+            
+            # 模塊17: 隱含波動率計算
+            try:
+                if strike_price and strike_price > 0 and call_last_price > 0:
+                    iv_calc = ImpliedVolatilityCalculator()
+                    
+                    # 從 Call 價格反推 IV
+                    call_iv_result = iv_calc.calculate_implied_volatility(
+                        market_price=call_last_price,
+                        stock_price=current_price,
+                        strike_price=strike_price,
+                        risk_free_rate=risk_free_rate,
+                        time_to_expiration=time_to_expiration_years,
+                        option_type='call'
+                    )
+                    
+                    iv_results = {'call': call_iv_result.to_dict()}
+                    
+                    # 如果有 Put 價格，也計算 Put IV
+                    if put_last_price > 0:
+                        put_iv_result = iv_calc.calculate_implied_volatility(
+                            market_price=put_last_price,
+                            stock_price=current_price,
+                            strike_price=strike_price,
+                            risk_free_rate=risk_free_rate,
+                            time_to_expiration=time_to_expiration_years,
+                            option_type='put'
+                        )
+                        iv_results['put'] = put_iv_result.to_dict()
+                    
+                    self.analysis_results['module17_implied_volatility'] = iv_results
+                    
+                    if call_iv_result.converged:
+                        logger.info(f"✓ 模塊17完成: 隱含波動率計算 (Call IV={call_iv_result.implied_volatility*100:.2f}%, {call_iv_result.iterations}次迭代)")
+                    else:
+                        logger.warning(f"⚠ 模塊17: Call IV 未收斂 ({call_iv_result.iterations}次迭代)")
+            except Exception as exc:
+                logger.warning("⚠ 模塊17執行失敗: %s", exc)
+            
+            # 模塊18: 歷史波動率計算
+            try:
+                # 嘗試獲取歷史價格數據
+                historical_data = analysis_data.get('historical_data')
+                if historical_data is not None and len(historical_data) > 30:
+                    hv_calc = HistoricalVolatilityCalculator()
+                    
+                    # 計算多個窗口期的歷史波動率
+                    hv_results = hv_calc.calculate_multiple_windows(
+                        historical_data['Close'],
+                        windows=[10, 20, 30]
+                    )
+                    
+                    # 使用 30 天 HV 與 IV 比較
+                    hv_30 = hv_results.get(30)
+                    if hv_30 and volatility_estimate:
+                        iv_hv_ratio = hv_calc.calculate_iv_hv_ratio(
+                            implied_volatility=volatility_estimate,
+                            historical_volatility=hv_30.historical_volatility
+                        )
+                        
+                        self.analysis_results['module18_historical_volatility'] = {
+                            'hv_results': {k: v.to_dict() for k, v in hv_results.items()},
+                            'iv_hv_comparison': iv_hv_ratio.to_dict()
+                        }
+                        logger.info(f"✓ 模塊18完成: 歷史波動率計算 (HV30={hv_30.historical_volatility*100:.2f}%, IV/HV={iv_hv_ratio.ratio:.2f})")
+                    else:
+                        self.analysis_results['module18_historical_volatility'] = {
+                            'hv_results': {k: v.to_dict() for k, v in hv_results.items()}
+                        }
+                        logger.info("✓ 模塊18完成: 歷史波動率計算")
+                else:
+                    logger.info("⚠ 模塊18跳過: 歷史數據不足")
+            except Exception as exc:
+                logger.warning("⚠ 模塊18執行失敗: %s", exc)
+            
+            # 模塊19: Put-Call Parity 驗證
+            try:
+                if strike_price and strike_price > 0 and call_last_price > 0 and put_last_price > 0:
+                    parity_validator = PutCallParityValidator()
+                    
+                    # 驗證市場價格的 Parity
+                    parity_result = parity_validator.validate_parity(
+                        call_price=call_last_price,
+                        put_price=put_last_price,
+                        stock_price=current_price,
+                        strike_price=strike_price,
+                        risk_free_rate=risk_free_rate,
+                        time_to_expiration=time_to_expiration_years,
+                        transaction_cost=0.10  # 假設交易成本 $0.10
+                    )
+                    
+                    # 也計算理論價格的 Parity（用於驗證）
+                    theoretical_parity = parity_validator.validate_with_theoretical_prices(
+                        stock_price=current_price,
+                        strike_price=strike_price,
+                        risk_free_rate=risk_free_rate,
+                        time_to_expiration=time_to_expiration_years,
+                        volatility=volatility_estimate
+                    )
+                    
+                    self.analysis_results['module19_put_call_parity'] = {
+                        'market_prices': parity_result.to_dict(),
+                        'theoretical_prices': theoretical_parity.to_dict()
+                    }
+                    
+                    if parity_result.arbitrage_opportunity:
+                        logger.info(f"✓ 模塊19完成: Put-Call Parity 驗證 (發現套利機會! 偏離=${parity_result.deviation:.4f})")
+                    else:
+                        logger.info(f"✓ 模塊19完成: Put-Call Parity 驗證 (無套利機會, 偏離=${parity_result.deviation:.4f})")
+            except Exception as exc:
+                logger.warning("⚠ 模塊19執行失敗: %s", exc)
             
             # 第4步: 生成報告
             logger.info("\n→ 第4步: 生成分析報告...")

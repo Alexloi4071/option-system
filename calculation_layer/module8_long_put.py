@@ -1,3 +1,6 @@
+from dataclasses import dataclass
+from typing import Dict
+
 @dataclass
 class LongPutResult:
     """Long Put損益計算結果"""

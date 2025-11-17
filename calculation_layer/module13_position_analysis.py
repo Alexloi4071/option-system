@@ -1,3 +1,6 @@
+from dataclasses import dataclass
+from typing import Dict
+
 @dataclass
 class PositionAnalysisResult:
     """倉位分析結果"""

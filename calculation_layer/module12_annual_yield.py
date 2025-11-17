@@ -1,3 +1,6 @@
+from dataclasses import dataclass
+from typing import Dict
+
 @dataclass
 class AnnualYieldResult:
     """年息收益率計算結果"""

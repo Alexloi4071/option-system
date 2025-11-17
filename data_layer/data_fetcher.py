@@ -366,34 +366,46 @@ class DataFetcher:
             logger.error(f"✗ 獲取 {ticker} 基本信息失敗: {e}")
             return None
     
-    def get_historical_data(self, ticker, period='1mo', interval='1d'):
+    def get_historical_data(self, ticker, period='1mo', interval='1d', max_retries=2):
         """
-        獲取歷史OHLCV數據
+        獲取歷史OHLCV數據（帶重試機制）
         
         參數:
             ticker: 股票代碼
             period: 時間週期 ('1d', '5d', '1mo', '3mo', '1y')
             interval: K線間隔 ('1m', '5m', '15m', '30m', '60m', '1d')
+            max_retries: 最大重試次數
         
         返回: DataFrame
         """
-        try:
-            self._rate_limit_delay()  # 添加延迟
-            logger.info(f"開始獲取 {ticker} 歷史數據... (週期: {period}, 間隔: {interval})")
-            stock = yf.Ticker(ticker)
-            hist = stock.history(period=period, interval=interval)
-            
-            if hist.empty:
-                logger.warning(f"⚠ 未獲得 {ticker} 的歷史數據")
-                return None
-            
-            logger.info(f"✓ 成功獲取 {ticker} 的 {len(hist)} 條歷史記錄")
-            
-            return hist
-            
-        except Exception as e:
-            logger.error(f"✗ 獲取 {ticker} 歷史數據失敗: {e}")
-            return None
+        import time
+        
+        for attempt in range(max_retries + 1):
+            try:
+                self._rate_limit_delay()  # 添加延迟
+                if attempt > 0:
+                    wait_time = 2 ** attempt  # 指數退避
+                    logger.info(f"  等待 {wait_time} 秒後重試...")
+                    time.sleep(wait_time)
+                
+                logger.info(f"開始獲取 {ticker} 歷史數據... (週期: {period}, 間隔: {interval})")
+                stock = yf.Ticker(ticker)
+                hist = stock.history(period=period, interval=interval)
+                
+                if hist.empty:
+                    logger.warning(f"⚠ 未獲得 {ticker} 的歷史數據")
+                    return None
+                
+                logger.info(f"✓ 成功獲取 {ticker} 的 {len(hist)} 條歷史記錄")
+                
+                return hist
+                
+            except Exception as e:
+                if attempt < max_retries:
+                    logger.warning(f"⚠ 獲取歷史數據失敗 (嘗試 {attempt + 1}/{max_retries + 1}): {e}")
+                else:
+                    logger.error(f"✗ 獲取 {ticker} 歷史數據失敗 (已重試 {max_retries} 次): {e}")
+                    return None
     
     # ==================== 期權數據 ====================
     
@@ -1373,11 +1385,48 @@ class DataFetcher:
             logger.info("\n[步驟1/6] 獲取股票基本信息...")
             stock_info = self.get_stock_info(ticker)
             if not stock_info:
-                raise ValueError(f"無法獲取 {ticker} 的基本信息")
+                logger.warning(f"⚠ 無法從 API 獲取 {ticker} 基本信息，使用降級方案...")
+                # 降級方案：使用最小化的默認數據結構
+                stock_info = {
+                    'ticker': ticker,
+                    'current_price': 0,  # 將在後續步驟中嘗試獲取
+                    'open': 0,
+                    'high': 0,
+                    'low': 0,
+                    'volume': 0,
+                    'market_cap': 0,
+                    'pe_ratio': 25.0,  # 使用市場平均 PE
+                    'dividend_rate': 0,
+                    'eps': 0,
+                    'fifty_two_week_high': 0,
+                    'fifty_two_week_low': 0,
+                    'beta': 1.0,  # 使用市場 beta
+                    'company_name': ticker,
+                    'sector': 'Unknown',
+                    'industry': 'Unknown'
+                }
             
             current_price = stock_info['current_price']
+            
+            # 如果 current_price 為 0，嘗試從歷史數據獲取
             if current_price == 0:
-                raise ValueError(f"{ticker} 股價無效")
+                logger.info("  嘗試從歷史數據獲取當前價格...")
+                try:
+                    hist = self.get_historical_data(ticker, period='1d', interval='1d')
+                    if hist is not None and not hist.empty:
+                        current_price = float(hist['Close'].iloc[-1])
+                        stock_info['current_price'] = current_price
+                        stock_info['open'] = float(hist['Open'].iloc[-1])
+                        stock_info['high'] = float(hist['High'].iloc[-1])
+                        stock_info['low'] = float(hist['Low'].iloc[-1])
+                        stock_info['volume'] = int(hist['Volume'].iloc[-1])
+                        logger.info(f"  ✓ 從歷史數據獲取價格: ${current_price:.2f}")
+                except Exception as e:
+                    logger.warning(f"  從歷史數據獲取價格失敗: {e}")
+            
+            # 最後檢查：如果還是沒有價格，則無法繼續
+            if current_price == 0:
+                raise ValueError(f"{ticker} 無法獲取有效股價，請稍後重試或檢查網絡連接")
             
             # 2. 確定期權到期日
             logger.info("\n[步驟2/6] 確定期權到期日期...")

@@ -1,3 +1,6 @@
+from dataclasses import dataclass
+from typing import Dict
+
 @dataclass
 class ShortPutResult:
     strike_price: float
