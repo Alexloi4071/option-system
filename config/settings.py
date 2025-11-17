@@ -46,7 +46,7 @@ class Settings:
     BACKUP_DATA_SOURCE = "finnhub"
     
     # API 请求控制
-    REQUEST_DELAY = float(os.getenv("REQUEST_DELAY", "0.5"))  # API请求间隔（秒）
+    REQUEST_DELAY = float(os.getenv("REQUEST_DELAY", "2.0"))  # API请求间隔（秒）- 增加到2秒避免限流
     MAX_RETRIES = int(os.getenv("MAX_RETRIES", "3"))  # 最大重试次数
     RETRY_DELAY = float(os.getenv("RETRY_DELAY", "5"))  # 重试延迟（秒）
     

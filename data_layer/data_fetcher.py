@@ -278,13 +278,30 @@ class DataFetcher:
             }
         }
     
-    def _rate_limit_delay(self):
-        """请求速率限制"""
+    def _rate_limit_delay(self, retry_count: int = 0):
+        """
+        请求速率限制（帶指數退避）
+        
+        參數:
+            retry_count: 重試次數（用於指數退避）
+        """
         elapsed = time.time() - self.last_request_time
-        if elapsed < self.request_delay:
-            sleep_time = self.request_delay - elapsed
+        
+        # 基礎延遲
+        base_delay = self.request_delay
+        
+        # 如果是重試，使用指數退避
+        if retry_count > 0:
+            # 指數退避: 2^retry_count * base_delay，最多 30 秒
+            backoff_delay = min(base_delay * (2 ** retry_count), 30.0)
+            logger.info(f"重試 #{retry_count}，使用指數退避延遲: {backoff_delay:.2f}秒")
+            time.sleep(backoff_delay)
+        elif elapsed < base_delay:
+            # 正常速率限制
+            sleep_time = base_delay - elapsed
             logger.debug(f"速率限制延迟: {sleep_time:.2f}秒")
             time.sleep(sleep_time)
+        
         self.last_request_time = time.time()
     
     # ==================== 股票基本數據 ====================
@@ -366,29 +383,28 @@ class DataFetcher:
             logger.error(f"✗ 獲取 {ticker} 基本信息失敗: {e}")
             return None
     
-    def get_historical_data(self, ticker, period='1mo', interval='1d', max_retries=2):
+    def get_historical_data(self, ticker, period='1mo', interval='1d', max_retries=3):
         """
-        獲取歷史OHLCV數據（帶重試機制）
+        獲取歷史OHLCV數據（帶智能重試機制和指數退避）
         
         參數:
             ticker: 股票代碼
             period: 時間週期 ('1d', '5d', '1mo', '3mo', '1y')
             interval: K線間隔 ('1m', '5m', '15m', '30m', '60m', '1d')
-            max_retries: 最大重試次數
+            max_retries: 最大重試次數（默認3次）
         
         返回: DataFrame
         """
-        import time
-        
         for attempt in range(max_retries + 1):
             try:
-                self._rate_limit_delay()  # 添加延迟
-                if attempt > 0:
-                    wait_time = 2 ** attempt  # 指數退避
-                    logger.info(f"  等待 {wait_time} 秒後重試...")
-                    time.sleep(wait_time)
+                # 使用帶指數退避的速率限制
+                self._rate_limit_delay(retry_count=attempt)
                 
-                logger.info(f"開始獲取 {ticker} 歷史數據... (週期: {period}, 間隔: {interval})")
+                if attempt > 0:
+                    logger.info(f"  重試獲取 {ticker} 歷史數據 (嘗試 {attempt + 1}/{max_retries + 1})...")
+                else:
+                    logger.info(f"開始獲取 {ticker} 歷史數據... (週期: {period}, 間隔: {interval})")
+                
                 stock = yf.Ticker(ticker)
                 hist = stock.history(period=period, interval=interval)
                 
@@ -401,11 +417,24 @@ class DataFetcher:
                 return hist
                 
             except Exception as e:
-                if attempt < max_retries:
-                    logger.warning(f"⚠ 獲取歷史數據失敗 (嘗試 {attempt + 1}/{max_retries + 1}): {e}")
+                error_msg = str(e).lower()
+                
+                # 檢查是否是速率限制錯誤
+                if 'rate limit' in error_msg or '429' in error_msg or 'too many requests' in error_msg:
+                    if attempt < max_retries:
+                        logger.warning(f"⚠ API 速率限制，將使用指數退避重試 (嘗試 {attempt + 1}/{max_retries + 1})")
+                        continue
+                    else:
+                        logger.error(f"✗ API 速率限制，已達最大重試次數")
+                        self._record_api_failure('yfinance', f"Rate limit exceeded: {e}")
+                        return None
                 else:
-                    logger.error(f"✗ 獲取 {ticker} 歷史數據失敗 (已重試 {max_retries} 次): {e}")
-                    return None
+                    if attempt < max_retries:
+                        logger.warning(f"⚠ 獲取歷史數據失敗 (嘗試 {attempt + 1}/{max_retries + 1}): {e}")
+                    else:
+                        logger.error(f"✗ 獲取 {ticker} 歷史數據失敗 (已重試 {max_retries} 次): {e}")
+                        self._record_api_failure('yfinance', f"get_historical_data: {e}")
+                        return None
     
     # ==================== 期權數據 ====================
     
