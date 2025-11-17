@@ -1,0 +1,91 @@
+# 項目初始化文件
+
+## .env.example
+```
+# FRED API Key (從 https://fred.stlouisfed.org/docs/api/api_key.html 獲取)
+FRED_API_KEY=your_fred_api_key_here
+
+# Finnhub API Key (可選備用)
+FINNHUB_API_KEY=your_finnhub_api_key_here
+
+# IBKR / TWS 設定（若未使用可留空）
+IBKR_ENABLED=False
+IBKR_HOST=127.0.0.1
+IBKR_PORT_PAPER=7497
+IBKR_PORT_LIVE=7496
+IBKR_CLIENT_ID=100
+IBKR_ACCOUNT_ID=
+
+# 調試模式
+DEBUG=False
+
+# 日誌級別
+LOG_LEVEL=INFO
+```
+
+## requirements.txt
+```
+yfinance==0.2.32
+pandas==2.0.3
+numpy==1.24.3
+fredapi==0.5.1
+python-dotenv==1.0.0
+requests==2.31.0
+openpyxl==3.10.10
+pytz==2023.3
+pytest==7.4.0
+```
+
+## README.md
+```
+# 美股期權分析系統
+## 基於《期權制勝》系列書籍的100%實現
+
+### 快速開始
+
+1. 克隆項目
+2. 安裝依賴: `pip install -r requirements.txt`
+3. 複製配置: `cp .env.example .env`
+4. 填入FRED_API_KEY
+5. 運行: `python main.py --ticker AAPL`
+
+### 系統架構
+
+- 數據層: 完整的數據獲取和驗證
+- 計算層: 14個書籍核心計算模塊
+- 輸出層: 專業的報告生成系統
+
+### 第1階段交付
+
+✅ 完整項目結構
+✅ 配置系統
+✅ 數據層實現
+✅ 驗證系統
+```
+fred :47a6a46999d6e6c6d0b5997728e2826f 
+finnhub : d2jc6c9r01qqoajajfugd2jc6c9r01qqoajajfv0
+rapidapi : 
+APP : default-application_11235303
+X-RapidAPI-Key : 
+15e9701e65msh8832929bc42506bp12cc88jsnecb8af885c47
+Request URL: 
+rapidapi.com
+
+
+
+Yahoo Finance 2.0 API
+App ID
+QVJhMct5
+Client ID (Consumer Key)
+dj0yJmk9cGVrUG5hYTFRTTRrJmQ9WVdrOVVWWkthRTFqZERVbWNHbzlNQT09JnM9Y29uc3VtZXJzZWNyZXQmc3Y9MCZ4PTUy
+Client Secret (Consumer Secret)
+28cf158451d9cb996f8c789c9442af80d638577b
+
+Application Name
+MyFinanceApp
+Description
+MyFinanceApp
+Homepage URL
+https://yourdomain.com/callback
+Redirect URI(s)
+https://yourdomain.com/callback
