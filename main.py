@@ -451,76 +451,185 @@ class OptionsAnalysisSystem:
                        f"time_to_expiration={time_to_expiration_years:.4f}年, "
                        f"volatility={volatility_estimate:.4f}")
             
-            # 模塊15: Black-Scholes 期權定價
+            # 模塊15: Black-Scholes 期權定價（優先使用 API，失敗時降級到自主計算）
             try:
                 if strike_price and strike_price > 0:
-                    bs_calc = BlackScholesCalculator()
+                    # 嘗試從 API 獲取理論價格
+                    api_call_price = None
+                    api_put_price = None
+                    data_source = "API"
                     
-                    # 計算 Call 期權理論價格
-                    bs_call_result = bs_calc.calculate_option_price(
-                        stock_price=current_price,
-                        strike_price=strike_price,
-                        risk_free_rate=risk_free_rate,
-                        time_to_expiration=time_to_expiration_years,
-                        volatility=volatility_estimate,
-                        option_type='call'
-                    )
+                    try:
+                        # 方案1: 嘗試從 API 獲取
+                        api_result = self.fetcher.get_option_theoretical_price(
+                            ticker=ticker,
+                            strike=strike_price,
+                            expiration=analysis_data.get('expiration_date'),
+                            stock_price=current_price,
+                            risk_free_rate=risk_free_rate,
+                            time_to_expiration=time_to_expiration_years,
+                            volatility=volatility_estimate
+                        )
+                        
+                        if api_result:
+                            api_call_price = api_result.get('call_price')
+                            api_put_price = api_result.get('put_price')
+                            
+                            # 檢查 API 數據是否有效
+                            if api_call_price and api_call_price > 0 and api_put_price and api_put_price > 0:
+                                logger.info(f"  使用 API 提供的理論價格")
+                            else:
+                                api_call_price = None
+                                api_put_price = None
+                    except Exception as e:
+                        logger.debug(f"  API 獲取失敗: {e}，降級到自主計算")
                     
-                    # 計算 Put 期權理論價格
-                    bs_put_result = bs_calc.calculate_option_price(
-                        stock_price=current_price,
-                        strike_price=strike_price,
-                        risk_free_rate=risk_free_rate,
-                        time_to_expiration=time_to_expiration_years,
-                        volatility=volatility_estimate,
-                        option_type='put'
-                    )
-                    
-                    self.analysis_results['module15_black_scholes'] = {
-                        'call': bs_call_result.to_dict(),
-                        'put': bs_put_result.to_dict(),
-                        'parameters': {
-                            'stock_price': current_price,
-                            'strike_price': strike_price,
-                            'risk_free_rate': risk_free_rate,
-                            'time_to_expiration': time_to_expiration_years,
-                            'volatility': volatility_estimate
+                    # 方案2: 如果 API 失敗或數據無效，使用自主計算
+                    if not api_call_price or not api_put_price:
+                        logger.info(f"  使用自主計算 (Black-Scholes 模型)")
+                        data_source = "Self-Calculated"
+                        bs_calc = BlackScholesCalculator()
+                        
+                        # 計算 Call 期權理論價格
+                        bs_call_result = bs_calc.calculate_option_price(
+                            stock_price=current_price,
+                            strike_price=strike_price,
+                            risk_free_rate=risk_free_rate,
+                            time_to_expiration=time_to_expiration_years,
+                            volatility=volatility_estimate,
+                            option_type='call'
+                        )
+                        
+                        # 計算 Put 期權理論價格
+                        bs_put_result = bs_calc.calculate_option_price(
+                            stock_price=current_price,
+                            strike_price=strike_price,
+                            risk_free_rate=risk_free_rate,
+                            time_to_expiration=time_to_expiration_years,
+                            volatility=volatility_estimate,
+                            option_type='put'
+                        )
+                        
+                        self.analysis_results['module15_black_scholes'] = {
+                            'call': bs_call_result.to_dict(),
+                            'put': bs_put_result.to_dict(),
+                            'parameters': {
+                                'stock_price': current_price,
+                                'strike_price': strike_price,
+                                'risk_free_rate': risk_free_rate,
+                                'time_to_expiration': time_to_expiration_years,
+                                'volatility': volatility_estimate
+                            },
+                            'data_source': data_source
                         }
-                    }
-                    logger.info(f"✓ 模塊15完成: Black-Scholes 定價 (Call=${bs_call_result.option_price:.2f}, Put=${bs_put_result.option_price:.2f})")
+                        logger.info(f"✓ 模塊15完成: Black-Scholes 定價 (Call=${bs_call_result.option_price:.2f}, Put=${bs_put_result.option_price:.2f}) [{data_source}]")
+                    else:
+                        # 使用 API 數據
+                        self.analysis_results['module15_black_scholes'] = {
+                            'call': {
+                                'option_price': api_call_price,
+                                'stock_price': current_price,
+                                'strike_price': strike_price,
+                                'model': 'Black-Scholes'
+                            },
+                            'put': {
+                                'option_price': api_put_price,
+                                'stock_price': current_price,
+                                'strike_price': strike_price,
+                                'model': 'Black-Scholes'
+                            },
+                            'parameters': {
+                                'stock_price': current_price,
+                                'strike_price': strike_price,
+                                'risk_free_rate': risk_free_rate,
+                                'time_to_expiration': time_to_expiration_years,
+                                'volatility': volatility_estimate
+                            },
+                            'data_source': data_source
+                        }
+                        logger.info(f"✓ 模塊15完成: Black-Scholes 定價 (Call=${api_call_price:.2f}, Put=${api_put_price:.2f}) [{data_source}]")
             except Exception as exc:
                 logger.warning("⚠ 模塊15執行失敗: %s", exc)
             
-            # 模塊16: Greeks 計算
+            # 模塊16: Greeks 計算（優先使用 API，失敗時降級到自主計算）
             try:
                 if strike_price and strike_price > 0:
-                    greeks_calc = GreeksCalculator()
+                    # 嘗試從 API 獲取 Greeks
+                    api_call_greeks = None
+                    api_put_greeks = None
+                    data_source = "API"
                     
-                    # 計算 Call Greeks
-                    call_greeks = greeks_calc.calculate_all_greeks(
-                        stock_price=current_price,
-                        strike_price=strike_price,
-                        risk_free_rate=risk_free_rate,
-                        time_to_expiration=time_to_expiration_years,
-                        volatility=volatility_estimate,
-                        option_type='call'
-                    )
+                    try:
+                        # 方案1: 嘗試從 API 獲取 Call Greeks
+                        api_call_greeks = self.fetcher.get_option_greeks(
+                            ticker=ticker,
+                            strike=strike_price,
+                            expiration=analysis_data.get('expiration_date'),
+                            option_type='C',
+                            stock_price=current_price,
+                            iv=volatility_estimate
+                        )
+                        
+                        # 嘗試從 API 獲取 Put Greeks
+                        api_put_greeks = self.fetcher.get_option_greeks(
+                            ticker=ticker,
+                            strike=strike_price,
+                            expiration=analysis_data.get('expiration_date'),
+                            option_type='P',
+                            stock_price=current_price,
+                            iv=volatility_estimate
+                        )
+                        
+                        # 檢查 API 數據是否有效（至少要有 Delta）
+                        if api_call_greeks and api_call_greeks.get('delta') is not None and \
+                           api_put_greeks and api_put_greeks.get('delta') is not None:
+                            logger.info(f"  使用 API 提供的 Greeks")
+                        else:
+                            api_call_greeks = None
+                            api_put_greeks = None
+                    except Exception as e:
+                        logger.debug(f"  API 獲取失敗: {e}，降級到自主計算")
                     
-                    # 計算 Put Greeks
-                    put_greeks = greeks_calc.calculate_all_greeks(
-                        stock_price=current_price,
-                        strike_price=strike_price,
-                        risk_free_rate=risk_free_rate,
-                        time_to_expiration=time_to_expiration_years,
-                        volatility=volatility_estimate,
-                        option_type='put'
-                    )
-                    
-                    self.analysis_results['module16_greeks'] = {
-                        'call': call_greeks.to_dict(),
-                        'put': put_greeks.to_dict()
-                    }
-                    logger.info(f"✓ 模塊16完成: Greeks 計算 (Call Delta={call_greeks.delta:.4f}, Gamma={call_greeks.gamma:.6f})")
+                    # 方案2: 如果 API 失敗或數據無效，使用自主計算
+                    if not api_call_greeks or not api_put_greeks:
+                        logger.info(f"  使用自主計算 (Greeks 公式)")
+                        data_source = "Self-Calculated"
+                        greeks_calc = GreeksCalculator()
+                        
+                        # 計算 Call Greeks
+                        call_greeks = greeks_calc.calculate_all_greeks(
+                            stock_price=current_price,
+                            strike_price=strike_price,
+                            risk_free_rate=risk_free_rate,
+                            time_to_expiration=time_to_expiration_years,
+                            volatility=volatility_estimate,
+                            option_type='call'
+                        )
+                        
+                        # 計算 Put Greeks
+                        put_greeks = greeks_calc.calculate_all_greeks(
+                            stock_price=current_price,
+                            strike_price=strike_price,
+                            risk_free_rate=risk_free_rate,
+                            time_to_expiration=time_to_expiration_years,
+                            volatility=volatility_estimate,
+                            option_type='put'
+                        )
+                        
+                        self.analysis_results['module16_greeks'] = {
+                            'call': call_greeks.to_dict(),
+                            'put': put_greeks.to_dict(),
+                            'data_source': data_source
+                        }
+                        logger.info(f"✓ 模塊16完成: Greeks 計算 (Call Delta={call_greeks.delta:.4f}, Gamma={call_greeks.gamma:.6f}) [{data_source}]")
+                    else:
+                        # 使用 API 數據
+                        self.analysis_results['module16_greeks'] = {
+                            'call': api_call_greeks,
+                            'put': api_put_greeks,
+                            'data_source': data_source
+                        }
+                        logger.info(f"✓ 模塊16完成: Greeks 計算 (Call Delta={api_call_greeks.get('delta', 0):.4f}) [{data_source}]")
             except Exception as exc:
                 logger.warning("⚠ 模塊16執行失敗: %s", exc)
             
