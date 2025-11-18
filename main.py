@@ -64,15 +64,20 @@ class OptionsAnalysisSystem:
     4. 生成報告 (輸出層)
     """
     
-    def __init__(self):
-        """初始化系統"""
+    def __init__(self, use_ibkr: bool = None):
+        """
+        初始化系統
+        
+        參數:
+            use_ibkr: 是否使用 IBKR（None 時從 settings 讀取）
+        """
         logger.info("=" * 70)
         logger.info("期權分析系統啟動")
         logger.info(f"系統版本: {settings.VERSION}")
         logger.info(f"當前時間: {datetime.now()}")
         logger.info("=" * 70)
         
-        self.fetcher = DataFetcher()
+        self.fetcher = DataFetcher(use_ibkr=use_ibkr)
         self.validator = DataValidator()
         self.report_generator = ReportGenerator()
         self.analysis_results = {}

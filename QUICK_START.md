@@ -22,29 +22,33 @@ python test_simple.py
 
 #### 步驟 1: 配置 API Keys
 
-編輯 `.env` 文件，至少配置這兩個（免費）：
+**好消息**: `.env` 文件已經配置好了！你的 API Keys 已經設置完成：
 
 ```env
-# 必需的 API Keys（免費）
-FRED_API_KEY=your_fred_api_key_here
-FINNHUB_API_KEY=your_finnhub_api_key_here
-
-# API 速率控制（避免限流）
-REQUEST_DELAY=2.0
-MAX_RETRIES=3
+✅ FRED_API_KEY - 已配置
+✅ FINNHUB_API_KEY - 已配置
+✅ RAPIDAPI_KEY - 已配置
+✅ YAHOO_CLIENT_ID - 已配置
+✅ YAHOO_CLIENT_SECRET - 已配置
+✅ REQUEST_DELAY=2.0 - 已配置（避免限流）
 ```
 
-**如何獲取 API Keys**:
+**IBKR 配置（可選）**:
+- IBKR 需要單獨安裝和運行 TWS 或 Gateway
+- 如果不使用 IBKR，系統會自動降級到 Yahoo Finance
+- 大多數用戶不需要 IBKR 也能正常使用
 
-1. **FRED API** (免費)
-   - 訪問: https://fred.stlouisfed.org/
-   - 註冊賬號
-   - 申請 API Key（即時獲得）
+**API 降級順序**:
 
-2. **Finnhub API** (免費版 60次/分鐘)
-   - 訪問: https://finnhub.io/
-   - 註冊賬號
-   - 獲取 API Key（即時獲得）
+系統會按以下順序嘗試獲取數據：
+
+1. **IBKR API** (如果已配置) - 最準確的實時數據
+2. **Yahoo Finance 2.0** (已配置) - OAuth 官方 API  
+3. **yfinance** (免費) - Yahoo Finance 免費庫
+4. **自主計算** (內建) - Black-Scholes 模型計算
+5. **FRED/Finnhub** (已配置) - 宏觀數據和財報
+
+**你不需要做任何額外配置就可以開始使用！** 🎉
 
 #### 步驟 2: 運行分析
 

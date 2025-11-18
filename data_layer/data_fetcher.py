@@ -310,6 +310,8 @@ class DataFetcher:
         """
         獲取股票基本信息（支持多数据源降级）
         
+        降級順序: IBKR → Yahoo Finance 2.0 → yfinance
+        
         參數:
             ticker: 股票代碼
         
@@ -329,7 +331,23 @@ class DataFetcher:
         """
         logger.info(f"開始獲取 {ticker} 基本信息...")
         
-        # 方案1: 尝试使用 Yahoo Finance 2.0
+        # 方案1: 嘗試使用 IBKR（最優先）
+        if self.ibkr_client and self.ibkr_client.is_connected():
+            try:
+                self._rate_limit_delay()
+                logger.info("  使用 IBKR API...")
+                stock_data = self.ibkr_client.get_stock_info(ticker)
+                
+                if stock_data:
+                    logger.info(f"✓ 成功獲取 {ticker} 基本信息 (IBKR)")
+                    logger.info(f"  當前股價: ${stock_data['current_price']:.2f}")
+                    self._record_fallback_used('stock_info', 'IBKR')
+                    return stock_data
+            except Exception as e:
+                logger.warning(f"IBKR 獲取失敗: {e}，降級到 Yahoo Finance 2.0")
+                self._record_api_failure('IBKR', f"get_stock_info: {e}")
+        
+        # 方案2: 降級到 Yahoo Finance 2.0
         if self.yahoo_v2_client and self.yahoo_v2_client.is_authenticated():
             try:
                 self._rate_limit_delay()
@@ -342,11 +360,13 @@ class DataFetcher:
                     logger.info(f"  當前股價: ${stock_data['current_price']:.2f}")
                     logger.info(f"  市盈率: {stock_data['pe_ratio']:.2f}")
                     logger.info(f"  EPS: ${stock_data['eps']:.2f}")
+                    self._record_fallback_used('stock_info', 'Yahoo V2')
                     return stock_data
             except Exception as e:
                 logger.warning(f"Yahoo Finance 2.0 获取失败: {e}，降级到 yfinance")
+                self._record_api_failure('Yahoo V2', f"get_stock_info: {e}")
         
-        # 方案2: 降级到 yfinance
+        # 方案3: 降级到 yfinance
         try:
             self._rate_limit_delay()
             logger.info("  使用 yfinance...")
@@ -376,11 +396,13 @@ class DataFetcher:
             logger.info(f"  當前股價: ${stock_data['current_price']:.2f}")
             logger.info(f"  市盈率: {stock_data['pe_ratio']:.2f}")
             logger.info(f"  EPS: ${stock_data['eps']:.2f}")
+            self._record_fallback_used('stock_info', 'yfinance')
             
             return stock_data
             
         except Exception as e:
             logger.error(f"✗ 獲取 {ticker} 基本信息失敗: {e}")
+            self._record_api_failure('yfinance', f"get_stock_info: {e}")
             return None
     
     def get_historical_data(self, ticker, period='1mo', interval='1d', max_retries=3):
