@@ -21,6 +21,146 @@ class ReportGenerator:
         self.output_dir.mkdir(exist_ok=True)
         logger.info(f"✓ 報告輸出目錄: {self.output_dir}")
     
+    def get_structured_output(self, calculation_results: dict) -> dict:
+        """
+        獲取結構化輸出（用於 Web/Telegram）
+        
+        返回格式化好的、易於顯示的結構化數據
+        """
+        structured = {}
+        
+        for module_name, module_data in calculation_results.items():
+            if module_name == 'module1_support_resistance_multi':
+                structured[module_name] = self._structure_module1(module_data)
+            elif module_name == 'module15_black_scholes':
+                structured[module_name] = self._structure_module15(module_data)
+            elif module_name == 'module16_greeks':
+                structured[module_name] = self._structure_module16(module_data)
+            elif module_name == 'module17_implied_volatility':
+                structured[module_name] = self._structure_module17(module_data)
+            elif module_name == 'module18_historical_volatility':
+                structured[module_name] = self._structure_module18(module_data)
+            elif module_name == 'module19_put_call_parity':
+                structured[module_name] = self._structure_module19(module_data)
+            elif module_name in ['module7_long_call', 'module8_long_put', 'module9_short_call', 'module10_short_put']:
+                structured[module_name] = self._structure_strategy(module_name, module_data)
+            else:
+                structured[module_name] = module_data
+        
+        return structured
+    
+    def _structure_module1(self, data: dict) -> dict:
+        """結構化 Module 1 數據"""
+        return {
+            'type': 'support_resistance',
+            'stock_price': data.get('stock_price'),
+            'implied_volatility': data.get('implied_volatility'),
+            'days_to_expiration': data.get('days_to_expiration'),
+            'confidence_levels': [
+                {
+                    'level': level,
+                    'z_score': info.get('z_score'),
+                    'support': info.get('support'),
+                    'resistance': info.get('resistance'),
+                    'move_percentage': info.get('move_percentage')
+                }
+                for level, info in data.get('results', {}).items()
+            ]
+        }
+    
+    def _structure_module15(self, data: dict) -> dict:
+        """結構化 Module 15 數據"""
+        return {
+            'type': 'black_scholes',
+            'call': {
+                'price': data.get('call', {}).get('option_price'),
+                'd1': data.get('call', {}).get('d1'),
+                'd2': data.get('call', {}).get('d2')
+            },
+            'put': {
+                'price': data.get('put', {}).get('option_price'),
+                'd1': data.get('put', {}).get('d1'),
+                'd2': data.get('put', {}).get('d2')
+            },
+            'parameters': data.get('parameters', {})
+        }
+    
+    def _structure_module16(self, data: dict) -> dict:
+        """結構化 Module 16 數據"""
+        return {
+            'type': 'greeks',
+            'call': {
+                'delta': data.get('call', {}).get('delta'),
+                'gamma': data.get('call', {}).get('gamma'),
+                'theta': data.get('call', {}).get('theta'),
+                'vega': data.get('call', {}).get('vega'),
+                'rho': data.get('call', {}).get('rho')
+            },
+            'put': {
+                'delta': data.get('put', {}).get('delta'),
+                'gamma': data.get('put', {}).get('gamma'),
+                'theta': data.get('put', {}).get('theta'),
+                'vega': data.get('put', {}).get('vega'),
+                'rho': data.get('put', {}).get('rho')
+            }
+        }
+    
+    def _structure_module17(self, data: dict) -> dict:
+        """結構化 Module 17 數據"""
+        return {
+            'type': 'implied_volatility',
+            'call': {
+                'iv': data.get('call', {}).get('implied_volatility'),
+                'converged': data.get('call', {}).get('converged'),
+                'iterations': data.get('call', {}).get('iterations')
+            },
+            'put': {
+                'iv': data.get('put', {}).get('implied_volatility'),
+                'converged': data.get('put', {}).get('converged'),
+                'iterations': data.get('put', {}).get('iterations')
+            } if 'put' in data else None
+        }
+    
+    def _structure_module18(self, data: dict) -> dict:
+        """結構化 Module 18 數據"""
+        return {
+            'type': 'historical_volatility',
+            'hv_windows': {
+                str(window): info.get('hv') if isinstance(info, dict) else info.get('historical_volatility')
+                for window, info in data.get('hv_results', {}).items()
+            },
+            'iv_hv_comparison': data.get('iv_hv_comparison', {})
+        }
+    
+    def _structure_module19(self, data: dict) -> dict:
+        """結構化 Module 19 數據"""
+        return {
+            'type': 'put_call_parity',
+            'market': {
+                'deviation': data.get('market_prices', {}).get('deviation'),
+                'has_arbitrage': data.get('market_prices', {}).get('arbitrage_opportunity'),
+                'profit': data.get('market_prices', {}).get('theoretical_profit')
+            },
+            'theoretical': {
+                'deviation': data.get('theoretical_prices', {}).get('deviation'),
+                'has_arbitrage': data.get('theoretical_prices', {}).get('arbitrage_opportunity')
+            }
+        }
+    
+    def _structure_strategy(self, module_name: str, data: list) -> dict:
+        """結構化策略數據"""
+        return {
+            'type': 'strategy',
+            'scenarios': [
+                {
+                    'stock_price': item.get('stock_price_at_expiry'),
+                    'profit_loss': item.get('profit_loss'),
+                    'return_percentage': item.get('return_percentage')
+                }
+                for item in (data if isinstance(data, list) else [])
+            ]
+        }
+    
     def generate(self, 
                 ticker: str,
                 analysis_date: str,
@@ -198,11 +338,29 @@ class ReportGenerator:
                 # 跳過已處理的多信心度結果
                 if module_name == 'module1_support_resistance_multi':
                     continue
-                    
-                f.write(f"\n{module_name}:\n")
-                if isinstance(module_data, dict):
-                    for key, value in module_data.items():
-                        f.write(f"  {key}: {value}\n")
+                
+                # 使用專門的格式化函數
+                if module_name == 'module15_black_scholes':
+                    f.write(self._format_module15_black_scholes(module_data))
+                elif module_name == 'module16_greeks':
+                    f.write(self._format_module16_greeks(module_data))
+                elif module_name == 'module17_implied_volatility':
+                    f.write(self._format_module17_implied_volatility(module_data))
+                elif module_name == 'module18_historical_volatility':
+                    f.write(self._format_module18_historical_volatility(module_data))
+                elif module_name == 'module19_put_call_parity':
+                    f.write(self._format_module19_put_call_parity(module_data))
+                elif module_name in ['module7_long_call', 'module8_long_put', 'module9_short_call', 'module10_short_put']:
+                    f.write(self._format_strategy_results(module_name, module_data))
+                else:
+                    # 通用格式
+                    f.write(f"\n{module_name}:\n")
+                    if isinstance(module_data, dict):
+                        for key, value in module_data.items():
+                            f.write(f"  {key}: {value}\n")
+                    elif isinstance(module_data, list):
+                        for i, item in enumerate(module_data, 1):
+                            f.write(f"  場景 {i}: {item}\n")
         
         logger.info(f"✓ 文本報告已保存: {filepath}")
     
@@ -246,4 +404,210 @@ class ReportGenerator:
         report += "│\n"
         report += "└────────────────────────────────────────────┘\n"
         
+        return report
+    
+    def _format_module15_black_scholes(self, results: dict) -> str:
+        """格式化 Black-Scholes 定價結果"""
+        report = "\n┌─ Module 15: Black-Scholes 期權定價 ─────────┐\n"
+        report += "│\n"
+        
+        if 'parameters' in results:
+            params = results['parameters']
+            report += f"│ 參數設置:\n"
+            report += f"│   股價: ${params.get('stock_price', 0):.2f}\n"
+            report += f"│   行使價: ${params.get('strike_price', 0):.2f}\n"
+            report += f"│   無風險利率: {params.get('risk_free_rate', 0)*100:.2f}%\n"
+            report += f"│   到期時間: {params.get('time_to_expiration', 0):.4f}年\n"
+            report += f"│   波動率: {params.get('volatility', 0)*100:.2f}%\n"
+            report += "│\n"
+        
+        if 'call' in results:
+            call = results['call']
+            report += f"│ 📈 Call 期權:\n"
+            report += f"│   理論價格: ${call.get('option_price', 0):.2f}\n"
+            report += f"│   d1: {call.get('d1', 0):.6f}\n"
+            report += f"│   d2: {call.get('d2', 0):.6f}\n"
+            report += "│\n"
+        
+        if 'put' in results:
+            put = results['put']
+            report += f"│ 📉 Put 期權:\n"
+            report += f"│   理論價格: ${put.get('option_price', 0):.2f}\n"
+            report += f"│   d1: {put.get('d1', 0):.6f}\n"
+            report += f"│   d2: {put.get('d2', 0):.6f}\n"
+        
+        report += "│\n"
+        report += "│ 💡 說明: Black-Scholes 模型計算的理論價格\n"
+        report += "└────────────────────────────────────────────┘\n"
+        return report
+    
+    def _format_module16_greeks(self, results: dict) -> str:
+        """格式化 Greeks 結果"""
+        report = "\n┌─ Module 16: Greeks 風險指標 ─────────────────┐\n"
+        report += "│\n"
+        
+        if 'call' in results:
+            call = results['call']
+            report += f"│ 📈 Call Greeks:\n"
+            report += f"│   Delta:  {call.get('delta', 0):8.4f}  (股價變動敏感度)\n"
+            report += f"│   Gamma:  {call.get('gamma', 0):8.6f}  (Delta 變化率)\n"
+            report += f"│   Theta:  {call.get('theta', 0):8.4f}  (時間衰減/天)\n"
+            report += f"│   Vega:   {call.get('vega', 0):8.4f}  (波動率敏感度)\n"
+            report += f"│   Rho:    {call.get('rho', 0):8.4f}  (利率敏感度)\n"
+            report += "│\n"
+        
+        if 'put' in results:
+            put = results['put']
+            report += f"│ 📉 Put Greeks:\n"
+            report += f"│   Delta:  {put.get('delta', 0):8.4f}\n"
+            report += f"│   Gamma:  {put.get('gamma', 0):8.6f}\n"
+            report += f"│   Theta:  {put.get('theta', 0):8.4f}\n"
+            report += f"│   Vega:   {put.get('vega', 0):8.4f}\n"
+            report += f"│   Rho:    {put.get('rho', 0):8.4f}\n"
+        
+        report += "│\n"
+        report += "│ 💡 解讀:\n"
+        report += "│   Delta: 股價每變動$1，期權價格變動\n"
+        report += "│   Gamma: Delta 的變化速度\n"
+        report += "│   Theta: 每天時間衰減的價值\n"
+        report += "│   Vega: 波動率每變動1%，期權價格變動\n"
+        report += "│   Rho: 利率每變動1%，期權價格變動\n"
+        report += "└────────────────────────────────────────────┘\n"
+        return report
+    
+    def _format_module17_implied_volatility(self, results: dict) -> str:
+        """格式化隱含波動率結果"""
+        report = "\n┌─ Module 17: 隱含波動率計算 ──────────────────┐\n"
+        report += "│\n"
+        
+        if 'call' in results:
+            call = results['call']
+            converged = call.get('converged', False)
+            report += f"│ 📈 Call IV:\n"
+            report += f"│   隱含波動率: {call.get('implied_volatility', 0)*100:.2f}%\n"
+            report += f"│   收斂狀態: {'✅ 成功' if converged else '❌ 失敗'}\n"
+            report += f"│   迭代次數: {call.get('iterations', 0)}\n"
+            report += f"│   市場價格: ${call.get('market_price', 0):.2f}\n"
+            report += "│\n"
+        
+        if 'put' in results:
+            put = results['put']
+            converged = put.get('converged', False)
+            report += f"│ 📉 Put IV:\n"
+            report += f"│   隱含波動率: {put.get('implied_volatility', 0)*100:.2f}%\n"
+            report += f"│   收斂狀態: {'✅ 成功' if converged else '❌ 失敗'}\n"
+            report += f"│   迭代次數: {put.get('iterations', 0)}\n"
+            report += f"│   市場價格: ${put.get('market_price', 0):.2f}\n"
+        
+        report += "│\n"
+        report += "│ 💡 說明: 從市場價格反推的隱含波動率\n"
+        report += "│   用於判斷市場對未來波動的預期\n"
+        report += "└────────────────────────────────────────────┘\n"
+        return report
+    
+    def _format_module18_historical_volatility(self, results: dict) -> str:
+        """格式化歷史波動率結果"""
+        report = "\n┌─ Module 18: 歷史波動率分析 ──────────────────┐\n"
+        report += "│\n"
+        
+        if 'hv_results' in results:
+            report += "│ 📊 歷史波動率 (HV):\n"
+            for window, data in sorted(results['hv_results'].items()):
+                hv = data.get('hv', 0) if isinstance(data, dict) else data.get('historical_volatility', 0)
+                report += f"│   {window}天窗口: {hv*100:6.2f}%\n"
+            report += "│\n"
+        
+        if 'iv_hv_comparison' in results:
+            comp = results['iv_hv_comparison']
+            ratio = comp.get('ratio', 0)
+            assessment = comp.get('assessment', 'N/A')
+            recommendation = comp.get('recommendation', 'N/A')
+            
+            report += f"│ 🔍 IV/HV 比率分析:\n"
+            report += f"│   比率: {ratio:.2f}\n"
+            report += f"│   評估: {assessment}\n"
+            report += f"│   建議: {recommendation}\n"
+            report += "│\n"
+            report += "│ 💡 解讀:\n"
+            report += "│   比率 > 1.2: IV 高估，考慮賣出期權\n"
+            report += "│   比率 < 0.8: IV 低估，考慮買入期權\n"
+            report += "│   0.8-1.2: 合理範圍\n"
+        
+        report += "└────────────────────────────────────────────┘\n"
+        return report
+    
+    def _format_module19_put_call_parity(self, results: dict) -> str:
+        """格式化 Put-Call Parity 結果"""
+        report = "\n┌─ Module 19: Put-Call Parity 驗證 ────────────┐\n"
+        report += "│\n"
+        
+        if 'market_prices' in results:
+            market = results['market_prices']
+            deviation = market.get('deviation', 0)
+            has_arb = market.get('arbitrage_opportunity', False)
+            
+            report += f"│ 📊 市場價格驗證:\n"
+            report += f"│   偏離: ${abs(deviation):.4f}\n"
+            report += f"│   套利機會: {'✅ 存在' if has_arb else '❌ 不存在'}\n"
+            
+            if has_arb:
+                profit = market.get('theoretical_profit', 0)
+                strategy = market.get('strategy_recommendation', 'N/A')
+                report += f"│   理論利潤: ${profit:.2f}\n"
+                report += f"│   建議策略: {strategy}\n"
+            report += "│\n"
+        
+        if 'theoretical_prices' in results:
+            theory = results['theoretical_prices']
+            deviation = theory.get('deviation', 0)
+            has_arb = theory.get('arbitrage_opportunity', False)
+            
+            report += f"│ 🧮 理論價格驗證:\n"
+            report += f"│   偏離: ${abs(deviation):.4f}\n"
+            report += f"│   套利機會: {'✅ 存在' if has_arb else '❌ 不存在'}\n"
+        
+        report += "│\n"
+        report += "│ 💡 Put-Call Parity 公式:\n"
+        report += "│   C - P = S - K×e^(-r×T)\n"
+        report += "│   偏離過大表示存在套利機會\n"
+        report += "└────────────────────────────────────────────┘\n"
+        return report
+    
+    def _format_strategy_results(self, module_name: str, results: list) -> str:
+        """格式化策略損益結果（Module 7-10）"""
+        strategy_names = {
+            'module7_long_call': ('Long Call', '📈'),
+            'module8_long_put': ('Long Put', '📉'),
+            'module9_short_call': ('Short Call', '📊'),
+            'module10_short_put': ('Short Put', '💼')
+        }
+        
+        name, emoji = strategy_names.get(module_name, (module_name, '📋'))
+        
+        report = f"\n┌─ {emoji} {name} 策略損益分析 ────────────────────┐\n"
+        report += "│\n"
+        report += "│ 到期股價 | 行使價  | 權利金  | 損益    | 收益率\n"
+        report += "│ ─────────┼─────────┼─────────┼─────────┼────────\n"
+        
+        if isinstance(results, list):
+            for result in results:
+                stock_price = result.get('stock_price_at_expiry', 0)
+                strike = result.get('strike_price', 0)
+                premium = result.get('option_premium', 0)
+                profit = result.get('profit_loss', 0)
+                return_pct = result.get('return_percentage', 0)
+                
+                # 根據盈虧添加符號
+                profit_symbol = '+' if profit >= 0 else ''
+                return_symbol = '+' if return_pct >= 0 else ''
+                
+                report += f"│ ${stock_price:7.2f} | "
+                report += f"${strike:7.2f} | "
+                report += f"${premium:7.2f} | "
+                report += f"{profit_symbol}${profit:6.2f} | "
+                report += f"{return_symbol}{return_pct:6.1f}%\n"
+        
+        report += "│\n"
+        report += "│ 💡 說明: 不同到期股價下的損益情況\n"
+        report += "└────────────────────────────────────────────────┘\n"
         return report
