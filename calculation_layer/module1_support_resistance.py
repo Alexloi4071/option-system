@@ -83,7 +83,7 @@ class SupportResistanceCalculator:
     
     def __init__(self):
         """初始化計算器"""
-        logger.info("✓ 支持/阻力位計算器已初始化")
+        logger.info("* 支持/阻力位計算器已初始化")
     
     def calculate(self, 
                   stock_price: float, 
@@ -172,7 +172,7 @@ class SupportResistanceCalculator:
                 calculation_date=calculation_date
             )
             
-            logger.info("✓ 支持/阻力位計算完成")
+            logger.info("  支持/阻力位計算完成")
             
             return result
             
@@ -289,7 +289,7 @@ class SupportResistanceCalculator:
             # 生成計算日期
             calc_date = calculation_date or datetime.now().strftime('%Y-%m-%d')
             
-            logger.info(f"✓ 多信心度計算完成: {len(results)}個信心度")
+            logger.info(f"  多信心度計算完成: {len(results)}個信心度")
             
             return {
                 'stock_price': stock_price,
@@ -332,7 +332,7 @@ class SupportResistanceCalculator:
             logger.error("✗ Z值過大，請確認輸入: %.4f", z_score)
             return False
         
-        logger.info("✓ 輸入參數驗證通過")
+        logger.info("  輸入參數驗證通過")
         return True
 
 

@@ -1,25 +1,43 @@
 # output_layer/report_generator.py
 """
-報告生成系統 (第1階段)
+報告生成系統 (重構版 - 整合 CSV/JSON 導出器)
 """
 
-import json
-import csv
 from datetime import datetime
 from pathlib import Path
 import logging
+
+# 導入專門的導出器
+from output_layer.csv_exporter import CSVExporter
+from output_layer.json_exporter import JSONExporter
 
 logger = logging.getLogger(__name__)
 
 
 class ReportGenerator:
-    """專業報告生成器"""
+    """
+    專業報告生成器
+    
+    功能:
+    1. 整合 CSV 和 JSON 導出器
+    2. 支持所有 19 個模塊的格式化
+    3. 提供結構化數據用於 Web/Telegram
+    4. 生成純文本報告
+    """
     
     def __init__(self, output_dir='output/'):
         """初始化報告生成器"""
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(exist_ok=True)
-        logger.info(f"✓ 報告輸出目錄: {self.output_dir}")
+        
+        # 初始化 CSV 和 JSON 導出器
+        self.csv_exporter = CSVExporter(str(self.output_dir / 'csv'))
+        self.json_exporter = JSONExporter(str(self.output_dir / 'json'))
+        
+        logger.info(f"* 報告生成器初始化完成")
+        logger.info(f"  主輸出目錄: {self.output_dir}")
+        logger.info(f"  CSV 導出器: {self.csv_exporter.output_dir}")
+        logger.info(f"  JSON 導出器: {self.json_exporter.output_dir}")
     
     def get_structured_output(self, calculation_results: dict) -> dict:
         """
@@ -87,7 +105,7 @@ class ReportGenerator:
     
     def _structure_module16(self, data: dict) -> dict:
         """結構化 Module 16 數據"""
-        return {
+        result = {
             'type': 'greeks',
             'call': {
                 'delta': data.get('call', {}).get('delta'),
@@ -95,15 +113,20 @@ class ReportGenerator:
                 'theta': data.get('call', {}).get('theta'),
                 'vega': data.get('call', {}).get('vega'),
                 'rho': data.get('call', {}).get('rho')
-            },
-            'put': {
+            } if data.get('call') else None
+        }
+        
+        # 只有當 put 數據存在時才添加
+        if data.get('put'):
+            result['put'] = {
                 'delta': data.get('put', {}).get('delta'),
                 'gamma': data.get('put', {}).get('gamma'),
                 'theta': data.get('put', {}).get('theta'),
                 'vega': data.get('put', {}).get('vega'),
                 'rho': data.get('put', {}).get('rho')
             }
-        }
+        
+        return result
     
     def _structure_module17(self, data: dict) -> dict:
         """結構化 Module 17 數據"""
@@ -190,7 +213,7 @@ class ReportGenerator:
                 try:
                     api_status = data_fetcher.get_api_status_report()
                 except Exception as e:
-                    logger.warning(f"⚠ 無法獲取 API 狀態: {e}")
+                    logger.warning(f"! 無法獲取 API 狀態: {e}")
             
             # 1. 生成JSON報告
             json_report = self._generate_json_report(
@@ -209,72 +232,115 @@ class ReportGenerator:
                 ticker, analysis_date, raw_data, calculation_results, text_filename, api_status
             )
             
-            logger.info(f"✓ 報告已生成")
+            logger.info(f"* 報告已生成")
             logger.info(f"  JSON: {json_filename}")
             logger.info(f"  CSV: {csv_filename}")
             logger.info(f"  TXT: {text_filename}")
             
             return {
-                'json_file': str(self.output_dir / json_filename),
-                'csv_file': str(self.output_dir / csv_filename),
+                'json_file': str(self.json_exporter.output_dir / json_filename),
+                'csv_file': str(self.csv_exporter.output_dir / csv_filename),
                 'text_file': str(self.output_dir / text_filename),
-                'timestamp': timestamp
+                'timestamp': timestamp,
+                'structured_data': self.get_structured_output(calculation_results)  # 添加結構化數據用於 Web/Telegram
             }
             
         except Exception as e:
-            logger.error(f"✗ 報告生成失敗: {e}")
+            logger.error(f"x 報告生成失敗: {e}")
             raise
     
     def _generate_json_report(self, ticker, analysis_date, raw_data, calculation_results, api_status=None):
-        """生成JSON報告"""
-        report = {
+        """
+        生成JSON報告（使用 JSONExporter）
+        """
+        report_data = {
             'metadata': {
                 'system': 'Options Trading Analysis System',
-                'version': '1.0',
+                'version': '2.0',
                 'generated_at': datetime.now().isoformat(),
                 'ticker': ticker,
                 'analysis_date': analysis_date
             },
             'raw_data': raw_data,
-            'calculations': calculation_results
+            'calculations': calculation_results,
+            'structured_output': self.get_structured_output(calculation_results)
         }
         
         # 添加 API 狀態信息
         if api_status:
-            report['api_status'] = api_status
+            report_data['api_status'] = api_status
         
-        return report
+        return report_data
     
     def _save_json(self, data, filename):
-        """保存JSON文件"""
-        filepath = self.output_dir / filename
-        with open(filepath, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=2, ensure_ascii=False, default=str)
-        logger.info(f"✓ JSON報告已保存: {filepath}")
+        """
+        保存JSON文件（使用 JSONExporter）
+        """
+        # 使用 JSONExporter 導出
+        success = self.json_exporter.export_results(
+            [data],  # JSONExporter 期望列表格式
+            filename=filename,
+            pretty=True,
+            add_metadata=False  # 我們已經有自己的 metadata
+        )
+        
+        if success:
+            logger.info(f"* JSON報告已保存: {self.json_exporter.output_dir / filename}")
+        else:
+            logger.error(f"x JSON報告保存失敗: {filename}")
     
     def _generate_csv_report(self, calculation_results, filename, api_status=None):
-        """生成CSV報告"""
-        filepath = self.output_dir / filename
-        with open(filepath, 'w', newline='', encoding='utf-8') as f:
-            writer = csv.writer(f)
-            writer.writerow(['模塊', '指標', '數值'])
-            
-            for module_name, module_data in calculation_results.items():
-                if isinstance(module_data, dict):
-                    for key, value in module_data.items():
-                        writer.writerow([module_name, key, value])
-            
-            # 添加 API 狀態信息
-            if api_status:
-                writer.writerow(['', '', ''])
-                writer.writerow(['API狀態', '數據源', ''])
-                writer.writerow(['API狀態', 'IBKR啟用', api_status.get('ibkr_enabled', False)])
-                writer.writerow(['API狀態', 'IBKR連接', api_status.get('ibkr_connected', False)])
-                if api_status.get('fallback_used'):
-                    for data_type, sources in api_status['fallback_used'].items():
-                        writer.writerow(['API狀態', f'降級使用-{data_type}', ', '.join(sources)])
+        """
+        生成CSV報告（使用 CSVExporter）
+        """
+        # 準備 CSV 數據（扁平化結構）
+        csv_rows = []
         
-        logger.info(f"✓ CSV報告已保存: {filepath}")
+        for module_name, module_data in calculation_results.items():
+            if isinstance(module_data, dict):
+                # 處理字典類型的模塊數據
+                for key, value in module_data.items():
+                    csv_rows.append({
+                        '模塊': module_name,
+                        '指標': key,
+                        '數值': str(value)
+                    })
+            elif isinstance(module_data, list):
+                # 處理列表類型的模塊數據（如策略）
+                for i, item in enumerate(module_data, 1):
+                    if isinstance(item, dict):
+                        for key, value in item.items():
+                            csv_rows.append({
+                                '模塊': f"{module_name}_場景{i}",
+                                '指標': key,
+                                '數值': str(value)
+                            })
+        
+        # 添加 API 狀態信息
+        if api_status:
+            csv_rows.append({'模塊': '', '指標': '', '數值': ''})
+            csv_rows.append({'模塊': 'API狀態', '指標': '數據源', '數值': ''})
+            csv_rows.append({'模塊': 'API狀態', '指標': 'IBKR啟用', '數值': str(api_status.get('ibkr_enabled', False))})
+            csv_rows.append({'模塊': 'API狀態', '指標': 'IBKR連接', '數值': str(api_status.get('ibkr_connected', False))})
+            
+            if api_status.get('fallback_used'):
+                for data_type, sources in api_status['fallback_used'].items():
+                    csv_rows.append({
+                        '模塊': 'API狀態',
+                        '指標': f'降級使用-{data_type}',
+                        '數值': ', '.join(sources)
+                    })
+        
+        # 使用 CSVExporter 導出
+        success = self.csv_exporter.export_results(
+            csv_rows,
+            filename=filename
+        )
+        
+        if success:
+            logger.info(f"* CSV報告已保存: {self.csv_exporter.output_dir / filename}")
+        else:
+            logger.error(f"x CSV報告保存失敗: {filename}")
     
     def _generate_text_report(self, ticker, analysis_date, raw_data, 
                              calculation_results, filename, api_status=None):
@@ -340,7 +406,13 @@ class ReportGenerator:
                     continue
                 
                 # 使用專門的格式化函數
-                if module_name == 'module15_black_scholes':
+                if module_name == 'module3_arbitrage_spread':
+                    f.write(self._format_module3_arbitrage_spread(module_data))
+                elif module_name == 'module13_position_analysis':
+                    f.write(self._format_module13_position_analysis(module_data))
+                elif module_name == 'module14_monitoring_posts':
+                    f.write(self._format_module14_monitoring_posts(module_data))
+                elif module_name == 'module15_black_scholes':
                     f.write(self._format_module15_black_scholes(module_data))
                 elif module_name == 'module16_greeks':
                     f.write(self._format_module16_greeks(module_data))
@@ -350,6 +422,11 @@ class ReportGenerator:
                     f.write(self._format_module18_historical_volatility(module_data))
                 elif module_name == 'module19_put_call_parity':
                     f.write(self._format_module19_put_call_parity(module_data))
+                elif module_name == 'module20_fundamental_health':
+                    f.write(self._format_module20_fundamental_health(module_data))
+                elif module_name == 'strike_selection':
+                    # 顯示行使價選擇說明
+                    f.write(self._format_strike_selection(module_data))
                 elif module_name in ['module7_long_call', 'module8_long_put', 'module9_short_call', 'module10_short_put']:
                     f.write(self._format_strategy_results(module_name, module_data))
                 else:
@@ -361,8 +438,11 @@ class ReportGenerator:
                     elif isinstance(module_data, list):
                         for i, item in enumerate(module_data, 1):
                             f.write(f"  場景 {i}: {item}\n")
+            
+            # 添加數據來源摘要
+            f.write(self._format_data_source_summary(raw_data, calculation_results))
         
-        logger.info(f"✓ 文本報告已保存: {filepath}")
+        logger.info(f"* 文本報告已保存: {filepath}")
     
     def _format_module1_multi_confidence(self, ticker: str, results: dict) -> str:
         """格式化Module 1多信心度結果"""
@@ -485,7 +565,7 @@ class ReportGenerator:
             converged = call.get('converged', False)
             report += f"│ 📈 Call IV:\n"
             report += f"│   隱含波動率: {call.get('implied_volatility', 0)*100:.2f}%\n"
-            report += f"│   收斂狀態: {'✅ 成功' if converged else '❌ 失敗'}\n"
+            report += f"│   收斂狀態: {'* 成功' if converged else 'x 失敗'}\n"
             report += f"│   迭代次數: {call.get('iterations', 0)}\n"
             report += f"│   市場價格: ${call.get('market_price', 0):.2f}\n"
             report += "│\n"
@@ -495,7 +575,7 @@ class ReportGenerator:
             converged = put.get('converged', False)
             report += f"│ 📉 Put IV:\n"
             report += f"│   隱含波動率: {put.get('implied_volatility', 0)*100:.2f}%\n"
-            report += f"│   收斂狀態: {'✅ 成功' if converged else '❌ 失敗'}\n"
+            report += f"│   收斂狀態: {'* 成功' if converged else 'x 失敗'}\n"
             report += f"│   迭代次數: {put.get('iterations', 0)}\n"
             report += f"│   市場價格: ${put.get('market_price', 0):.2f}\n"
         
@@ -548,7 +628,7 @@ class ReportGenerator:
             
             report += f"│ 📊 市場價格驗證:\n"
             report += f"│   偏離: ${abs(deviation):.4f}\n"
-            report += f"│   套利機會: {'✅ 存在' if has_arb else '❌ 不存在'}\n"
+            report += f"│   套利機會: {'* 存在' if has_arb else 'x 不存在'}\n"
             
             if has_arb:
                 profit = market.get('theoretical_profit', 0)
@@ -564,7 +644,7 @@ class ReportGenerator:
             
             report += f"│ 🧮 理論價格驗證:\n"
             report += f"│   偏離: ${abs(deviation):.4f}\n"
-            report += f"│   套利機會: {'✅ 存在' if has_arb else '❌ 不存在'}\n"
+            report += f"│   套利機會: {'* 存在' if has_arb else 'x 不存在'}\n"
         
         report += "│\n"
         report += "│ 💡 Put-Call Parity 公式:\n"
@@ -573,8 +653,393 @@ class ReportGenerator:
         report += "└────────────────────────────────────────────┘\n"
         return report
     
+    def _format_module3_arbitrage_spread(self, results: dict) -> str:
+        """格式化 Module 3 套戥水位結果"""
+        report = "\n┌─ Module 3: 套戥水位 ─────────────────────────┐\n"
+        report += "│\n"
+        
+        # 檢查是否跳過或錯誤
+        if results.get('status') == 'skipped':
+            report += f"│ ! 狀態: 跳過執行\n"
+            report += f"│ 原因: {results.get('reason', 'N/A')}\n"
+            report += "│\n"
+            report += "└────────────────────────────────────────────┘\n"
+            return report
+        
+        if results.get('status') == 'error':
+            report += f"│ x 狀態: 執行錯誤\n"
+            report += f"│ 原因: {results.get('reason', 'N/A')}\n"
+            report += "│\n"
+            report += "└────────────────────────────────────────────┘\n"
+            return report
+        
+        # 正常結果
+        market_price = results.get('market_price', 0)
+        theoretical_price = results.get('theoretical_price', 0)
+        spread = results.get('arbitrage_spread', 0)
+        spread_pct = results.get('spread_percentage', 0)
+        
+        report += f"│ 💰 價格比較:\n"
+        report += f"│   市場價格: ${market_price:.2f}\n"
+        report += f"│   理論價格: ${theoretical_price:.2f}\n"
+        report += f"│   套戥價差: ${spread:.2f} ({spread_pct:+.2f}%)\n"
+        report += "│\n"
+        
+        # 數據來源標註
+        source = results.get('theoretical_price_source', 'N/A')
+        note = results.get('note', '')
+        report += f"│ 📊 數據來源:\n"
+        report += f"│   理論價來源: {source}\n"
+        if note:
+            report += f"│   說明: {note}\n"
+        report += "│\n"
+        
+        # 套利機會評估
+        if abs(spread_pct) > 5:
+            report += f"│ ! 套利機會: 價差超過 5%，可能存在套利機會\n"
+        elif abs(spread_pct) > 2:
+            report += f"│ * 套利機會: 價差在 2-5%，需進一步評估\n"
+        else:
+            report += f"│ * 套利機會: 價差小於 2%，市場定價合理\n"
+        
+        report += "│\n"
+        report += "│ 💡 解讀: 使用 Black-Scholes 期權理論價計算\n"
+        report += "│   正價差: 市場價 > 理論價（期權可能高估）\n"
+        report += "│   負價差: 市場價 < 理論價（期權可能低估）\n"
+        report += "└────────────────────────────────────────────┘\n"
+        return report
+    
+    def _format_module13_position_analysis(self, results: dict) -> str:
+        """格式化 Module 13 倉位分析結果"""
+        report = "\n┌─ Module 13: 倉位分析（含所有權結構）────────┐\n"
+        report += "│\n"
+        
+        # 基本倉位信息
+        report += f"│ 📊 倉位數據:\n"
+        if 'volume' in results:
+            report += f"│   成交量: {results.get('volume', 0):,}\n"
+        if 'open_interest' in results:
+            report += f"│   未平倉量: {results.get('open_interest', 0):,}\n"
+        if 'volume_oi_ratio' in results:
+            report += f"│   成交量/未平倉比: {results.get('volume_oi_ratio', 0):.2f}\n"
+        report += "│\n"
+        
+        # Finviz 所有權結構數據
+        has_finviz_data = False
+        if 'insider_ownership' in results or 'institutional_ownership' in results or 'short_float' in results:
+            has_finviz_data = True
+            report += f"│ 🏢 所有權結構 (Finviz):\n"
+            
+            if 'insider_ownership' in results:
+                insider = results.get('insider_ownership', 0)
+                insider_note = results.get('insider_note', '')
+                report += f"│   內部人持股: {insider:.2f}%\n"
+                if insider_note:
+                    report += f"│   {insider_note}\n"
+            
+            if 'institutional_ownership' in results:
+                inst = results.get('institutional_ownership', 0)
+                inst_note = results.get('inst_note', '')
+                report += f"│   機構持股: {inst:.2f}%\n"
+                if inst_note:
+                    report += f"│   {inst_note}\n"
+            
+            if 'short_float' in results:
+                short = results.get('short_float', 0)
+                short_note = results.get('short_note', '')
+                report += f"│   做空比例: {short:.2f}%\n"
+                if short_note:
+                    report += f"│   {short_note}\n"
+            
+            report += "│\n"
+        
+        # 成交量分析
+        if 'volume_vs_avg' in results:
+            vol_ratio = results.get('volume_vs_avg', 0)
+            vol_note = results.get('volume_note', '')
+            report += f"│ 📈 成交量分析:\n"
+            report += f"│   成交量/平均比: {vol_ratio:.2f}x\n"
+            if vol_note:
+                report += f"│   {vol_note}\n"
+            report += "│\n"
+        
+        # 倉位評估
+        if 'position_assessment' in results:
+            report += f"│ 💡 倉位評估: {results.get('position_assessment', 'N/A')}\n"
+        
+        if has_finviz_data:
+            report += "│\n"
+            report += "│ 📌 數據來源: Finviz (所有權結構數據)\n"
+        
+        report += "└────────────────────────────────────────────┘\n"
+        return report
+    
+    def _format_module14_monitoring_posts(self, results: dict) -> str:
+        """格式化 Module 14 監察崗位結果"""
+        report = "\n┌─ Module 14: 12監察崗位（含 RSI/Beta）────────┐\n"
+        report += "│\n"
+        
+        # 基本監察數據
+        report += f"│ 🔍 監察指標:\n"
+        if 'delta' in results:
+            report += f"│   Delta: {results.get('delta', 0):.4f}\n"
+        if 'iv' in results:
+            report += f"│   隱含波動率: {results.get('iv', 0):.2f}%\n"
+        if 'atr' in results:
+            report += f"│   ATR: ${results.get('atr', 0):.2f}\n"
+        if 'bid_ask_spread' in results:
+            report += f"│   買賣價差: ${results.get('bid_ask_spread', 0):.2f}\n"
+        report += "│\n"
+        
+        # Finviz RSI 和 Beta 數據
+        has_finviz_data = False
+        if 'rsi' in results or 'beta' in results:
+            has_finviz_data = True
+            report += f"│ 📊 技術指標 (Finviz):\n"
+            
+            if 'rsi' in results:
+                rsi = results.get('rsi', 0)
+                rsi_status = results.get('rsi_status', '')
+                report += f"│   RSI: {rsi:.2f}\n"
+                if rsi_status:
+                    report += f"│   {rsi_status}\n"
+            
+            if 'beta' in results:
+                beta = results.get('beta', 0)
+                beta_status = results.get('beta_status', '')
+                report += f"│   Beta: {beta:.2f}\n"
+                if beta_status:
+                    report += f"│   {beta_status}\n"
+            
+            report += "│\n"
+        
+        # 風險評估
+        if 'risk_level' in results:
+            report += f"│ ! 風險等級: {results.get('risk_level', 'N/A')}\n"
+        
+        if 'monitoring_alerts' in results:
+            alerts = results.get('monitoring_alerts', [])
+            if alerts:
+                report += f"│ 🚨 監察警報:\n"
+                for alert in alerts:
+                    report += f"│   • {alert}\n"
+        
+        if has_finviz_data:
+            report += "│\n"
+            report += "│ 📌 數據來源: Finviz (RSI/Beta 數據)\n"
+        
+        report += "│\n"
+        report += "│ 💡 解讀:\n"
+        report += "│   RSI > 70: 超買，可能回調\n"
+        report += "│   RSI < 30: 超賣，可能反彈\n"
+        report += "│   Beta > 1: 波動性高於市場\n"
+        report += "│   Beta < 1: 波動性低於市場\n"
+        report += "└────────────────────────────────────────────┘\n"
+        return report
+    
+    def _format_module20_fundamental_health(self, results: dict) -> str:
+        """格式化 Module 20 基本面健康檢查結果"""
+        report = "\n┌─ Module 20: 基本面健康檢查 ──────────────────┐\n"
+        report += "│\n"
+        
+        # 檢查是否跳過
+        if results.get('status') == 'skipped':
+            report += f"│ ! 狀態: 跳過執行\n"
+            report += f"│ 原因: {results.get('reason', 'N/A')}\n"
+            available = results.get('available_metrics', 0)
+            required = results.get('required_metrics', 3)
+            report += f"│ 可用指標: {available}/{required}\n"
+            report += "│\n"
+            report += "│ 💡 說明: 需要至少 3 個基本面指標才能執行分析\n"
+            report += "└────────────────────────────────────────────┘\n"
+            return report
+        
+        # 正常結果
+        health_score = results.get('health_score', 0)
+        grade = results.get('grade', 'N/A')
+        available_metrics = results.get('available_metrics', 0)
+        data_source = results.get('data_source', 'N/A')
+        
+        report += f"│ 🏥 健康評分:\n"
+        report += f"│   分數: {health_score}/100\n"
+        report += f"│   等級: {grade}\n"
+        report += f"│   使用指標: {available_metrics}/5\n"
+        report += "│\n"
+        
+        # 各項指標
+        report += f"│ 📊 基本面指標:\n"
+        if 'peg_ratio' in results:
+            peg = results.get('peg_ratio', 0)
+            report += f"│   PEG 比率: {peg:.2f}\n"
+        if 'roe' in results:
+            roe = results.get('roe', 0)
+            report += f"│   ROE: {roe:.2f}%\n"
+        if 'profit_margin' in results:
+            margin = results.get('profit_margin', 0)
+            report += f"│   淨利潤率: {margin:.2f}%\n"
+        if 'debt_eq' in results:
+            debt = results.get('debt_eq', 0)
+            report += f"│   負債/股本: {debt:.2f}\n"
+        if 'inst_own' in results:
+            inst = results.get('inst_own', 0)
+            report += f"│   機構持股: {inst:.2f}%\n"
+        report += "│\n"
+        
+        # 數據來源
+        report += f"│ 📌 數據來源: {data_source}\n"
+        if available_metrics < 5:
+            report += f"│ ! 注意: 僅使用 {available_metrics}/5 個指標\n"
+        report += "│\n"
+        
+        # 等級解讀
+        report += f"│ 💡 等級解讀:\n"
+        report += f"│   A (90-100): 優秀，基本面非常健康\n"
+        report += f"│   B (80-89): 良好，基本面健康\n"
+        report += f"│   C (70-79): 中等，基本面一般\n"
+        report += f"│   D (60-69): 較差，需謹慎\n"
+        report += f"│   F (<60): 差，基本面存在問題\n"
+        report += "└────────────────────────────────────────────┘\n"
+        return report
+    
+    def _format_data_source_summary(self, raw_data: dict, calculation_results: dict) -> str:
+        """格式化數據來源摘要"""
+        report = "\n" + "=" * 70 + "\n"
+        report += "數據來源摘要\n"
+        report += "=" * 70 + "\n\n"
+        
+        # Finviz 數據可用性
+        report += "📊 Finviz 數據狀態:\n"
+        report += "─" * 70 + "\n"
+        
+        finviz_fields = {
+            'insider_own': '內部人持股',
+            'inst_own': '機構持股',
+            'short_float': '做空比例',
+            'avg_volume': '平均成交量',
+            'peg_ratio': 'PEG 比率',
+            'roe': 'ROE',
+            'profit_margin': '淨利潤率',
+            'debt_eq': '負債/股本比',
+            'atr': 'ATR',
+            'rsi': 'RSI',
+            'beta': 'Beta'
+        }
+        
+        available_fields = []
+        missing_fields = []
+        
+        for field_key, field_name in finviz_fields.items():
+            if raw_data.get(field_key) is not None:
+                available_fields.append(field_name)
+            else:
+                missing_fields.append(field_name)
+        
+        report += f"* 可用字段 ({len(available_fields)}/{len(finviz_fields)}):\n"
+        if available_fields:
+            for field in available_fields:
+                report += f"  • {field}\n"
+        else:
+            report += "  無\n"
+        
+        report += f"\n! 缺失字段 ({len(missing_fields)}/{len(finviz_fields)}):\n"
+        if missing_fields:
+            for field in missing_fields:
+                report += f"  • {field}\n"
+        else:
+            report += "  無\n"
+        
+        report += "\n"
+        
+        # Module 20 執行狀態
+        report += "🏥 Module 20 (基本面健康檢查) 狀態:\n"
+        report += "─" * 70 + "\n"
+        
+        module20 = calculation_results.get('module20_fundamental_health', {})
+        if module20.get('status') == 'skipped':
+            report += f"狀態: ! 跳過執行\n"
+            report += f"原因: {module20.get('reason', 'N/A')}\n"
+            report += f"可用指標: {module20.get('available_metrics', 0)}/5\n"
+            report += f"需要指標: {module20.get('required_metrics', 3)}/5\n"
+        elif 'health_score' in module20:
+            report += f"狀態: * 執行成功\n"
+            report += f"健康分數: {module20.get('health_score', 0)}/100\n"
+            report += f"等級: {module20.get('grade', 'N/A')}\n"
+            report += f"使用指標: {module20.get('available_metrics', 0)}/5\n"
+            report += f"數據來源: {module20.get('data_source', 'N/A')}\n"
+        else:
+            report += f"狀態: x 未執行\n"
+        
+        report += "\n"
+        
+        # Module 3 價格來源
+        report += "💰 Module 3 (套戥水位) 價格來源:\n"
+        report += "─" * 70 + "\n"
+        
+        module3 = calculation_results.get('module3_arbitrage_spread', {})
+        if module3.get('status') == 'skipped':
+            report += f"狀態: ! 跳過執行\n"
+            report += f"原因: {module3.get('reason', 'N/A')}\n"
+        elif module3.get('status') == 'error':
+            report += f"狀態: x 執行錯誤\n"
+            report += f"原因: {module3.get('reason', 'N/A')}\n"
+        elif 'theoretical_price_source' in module3:
+            report += f"狀態: * 執行成功\n"
+            report += f"理論價來源: {module3.get('theoretical_price_source', 'N/A')}\n"
+            report += f"市場價格: ${module3.get('market_price', 0):.2f}\n"
+            report += f"理論價格: ${module3.get('theoretical_price', 0):.2f}\n"
+            report += f"說明: {module3.get('note', 'N/A')}\n"
+        else:
+            report += f"狀態: x 未執行\n"
+        
+        report += "\n"
+        
+        # 數據完整性總結
+        report += "📋 數據完整性總結:\n"
+        report += "─" * 70 + "\n"
+        
+        total_modules = len(calculation_results)
+        successful_modules = sum(1 for m in calculation_results.values() 
+                                if not (isinstance(m, dict) and m.get('status') in ['skipped', 'error']))
+        
+        report += f"總模塊數: {total_modules}\n"
+        report += f"成功執行: {successful_modules}\n"
+        report += f"跳過/錯誤: {total_modules - successful_modules}\n"
+        report += f"完整性: {(successful_modules/total_modules*100):.1f}%\n"
+        
+        report += "\n"
+        report += "=" * 70 + "\n"
+        
+        return report
+    
+    def _format_strike_selection(self, data: dict) -> str:
+        """格式化行使價選擇說明"""
+        report = "\n" + "=" * 70 + "\n"
+        report += "期權策略分析 - 行使價選擇\n"
+        report += "=" * 70 + "\n\n"
+        
+        strike = data.get('strike_price', 0)
+        current = data.get('current_price', 0)
+        diff = data.get('difference', 0)
+        moneyness = data.get('moneyness', '')
+        note = data.get('note', '')
+        
+        report += f"選擇的行使價: ${strike:.2f}\n"
+        report += f"當前股價: ${current:.2f}\n"
+        report += f"價差: ${diff:+.2f}\n"
+        report += f"價內程度: {moneyness}\n"
+        if note:
+            report += f"選擇邏輯: {note}\n"
+        report += "\n"
+        report += "💡 說明:\n"
+        report += "  - ATM（平價）: 行使價接近當前股價（±$2.50）\n"
+        report += "  - ITM（價內）: 行使價低於當前股價（Call 有內在價值）\n"
+        report += "  - OTM（價外）: 行使價高於當前股價（Call 無內在價值）\n"
+        report += "\n"
+        
+        return report
+    
     def _format_strategy_results(self, module_name: str, results: list) -> str:
-        """格式化策略損益結果（Module 7-10）"""
+        """格式化策略損益結果（Module 7-10）- 增強版"""
         strategy_names = {
             'module7_long_call': ('Long Call', '📈'),
             'module8_long_put': ('Long Put', '📉'),
@@ -586,16 +1051,46 @@ class ReportGenerator:
         
         report = f"\n┌─ {emoji} {name} 策略損益分析 ────────────────────┐\n"
         report += "│\n"
+        
+        # 添加策略基本信息（從第一個結果提取）
+        if isinstance(results, list) and len(results) > 0:
+            first_result = results[0]
+            strike = first_result.get('strike_price', 0)
+            premium = first_result.get('option_premium', 0)
+            breakeven = first_result.get('breakeven_price', 0)
+            
+            report += f"│ 行使價: ${strike:.2f}\n"
+            report += f"│ 權利金: ${premium:.2f}\n"
+            if breakeven > 0:
+                report += f"│ 盈虧平衡點: ${breakeven:.2f}\n"
+            report += "│\n"
+        
         report += "│ 到期股價 | 行使價  | 權利金  | 損益    | 收益率\n"
         report += "│ ─────────┼─────────┼─────────┼─────────┼────────\n"
         
-        if isinstance(results, list):
-            for result in results:
-                stock_price = result.get('stock_price_at_expiry', 0)
-                strike = result.get('strike_price', 0)
-                premium = result.get('option_premium', 0)
-                profit = result.get('profit_loss', 0)
-                return_pct = result.get('return_percentage', 0)
+        if isinstance(results, list) and len(results) > 0:
+            for i, result in enumerate(results):
+                # ✅ 改進：添加數據驗證和日誌
+                stock_price = result.get('stock_price_at_expiry')
+                strike = result.get('strike_price')
+                premium = result.get('option_premium')
+                profit = result.get('profit_loss')
+                return_pct = result.get('return_percentage')
+                
+                # 數據驗證
+                if stock_price is None or stock_price == 0:
+                    logger.warning(f"! {name} 場景 {i+1}: stock_price_at_expiry 缺失或為 0")
+                    logger.debug(f"  完整數據: {result}")
+                    stock_price = 0  # 使用 0 作為後備值
+                
+                if strike is None:
+                    strike = 0
+                if premium is None:
+                    premium = 0
+                if profit is None:
+                    profit = 0
+                if return_pct is None:
+                    return_pct = 0
                 
                 # 根據盈虧添加符號
                 profit_symbol = '+' if profit >= 0 else ''
@@ -606,8 +1101,121 @@ class ReportGenerator:
                 report += f"${premium:7.2f} | "
                 report += f"{profit_symbol}${profit:6.2f} | "
                 report += f"{return_symbol}{return_pct:6.1f}%\n"
+        else:
+            report += "│ （無數據）\n"
         
         report += "│\n"
-        report += "│ 💡 說明: 不同到期股價下的損益情況\n"
+        report += "│ 💡 說明:\n"
+        report += "│   - 場景 1: 股價下跌 10%\n"
+        report += "│   - 場景 2: 股價維持不變\n"
+        report += "│   - 場景 3: 股價上漲 10%\n"
         report += "└────────────────────────────────────────────────┘\n"
         return report
+    
+    # ========== Web/Telegram 集成方法 ==========
+    
+    def export_for_web(self, calculation_results: dict, ticker: str) -> dict:
+        """
+        導出用於 Web GUI 的數據
+        
+        返回:
+            包含結構化數據和 HTML 友好格式的字典
+        """
+        from output_layer.web_telegram_formatter import WebFormatter
+        
+        structured_data = self.get_structured_output(calculation_results)
+        html_data = WebFormatter.format_for_html(structured_data)
+        
+        return {
+            'ticker': ticker,
+            'timestamp': datetime.now().isoformat(),
+            'structured_data': structured_data,
+            'html_data': html_data
+        }
+    
+    def export_for_telegram(self, calculation_results: dict, ticker: str) -> list:
+        """
+        導出用於 Telegram 的消息列表
+        
+        返回:
+            Telegram 消息列表（已格式化）
+        """
+        from output_layer.web_telegram_formatter import TelegramFormatter
+        
+        structured_data = self.get_structured_output(calculation_results)
+        messages = TelegramFormatter.format_for_telegram(structured_data, ticker)
+        
+        return messages
+    
+    def export_module_csv(self, module_name: str, module_data: dict, ticker: str = None) -> bool:
+        """
+        導出單個模塊的 CSV 文件
+        
+        參數:
+            module_name: 模塊名稱
+            module_data: 模塊數據
+            ticker: 股票代碼（可選）
+        
+        返回:
+            bool: 是否成功
+        """
+        prefix = f"{ticker}_" if ticker else ""
+        filename = f"{prefix}{module_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        
+        # 將模塊數據轉換為 CSV 行
+        csv_rows = []
+        if isinstance(module_data, dict):
+            for key, value in module_data.items():
+                csv_rows.append({
+                    '指標': key,
+                    '數值': str(value)
+                })
+        elif isinstance(module_data, list):
+            for i, item in enumerate(module_data, 1):
+                if isinstance(item, dict):
+                    for key, value in item.items():
+                        csv_rows.append({
+                            '場景': i,
+                            '指標': key,
+                            '數值': str(value)
+                        })
+        
+        return self.csv_exporter.export_results(csv_rows, filename)
+    
+    def export_module_json(self, module_name: str, module_data: dict, ticker: str = None) -> bool:
+        """
+        導出單個模塊的 JSON 文件
+        
+        參數:
+            module_name: 模塊名稱
+            module_data: 模塊數據
+            ticker: 股票代碼（可選）
+        
+        返回:
+            bool: 是否成功
+        """
+        prefix = f"{ticker}_" if ticker else ""
+        filename = f"{prefix}{module_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        
+        export_data = {
+            'module_name': module_name,
+            'ticker': ticker,
+            'data': module_data
+        }
+        
+        return self.json_exporter.export_results([export_data], filename)
+    
+    def get_export_summary(self) -> dict:
+        """
+        獲取導出器狀態摘要
+        
+        返回:
+            包含導出器信息的字典
+        """
+        return {
+            'main_output_dir': str(self.output_dir),
+            'csv_output_dir': str(self.csv_exporter.output_dir),
+            'json_output_dir': str(self.json_exporter.output_dir),
+            'csv_last_file': str(self.csv_exporter.get_last_file()) if self.csv_exporter.get_last_file() else None,
+            'json_last_file': str(self.json_exporter.get_last_file()) if self.json_exporter.get_last_file() else None
+        }

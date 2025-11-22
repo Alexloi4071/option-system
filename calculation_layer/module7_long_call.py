@@ -39,9 +39,9 @@ class LongCallCalculator:
     書籍來源: 《期權制勝》第二課"""
     
     def __init__(self):
-        logger.info("✓ Long Call計算器已初始化")
+        logger.info("* Long Call計算器已初始化")
     
-    def calculate(self, strike_price: float, option_premium: float, 
+    def calculate(self, strike_price: float, option_premium: float,
                   stock_price_at_expiry: float, calculation_date: str = None) -> LongCallResult:
         try:
             logger.info(f"開始計算Long Call損益...")
@@ -67,7 +67,7 @@ class LongCallCalculator:
             # 回報率
             return_percentage = (profit_loss / option_premium) * 100 if option_premium > 0 else 0
             
-            logger.info(f"✓ Long Call計算完成")
+            logger.info(f"* Long Call計算完成")
             
             return LongCallResult(
                 strike_price=strike_price, option_premium=option_premium,
@@ -77,7 +77,7 @@ class LongCallCalculator:
                 calculation_date=calculation_date
             )
         except Exception as e:
-            logger.error(f"✗ Long Call計算失敗: {e}")
+            logger.error(f"x Long Call計算失敗: {e}")
             raise
     
     @staticmethod
@@ -87,5 +87,5 @@ class LongCallCalculator:
             return False
         if strike_price <= 0 or option_premium <= 0 or stock_price_at_expiry < 0:
             return False
-        logger.info("✓ 輸入參數驗證通過")
+        logger.info("* 輸入參數驗證通過")
         return True

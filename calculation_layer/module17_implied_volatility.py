@@ -121,7 +121,7 @@ class ImpliedVolatilityCalculator:
         self.min_volatility = min_volatility
         self.max_volatility = max_volatility
         
-        logger.info("✓ 隱含波動率計算器已初始化")
+        logger.info("* 隱含波動率計算器已初始化")
         logger.info(f"  最大迭代次數: {max_iterations}")
         logger.info(f"  收斂容差: {tolerance}")
         logger.info(f"  波動率範圍: {min_volatility*100:.1f}% - {max_volatility*100:.1f}%")
@@ -167,7 +167,7 @@ class ImpliedVolatilityCalculator:
                 return 0.3
                 
         except Exception as e:
-            logger.warning(f"⚠ 初始猜測計算失敗，使用默認值 30%: {e}")
+            logger.warning(f"! 初始猜測計算失敗，使用默認值 30%: {e}")
             return 0.3
     
     def calculate_implied_volatility(
@@ -271,7 +271,7 @@ class ImpliedVolatilityCalculator:
                 # 檢查收斂
                 if abs(price_diff) < self.tolerance:
                     converged = True
-                    logger.info(f"  ✓ 收斂於第 {iteration + 1} 次迭代")
+                    logger.info(f"  * 收斂於第 {iteration + 1} 次迭代")
                     logger.info(f"    隱含波動率: {volatility*100:.2f}%")
                     logger.info(f"    價格差異: ${abs(price_diff):.6f}")
                     break
@@ -287,7 +287,7 @@ class ImpliedVolatilityCalculator:
                 
                 # 檢查 Vega 是否太小（避免除以零）
                 if abs(vega) < 1e-10:
-                    logger.warning(f"⚠ Vega 太小 ({vega:.10f})，停止迭代")
+                    logger.warning(f"! Vega 太小 ({vega:.10f})，停止迭代")
                     break
                 
                 # Newton-Raphson 更新
@@ -318,10 +318,10 @@ class ImpliedVolatilityCalculator:
             
             # 第6步: 異常值檢測
             if volatility > 2.0:  # 200%
-                logger.warning(f"⚠ 隱含波動率異常高: {volatility*100:.2f}%")
+                logger.warning(f"! 隱含波動率異常高: {volatility*100:.2f}%")
             
             if not converged:
-                logger.warning(f"⚠ 未在 {self.max_iterations} 次迭代內收斂")
+                logger.warning(f"! 未在 {self.max_iterations} 次迭代內收斂")
                 logger.warning(f"  最終波動率: {volatility*100:.2f}%")
                 logger.warning(f"  最終價格差異: ${abs(final_price_diff):.6f}")
             
@@ -338,14 +338,14 @@ class ImpliedVolatilityCalculator:
             )
             
             if converged:
-                logger.info(f"✓ 隱含波動率計算完成")
+                logger.info(f"* 隱含波動率計算完成")
             else:
-                logger.warning(f"⚠ 隱含波動率計算未完全收斂")
+                logger.warning(f"! 隱含波動率計算未完全收斂")
             
             return result
             
         except Exception as e:
-            logger.error(f"✗ 隱含波動率計算失敗: {e}")
+            logger.error(f"x 隱含波動率計算失敗: {e}")
             raise
     
     @staticmethod
@@ -373,37 +373,37 @@ class ImpliedVolatilityCalculator:
         
         # 驗證數值類型
         if not all(isinstance(x, (int, float)) for x in [
-            market_price, stock_price, strike_price, 
+            market_price, stock_price, strike_price,
             risk_free_rate, time_to_expiration
         ]):
-            logger.error("✗ 所有參數必須是數字")
+            logger.error("x 所有參數必須是數字")
             return False
         
         # 驗證市場價格
         if market_price <= 0:
-            logger.error(f"✗ 市場價格必須大於0: {market_price}")
+            logger.error(f"x 市場價格必須大於0: {market_price}")
             return False
         
         # 驗證股價和行使價
         if stock_price <= 0:
-            logger.error(f"✗ 股價必須大於0: {stock_price}")
+            logger.error(f"x 股價必須大於0: {stock_price}")
             return False
         
         if strike_price <= 0:
-            logger.error(f"✗ 行使價必須大於0: {strike_price}")
+            logger.error(f"x 行使價必須大於0: {strike_price}")
             return False
         
         # 驗證到期時間
         if time_to_expiration <= 0:
-            logger.error(f"✗ 到期時間必須大於0: {time_to_expiration}")
+            logger.error(f"x 到期時間必須大於0: {time_to_expiration}")
             return False
         
         # 驗證利率範圍
         if risk_free_rate < -0.1 or risk_free_rate > 0.5:
-            logger.error(f"✗ 利率超出合理範圍: {risk_free_rate*100:.2f}%")
+            logger.error(f"x 利率超出合理範圍: {risk_free_rate*100:.2f}%")
             return False
         
-        logger.info("✓ 輸入參數驗證通過")
+        logger.info("* 輸入參數驗證通過")
         return True
 
 

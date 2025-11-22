@@ -1,0 +1,4 @@
+# file: D:\option_trading_system\calculation_layer\module15_black_scholes.py
+# hypothesis_version: 6.141.1
+
+[-0.1, 1e-10, 0.01, 0.05, 0.2, 0.25, 0.5, 1.0, 100.0, 110.0, '\n【例子1】ATM Call 期權', '\n【例子2】ATM Put 期權', '%Y-%m-%d', '-', '-inf', '=', 'Black-Scholes', '__main__', 'calculation_date', 'call', 'd1', 'd2', 'inf', 'model', 'option_price', 'option_type', 'put', 'risk_free_rate', 'stock_price', 'strike_price', 'time_to_expiration', 'volatility', '⚠ 到期時間接近0，使用極限值', '⚠ 波動率接近0，使用極限值', '✓ 輸入參數驗證通過', '✗ 所有數值參數必須是數字', '輸入參數無效', '驗證輸入參數...']

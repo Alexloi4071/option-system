@@ -34,11 +34,9 @@ class Settings:
     RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY", "")
     RAPIDAPI_HOST = os.getenv("RAPIDAPI_HOST", "yahoo-finance127.p.rapidapi.com")
     
-    # Yahoo Finance 2.0 API設置 (Official OAuth)
-    YAHOO_APP_ID = os.getenv("YAHOO_APP_ID", "")
-    YAHOO_CLIENT_ID = os.getenv("YAHOO_CLIENT_ID", "")
-    YAHOO_CLIENT_SECRET = os.getenv("YAHOO_CLIENT_SECRET", "")
-    YAHOO_REDIRECT_URI = os.getenv("YAHOO_REDIRECT_URI", "https://yourdomain.com/callback")
+    # Yahoo Finance API 設置（公開API，無需認證）
+    # 注意：Yahoo Finance API 已簡化，不需要 OAuth 認證
+    # 系統會自動添加必需的 User-Agent header
     
     # 數據源設置
     PRIMARY_DATA_SOURCE = "yahoo_v2"  # 改为使用 Yahoo Finance 2.0
@@ -91,9 +89,6 @@ class Settings:
         if not cls.RAPIDAPI_KEY:
             warnings.append("RAPIDAPI_KEY未設置，備用數據源不可用")
         
-        if not cls.YAHOO_CLIENT_ID or not cls.YAHOO_CLIENT_SECRET:
-            warnings.append("Yahoo Finance 2.0 API未完整配置，OAuth功能不可用")
-        
         # IBKR 配置檢查（僅在啟用時檢查）
         if cls.IBKR_ENABLED:
             if not cls.IBKR_HOST:
@@ -104,11 +99,11 @@ class Settings:
         # 注意：IBKR 未啟用時不顯示警告，因為這是正常的降級情況
         
         if warnings:
-            print("⚠ 配置警告:")
+            print("[WARN] 配置警告:")
             for i, warning in enumerate(warnings, 1):
                 print(f"  {i}. {warning}")
         else:
-            print("✓ 所有API Keys已正確配置")
+            print("[OK] 所有API Keys已正確配置")
         
         return True
     

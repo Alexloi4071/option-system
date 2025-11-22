@@ -223,20 +223,20 @@ class TelegramFormatter:
         if data.get('call'):
             call = data['call']
             msg += "*Call Greeks:*\n"
-            msg += f"  Delta: `{call['delta']:.4f}`\n"
-            msg += f"  Gamma: `{call['gamma']:.6f}`\n"
-            msg += f"  Theta: `{call['theta']:.4f}`\n"
-            msg += f"  Vega: `{call['vega']:.4f}`\n"
-            msg += f"  Rho: `{call['rho']:.4f}`\n\n"
+            msg += f"  Delta: `{call.get('delta', 0):.4f}`\n"
+            msg += f"  Gamma: `{call.get('gamma', 0):.6f}`\n"
+            msg += f"  Theta: `{call.get('theta', 0):.4f}`\n"
+            msg += f"  Vega: `{call.get('vega', 0):.4f}`\n"
+            msg += f"  Rho: `{call.get('rho', 0):.4f}`\n\n"
         
         if data.get('put'):
             put = data['put']
             msg += "*Put Greeks:*\n"
-            msg += f"  Delta: `{put['delta']:.4f}`\n"
-            msg += f"  Gamma: `{put['gamma']:.6f}`\n"
-            msg += f"  Theta: `{put['theta']:.4f}`\n"
-            msg += f"  Vega: `{put['vega']:.4f}`\n"
-            msg += f"  Rho: `{put['rho']:.4f}`\n\n"
+            msg += f"  Delta: `{put.get('delta', 0):.4f}`\n"
+            msg += f"  Gamma: `{put.get('gamma', 0):.6f}`\n"
+            msg += f"  Theta: `{put.get('theta', 0):.4f}`\n"
+            msg += f"  Vega: `{put.get('vega', 0):.4f}`\n"
+            msg += f"  Rho: `{put.get('rho', 0):.4f}`\n\n"
         
         return msg
     

@@ -1,0 +1,4 @@
+# file: D:\option_trading_system\calculation_layer\module1_support_resistance.py
+# hypothesis_version: 6.141.1
+
+[0.01, 0.67, 1.0, 1.15, 1.28, 1.44, 1.645, 1.96, 2.0, 2.58, 3.0, 10.0, 22.0, 35.0, 100.0, 180.5, 100, 200, 252, 500, '\n【例子1】AAPL', '    信心度: %s', '    支持位: $%.2f', '    時間因子: %.4f', '    波動幅度: $%.2f', '    阻力位: $%.2f', '  計算結果:', '%Y-%m-%d', '-', '50%', '68%', '68% (1.0 σ)', '75%', '80%', '80% (1.28 σ)', '85%', '90%', '90% (1.645 σ)', '95%', '95% (2.0 σ)', '99%', '99.7%', '=', '__main__', 'calculation_date', 'confidence_level', 'days_to_expiration', 'implied_volatility', 'move_percentage', 'price_move', 'resistance', 'resistance_level', 'results', 'stock_price', 'support', 'support_level', 'time_factor', 'z_score', '✓ 支持/阻力位計算器已初始化', '✓ 支持/阻力位計算完成', '✓ 輸入參數驗證通過', '✗ IV超過合理範圍: %.2f%%', '✗ Z值過大，請確認輸入: %.4f', '✗ 到期天數必須是正整數', '✗ 股價、IV、Z值必須大於0', '✗ 股價、IV、Z值必須是數字', '輸入參數無效', '驗證輸入參數...']

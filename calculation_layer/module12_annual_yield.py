@@ -1,5 +1,8 @@
 from dataclasses import dataclass
 from typing import Dict
+import logging
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class AnnualYieldResult:
@@ -46,7 +49,7 @@ class AnnualYieldCalculator:
     """
     
     def __init__(self):
-        logger.info("✓ 年息收益率計算器已初始化")
+        logger.info("* 年息收益率計算器已初始化")
     
     def calculate(self,
                   cost_basis: float,
@@ -90,11 +93,11 @@ class AnnualYieldCalculator:
                 calculation_date=calculation_date
             )
             
-            logger.info(f"✓ 年息收益率計算完成")
+            logger.info(f"* 年息收益率計算完成")
             return result
             
         except Exception as e:
-            logger.error(f"✗ 年息收益率計算失敗: {e}")
+            logger.error(f"x 年息收益率計算失敗: {e}")
             raise
     
     @staticmethod
@@ -105,12 +108,12 @@ class AnnualYieldCalculator:
             return False
         
         if cost_basis <= 0:
-            logger.error("✗ 持倉成本必須大於0")
+            logger.error("x 持倉成本必須大於0")
             return False
         
         if annual_dividend < 0 or annual_option_income < 0:
-            logger.error("✗ 收入不能為負")
+            logger.error("x 收入不能為負")
             return False
         
-        logger.info("✓ 輸入參數驗證通過")
+        logger.info("* 輸入參數驗證通過")
         return True

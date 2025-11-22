@@ -127,7 +127,7 @@ class GreeksCalculator:
     def __init__(self):
         """初始化 Greeks 計算器"""
         self.bs_calculator = BlackScholesCalculator()
-        logger.info("✓ Greeks 計算器已初始化")
+        logger.info("* Greeks 計算器已初始化")
     
     def calculate_delta(
         self,
@@ -558,7 +558,7 @@ class GreeksCalculator:
                 calculation_date=calculation_date
             )
             
-            logger.info(f"✓ Greeks 計算完成")
+            logger.info(f"  Greeks 計算完成")
             
             return result
             

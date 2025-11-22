@@ -1,5 +1,9 @@
 from dataclasses import dataclass
 from typing import Dict
+from datetime import datetime
+import logging
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class ShortCallResult:
@@ -18,8 +22,10 @@ class ShortCallResult:
         return {
             'strike_price': round(self.strike_price, 2),
             'option_premium': round(self.option_premium, 2),
+            'stock_price_at_expiry': round(self.stock_price_at_expiry, 2),
             'intrinsic_value': round(self.intrinsic_value, 2),
             'profit_loss': round(self.profit_loss, 2),
+            'breakeven_price': round(self.breakeven_price, 2),
             'max_profit': round(self.max_profit, 2),
             'max_loss': self.max_loss,
             'return_percentage': round(self.return_percentage, 2),
@@ -32,9 +38,9 @@ class ShortCallCalculator:
     書籍來源: 《期權制勝》第四課"""
     
     def __init__(self):
-        logger.info("✓ Short Call計算器已初始化")
+        logger.info("* Short Call計算器已初始化")
     
-    def calculate(self, strike_price: float, option_premium: float, 
+    def calculate(self, strike_price: float, option_premium: float,
                   stock_price_at_expiry: float, calculation_date: str = None) -> ShortCallResult:
         try:
             logger.info(f"開始計算Short Call損益...")
@@ -52,7 +58,7 @@ class ShortCallCalculator:
             
             return_percentage = (profit_loss / option_premium) * 100 if option_premium > 0 else 0
             
-            logger.info(f"✓ Short Call計算完成")
+            logger.info(f"* Short Call計算完成")
             
             return ShortCallResult(
                 strike_price=strike_price, option_premium=option_premium,
@@ -62,7 +68,7 @@ class ShortCallCalculator:
                 calculation_date=calculation_date
             )
         except Exception as e:
-            logger.error(f"✗ Short Call計算失敗: {e}")
+            logger.error(f"x Short Call計算失敗: {e}")
             raise
     
     @staticmethod
@@ -72,5 +78,5 @@ class ShortCallCalculator:
             return False
         if strike_price <= 0 or option_premium <= 0 or stock_price_at_expiry < 0:
             return False
-        logger.info("✓ 輸入參數驗證通過")
+        logger.info("* 輸入參數驗證通過")
         return True

@@ -1,0 +1,4 @@
+# file: D:\option_trading_system\config\api_config.py
+# hypothesis_version: 6.141.1
+
+[120, 500, 'FRED', 'Finnhub', 'OAuth2', 'RapidAPI', 'TWS/Gateway', 'auth_type', 'basic_financials', 'bid_ask_spread', 'company_news', 'company_profile', 'dividend_calendar', 'dividend_date', 'dividends', 'earnings_calendar', 'earnings_date', 'economic_data', 'eps', 'fallback_on_error', 'finnhub', 'free', 'freemium', 'fundamentals', 'historical_data', 'ibkr', 'implied_volatility', 'name', 'news', 'official', 'open_interest', 'option_chain', 'option_greeks', 'premium', 'provides', 'rapidapi', 'rate_limit', 'real_time_quote', 'requires_auth', 'requires_tws', 'risk_free_rate', 'stock_price', 'type', 'vix', 'volume', 'yahoo_v2', 'yfinance']

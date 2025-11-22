@@ -143,7 +143,7 @@ class HistoricalVolatilityCalculator:
             trading_days_per_year: 每年交易日數（默認 252，美股標準）
         """
         self.trading_days_per_year = trading_days_per_year
-        logger.info("✓ 歷史波動率計算器已初始化")
+        logger.info("* 歷史波動率計算器已初始化")
         logger.info(f"  年交易日數: {trading_days_per_year}")
     
     def calculate_hv(
@@ -243,12 +243,12 @@ class HistoricalVolatilityCalculator:
                 calculation_date=calculation_date
             )
             
-            logger.info(f"✓ 歷史波動率計算完成")
+            logger.info(f"* 歷史波動率計算完成")
             
             return result
             
         except Exception as e:
-            logger.error(f"✗ 歷史波動率計算失敗: {e}")
+            logger.error(f"x 歷史波動率計算失敗: {e}")
             raise
     
     def calculate_iv_hv_ratio(
@@ -304,15 +304,15 @@ class HistoricalVolatilityCalculator:
             if iv_hv_ratio >= self.IV_HV_OVERVALUED_THRESHOLD:
                 assessment = "IV 高估"
                 recommendation = "賣出期權策略（如 Covered Call, Credit Spread）"
-                logger.info(f"  ⚠ {assessment}: 市場預期波動大於歷史")
+                logger.info(f"  ! {assessment}: 市場預期波動大於歷史")
             elif iv_hv_ratio <= self.IV_HV_UNDERVALUED_THRESHOLD:
                 assessment = "IV 低估"
                 recommendation = "買入期權策略（如 Long Straddle, Debit Spread）"
-                logger.info(f"  ⚠ {assessment}: 市場預期波動小於歷史")
+                logger.info(f"  ! {assessment}: 市場預期波動小於歷史")
             else:
                 assessment = "合理範圍"
                 recommendation = "觀望，IV 與 HV 相符"
-                logger.info(f"  ✓ {assessment}: IV 與 HV 基本一致")
+                logger.info(f"  * {assessment}: IV 與 HV 基本一致")
             
             # 第5步: 建立結果對象
             result = IVHVRatioResult(
@@ -324,12 +324,12 @@ class HistoricalVolatilityCalculator:
                 calculation_date=calculation_date
             )
             
-            logger.info(f"✓ IV/HV 比率分析完成")
+            logger.info(f"* IV/HV 比率分析完成")
             
             return result
             
         except Exception as e:
-            logger.error(f"✗ IV/HV 比率計算失敗: {e}")
+            logger.error(f"x IV/HV 比率計算失敗: {e}")
             raise
     
     def calculate_multiple_windows(
@@ -367,14 +367,14 @@ class HistoricalVolatilityCalculator:
                     results[window] = result
                     logger.info(f"  {window}天 HV: {result.historical_volatility*100:.2f}%")
                 else:
-                    logger.warning(f"  ⚠ 數據不足，跳過 {window} 天窗口")
+                    logger.warning(f"  ! 數據不足，跳過 {window} 天窗口")
             
-            logger.info(f"✓ 多窗口期計算完成: {len(results)} 個窗口")
+            logger.info(f"* 多窗口期計算完成: {len(results)} 個窗口")
             
             return results
             
         except Exception as e:
-            logger.error(f"✗ 多窗口期計算失敗: {e}")
+            logger.error(f"x 多窗口期計算失敗: {e}")
             raise
     
     @staticmethod
@@ -393,28 +393,28 @@ class HistoricalVolatilityCalculator:
         
         # 驗證價格序列類型
         if not isinstance(price_series, pd.Series):
-            logger.error("✗ price_series 必須是 pandas Series")
+            logger.error("x price_series 必須是 pandas Series")
             return False
         
         # 驗證數據點數量
         if len(price_series) < 2:
-            logger.error(f"✗ 數據點不足: {len(price_series)}，需要至少 2 個")
+            logger.error(f"x 數據點不足: {len(price_series)}，需要至少 2 個")
             return False
         
         # 驗證窗口期
         if not isinstance(window, int) or window < 2:
-            logger.error(f"✗ 窗口期必須是 ≥ 2 的整數: {window}")
+            logger.error(f"x 窗口期必須是 ≥ 2 的整數: {window}")
             return False
         
         if window > len(price_series):
-            logger.warning(f"⚠ 窗口期 ({window}) 大於數據點數 ({len(price_series)})，將使用所有數據")
+            logger.warning(f"  ! 窗口期 ({window}) 大於數據點數 ({len(price_series)})，將使用所有數據")
         
         # 驗證價格為正
         if (price_series <= 0).any():
-            logger.error("✗ 價格序列包含非正值")
+            logger.error("x 價格序列包含非正值")
             return False
         
-        logger.info("✓ 輸入參數驗證通過")
+        logger.info("* 輸入參數驗證通過")
         return True
 
 

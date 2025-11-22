@@ -66,7 +66,7 @@ class PEValuationCalculator:
     
     def __init__(self):
         """初始化計算器"""
-        logger.info("✓ PE估值計算器已初始化")
+        logger.info("* PE估值計算器已初始化")
     
     def calculate(self,
                   eps: float,
@@ -134,11 +134,11 @@ class PEValuationCalculator:
                 calculation_date=calculation_date
             )
             
-            logger.info(f"✓ PE估值計算完成")
+            logger.info(f"* PE估值計算完成")
             return result
             
         except Exception as e:
-            logger.error(f"✗ PE估值計算失敗: {e}")
+            logger.error(f"x PE估值計算失敗: {e}")
             raise
     
     @staticmethod
@@ -147,30 +147,30 @@ class PEValuationCalculator:
         logger.info("驗證輸入參數...")
         
         if not isinstance(eps, (int, float)):
-            logger.error(f"✗ EPS必須是數字")
+            logger.error(f"x EPS必須是數字")
             return False
         
         if eps <= 0:
-            logger.error(f"✗ EPS必須大於0")
+            logger.error(f"x EPS必須大於0")
             return False
         
         if not isinstance(pe_multiple, (int, float)):
-            logger.error(f"✗ PE倍數必須是數字")
+            logger.error(f"x PE倍數必須是數字")
             return False
         
         if pe_multiple <= 0:
-            logger.error(f"✗ PE倍數必須大於0")
+            logger.error(f"x PE倍數必須大於0")
             return False
         
         if not isinstance(current_price, (int, float)):
-            logger.error(f"✗ 當前股價必須是數字")
+            logger.error(f"x 當前股價必須是數字")
             return False
         
         if current_price <= 0:
-            logger.error(f"✗ 當前股價必須大於0")
+            logger.error(f"x 當前股價必須大於0")
             return False
         
-        logger.info("✓ 輸入參數驗證通過")
+        logger.info("* 輸入參數驗證通過")
         return True
 
 

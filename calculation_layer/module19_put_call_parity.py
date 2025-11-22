@@ -130,7 +130,7 @@ class PutCallParityValidator:
         self.bs_calculator = BlackScholesCalculator()
         self.transaction_cost = transaction_cost
         
-        logger.info("✓ Put-Call Parity 驗證器已初始化")
+        logger.info("* Put-Call Parity 驗證器已初始化")
         logger.info(f"  交易成本閾值: {transaction_cost*100:.2f}%")
     
     def validate_parity(
@@ -250,7 +250,7 @@ class PutCallParityValidator:
                         "套利策略: 沽出 Call, 買入 Put, 買入股票, "
                         f"借入 ${strike_price * discount_factor:.2f}"
                     )
-                    logger.info(f"  ✓ 發現套利機會: Call 相對高估")
+                    logger.info(f"  * 發現套利機會: Call 相對高估")
                 else:
                     # C - P < S - K×e^(-r×T)
                     # Put 相對高估
@@ -258,12 +258,12 @@ class PutCallParityValidator:
                         "套利策略: 買入 Call, 沽出 Put, 沽出股票, "
                         f"存入 ${strike_price * discount_factor:.2f}"
                     )
-                    logger.info(f"  ✓ 發現套利機會: Put 相對高估")
+                    logger.info(f"  * 發現套利機會: Put 相對高估")
                 
                 logger.info(f"  理論利潤: ${theoretical_profit:.4f}")
             else:
                 strategy = "無套利機會 - Put-Call Parity 成立"
-                logger.info(f"  ✓ Put-Call Parity 成立，無套利機會")
+                logger.info(f"  * Put-Call Parity 成立，無套利機會")
             
             # 第9步: 建立結果對象
             result = ParityResult(
@@ -283,12 +283,12 @@ class PutCallParityValidator:
                 calculation_date=calculation_date
             )
             
-            logger.info(f"✓ Put-Call Parity 驗證完成")
+            logger.info(f"* Put-Call Parity 驗證完成")
             
             return result
             
         except Exception as e:
-            logger.error(f"✗ Put-Call Parity 驗證失敗: {e}")
+            logger.error(f"x Put-Call Parity 驗證失敗: {e}")
             raise
     
     def validate_with_theoretical_prices(
@@ -366,7 +366,7 @@ class PutCallParityValidator:
             )
             
         except Exception as e:
-            logger.error(f"✗ 理論價格驗證失敗: {e}")
+            logger.error(f"x 理論價格驗證失敗: {e}")
             raise
     
     @staticmethod
@@ -399,29 +399,29 @@ class PutCallParityValidator:
             call_price, put_price, stock_price, strike_price,
             risk_free_rate, time_to_expiration
         ]):
-            logger.error("✗ 所有參數必須是數字")
+            logger.error("x 所有參數必須是數字")
             return False
         
         # 驗證價格為正
         if call_price < 0 or put_price < 0:
-            logger.error(f"✗ 期權價格不能為負: Call=${call_price}, Put=${put_price}")
+            logger.error(f"x 期權價格不能為負: Call=${call_price}, Put=${put_price}")
             return False
         
         if stock_price <= 0 or strike_price <= 0:
-            logger.error(f"✗ 股價和行使價必須大於0")
+            logger.error(f"x 股價和行使價必須大於0")
             return False
         
         # 驗證到期時間
         if time_to_expiration <= 0:
-            logger.error(f"✗ 到期時間必須大於0: {time_to_expiration}")
+            logger.error(f"x 到期時間必須大於0: {time_to_expiration}")
             return False
         
         # 驗證利率範圍
         if risk_free_rate < -0.1 or risk_free_rate > 0.5:
-            logger.error(f"✗ 利率超出合理範圍: {risk_free_rate*100:.2f}%")
+            logger.error(f"x 利率超出合理範圍: {risk_free_rate*100:.2f}%")
             return False
         
-        logger.info("✓ 輸入參數驗證通過")
+        logger.info("* 輸入參數驗證通過")
         return True
 
 

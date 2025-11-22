@@ -487,9 +487,9 @@ if __name__ == "__main__":
     print(f"  差異: ${abs(parity_left - parity_right):.6f}")
     
     if abs(parity_left - parity_right) < 0.01:
-        print(f"  ✓ Put-Call Parity 驗證通過")
+        print(f"  * Put-Call Parity 驗證通過")
     else:
-        print(f"  ✗ Put-Call Parity 驗證失敗")
+        print(f"  x Put-Call Parity 驗證失敗")
     
     # 例子4: ITM Call 期權
     print("\n【例子4】ITM Call 期權 (股價 > 行使價)")

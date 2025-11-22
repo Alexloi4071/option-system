@@ -108,7 +108,7 @@ class MonitoringPostsCalculator:
     """
     
     def __init__(self):
-        logger.info("✓ 12監察崗位計算器已初始化")
+        logger.info("* 12監察崗位計算器已初始化")
     
     def calculate(self,
                   stock_price: float,
@@ -140,7 +140,7 @@ class MonitoringPostsCalculator:
             
             # ========== 崗位1: 正股價格監察 ==========
             price_change_threshold = 0.05  # 5%變化閾值
-            post1_status = "✅ 正常"
+            post1_status = "OK 正常"
             post_details['post1'] = {
                 'name': '正股價格監察',
                 'value': stock_price,
@@ -150,7 +150,7 @@ class MonitoringPostsCalculator:
             
             # ========== 崗位2: 期權金監察 ==========
             premium_change_threshold = 0.20  # 20%變化閾值
-            post2_status = "✅ 正常"
+            post2_status = "OK 正常"
             post_details['post2'] = {
                 'name': '期權金監察',
                 'value': option_premium,
@@ -159,18 +159,21 @@ class MonitoringPostsCalculator:
             }
             
             # ========== 崗位3: 隱含波動率監察 ==========
-            iv_threshold = 40.0
+            # 動態閾值：VIX + 10%（更適合美國市場）
+            # 原因：不同股票的正常IV差異大（科技股30-50%，大盤股20-35%）
+            iv_threshold = vix + 10.0 if vix > 0 else 40.0  # 降級到固定40%
             if iv > iv_threshold:
                 alerts += 1
-                post3_status = "⚠️ 警報"
-                logger.warning(f"⚠ 崗位3警報: IV過高 ({iv:.2f}%)")
+                post3_status = "! 警報"
+                logger.warning(f"! 崗位3警報: IV過高 ({iv:.2f}% > {iv_threshold:.2f}%)")
             else:
-                post3_status = "✅ 正常"
+                post3_status = "OK 正常"
             post_details['post3'] = {
                 'name': '隱含波動率監察',
                 'value': iv,
                 'threshold': iv_threshold,
-                'status': post3_status
+                'status': post3_status,
+                'note': f'動態閾值 (VIX {vix:.1f}% + 10%)'
             }
             
             # ========== 崗位4: Delta監察 (適用於沽出期權策略) ==========
@@ -178,10 +181,10 @@ class MonitoringPostsCalculator:
             delta_target_max = 0.15
             if delta > delta_target_max or delta < delta_target_min:
                 alerts += 1
-                post4_status = "⚠️ 警報"
-                logger.warning(f"⚠ 崗位4警報: Delta不在目標範圍 ({delta:.4f})")
+                post4_status = "! 警報"
+                logger.warning(f"! 崗位4警報: Delta不在目標範圍 ({delta:.4f})")
             else:
-                post4_status = "✅ 正常"
+                post4_status = "OK 正常"
             post_details['post4'] = {
                 'name': 'Delta監察',
                 'value': delta,
@@ -190,28 +193,31 @@ class MonitoringPostsCalculator:
             }
             
             # ========== 崗位5: 未平倉合約監察 ==========
-            oi_threshold = 5000
+            # 調整為1000（更適合美國市場）
+            # 原因：美國期權市場流動性高，OI > 1000 已足夠
+            oi_threshold = 1000
             if open_interest < oi_threshold:
                 alerts += 1
-                post5_status = "⚠️ 警報"
-                logger.warning(f"⚠ 崗位5警報: 未平倉合約過低 ({open_interest})")
+                post5_status = "! 警報"
+                logger.warning(f"! 崗位5警報: 未平倉合約過低 ({open_interest} < {oi_threshold})")
             else:
-                post5_status = "✅ 正常"
+                post5_status = "OK 正常"
             post_details['post5'] = {
                 'name': '未平倉合約監察',
                 'value': open_interest,
                 'threshold': oi_threshold,
-                'status': post5_status
+                'status': post5_status,
+                'note': '美國市場標準 (OI ≥ 1000)'
             }
             
             # ========== 崗位6: 成交量監察 ==========
             volume_threshold = 1000
             if volume < volume_threshold:
                 alerts += 1
-                post6_status = "⚠️ 警報"
-                logger.warning(f"⚠ 崗位6警報: 成交量過低 ({volume})")
+                post6_status = "! 警報"
+                logger.warning(f"! 崗位6警報: 成交量過低 ({volume})")
             else:
-                post6_status = "✅ 正常"
+                post6_status = "OK 正常"
             post_details['post6'] = {
                 'name': '成交量監察',
                 'value': volume,
@@ -223,10 +229,10 @@ class MonitoringPostsCalculator:
             spread_threshold = 0.50
             if bid_ask_spread > spread_threshold:
                 alerts += 1
-                post7_status = "⚠️ 警報"
-                logger.warning(f"⚠ 崗位7警報: 買賣差價過大 (${bid_ask_spread:.2f})")
+                post7_status = "! 警報"
+                logger.warning(f"! 崗位7警報: 買賣差價過大 (${bid_ask_spread:.2f})")
             else:
-                post7_status = "✅ 正常"
+                post7_status = "OK 正常"
             post_details['post7'] = {
                 'name': '買賣盤差價監察',
                 'value': bid_ask_spread,
@@ -238,10 +244,10 @@ class MonitoringPostsCalculator:
             atr_threshold = stock_price * 0.05  # 5%股價
             if atr > atr_threshold:
                 alerts += 1
-                post8_status = "⚠️ 警報"
-                logger.warning(f"⚠ 崗位8警報: ATR波幅過大 ({atr:.2f})")
+                post8_status = "! 警報"
+                logger.warning(f"! 崗位8警報: ATR波幅過大 ({atr:.2f})")
             else:
-                post8_status = "✅ 正常"
+                post8_status = "OK 正常"
             post_details['post8'] = {
                 'name': 'ATR波幅監察',
                 'value': atr,
@@ -250,7 +256,7 @@ class MonitoringPostsCalculator:
             }
             
             # ========== 崗位9: 派息日期監察 ==========
-            post9_status = "✅ 正常"
+            post9_status = "OK 正常"
             days_to_dividend = None
             if dividend_date:
                 try:
@@ -259,8 +265,8 @@ class MonitoringPostsCalculator:
                     
                     if 0 <= days_to_dividend <= 7:
                         alerts += 1
-                        post9_status = "⚠️ 警報"
-                        logger.warning(f"⚠ 崗位9警報: {days_to_dividend}天後派息 ({dividend_date})")
+                        post9_status = "! 警報"
+                        logger.warning(f"! 崗位9警報: {days_to_dividend}天後派息 ({dividend_date})")
                 except:
                     pass
             post_details['post9'] = {
@@ -272,7 +278,7 @@ class MonitoringPostsCalculator:
             }
             
             # ========== 崗位10: 業績發布日監察 ==========
-            post10_status = "✅ 正常"
+            post10_status = "OK 正常"
             days_to_earnings = None
             if earnings_date:
                 try:
@@ -281,8 +287,8 @@ class MonitoringPostsCalculator:
                     
                     if 0 <= days_to_earnings <= 7:
                         alerts += 1
-                        post10_status = "⚠️ 警報"
-                        logger.warning(f"⚠ 崗位10警報: {days_to_earnings}天後業績發布 ({earnings_date})")
+                        post10_status = "! 警報"
+                        logger.warning(f"! 崗位10警報: {days_to_earnings}天後業績發布 ({earnings_date})")
                 except:
                     pass
             post_details['post10'] = {
@@ -294,7 +300,7 @@ class MonitoringPostsCalculator:
             }
             
             # ========== 崗位11: 到期日監察 ==========
-            post11_status = "✅ 正常"
+            post11_status = "OK 正常"
             days_to_expiration = None
             if expiration_date:
                 try:
@@ -303,8 +309,8 @@ class MonitoringPostsCalculator:
                     
                     if 0 <= days_to_expiration <= 7:
                         alerts += 1
-                        post11_status = "⚠️ 警報"
-                        logger.warning(f"⚠ 崗位11警報: {days_to_expiration}天後到期 ({expiration_date})")
+                        post11_status = "! 警報"
+                        logger.warning(f"! 崗位11警報: {days_to_expiration}天後到期 ({expiration_date})")
                 except:
                     pass
             post_details['post11'] = {
@@ -319,10 +325,10 @@ class MonitoringPostsCalculator:
             vix_threshold = 25.0
             if vix > vix_threshold:
                 alerts += 1
-                post12_status = "⚠️ 警報"
-                logger.warning(f"⚠ 崗位12警報: VIX指數過高 ({vix:.2f})")
+                post12_status = "! 警報"
+                logger.warning(f"! 崗位12警報: VIX指數過高 ({vix:.2f})")
             else:
-                post12_status = "✅ 正常"
+                post12_status = "OK 正常"
             post_details['post12'] = {
                 'name': '市場情緒監察(VIX)',
                 'value': vix,
@@ -374,11 +380,11 @@ class MonitoringPostsCalculator:
                 post_details=post_details
             )
             
-            logger.info(f"✓ 12監察崗位分析完成")
+            logger.info(f"  12監察崗位分析完成")
             return result
             
         except Exception as e:
-            logger.error(f"✗ 12監察崗位分析失敗: {e}")
+            logger.error(f"x 12監察崗位分析失敗: {e}")
             raise
     
     @staticmethod
@@ -399,9 +405,9 @@ class MonitoringPostsCalculator:
         if delta < 0 or delta > 1:
             return False
         
-        logger.info("✓ 輸入參數驗證通過")
+        logger.info("  輸入參數驗證通過")
         return True
 
 
-print("✓ BATCH 2完整代碼已生成")
-print("包含: module11-14 (1200+行)")
+# print("✓ BATCH 2完整代碼已生成")
+# print("包含: module11-14 (1200+行)")

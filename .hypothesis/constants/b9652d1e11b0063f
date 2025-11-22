@@ -1,0 +1,4 @@
+# file: D:\option_trading_system\calculation_layer\module19_put_call_parity.py
+# hypothesis_version: 6.141.1
+
+[-0.1, 0.0, 0.005, 0.01, 0.05, 0.2, 0.5, 1.0, 5.57, 6.5, 10.45, 11.0, 100.0, 100, '\n【例子2】模擬 Call 高估情況', '\n【例子3】模擬 Put 高估情況', '%Y-%m-%d', '-', '=', '__main__', 'actual_difference', 'calculation_date', 'call', 'call_price', 'deviation', 'deviation_percentage', 'put', 'put_price', 'risk_free_rate', 'stock_price', 'strategy', 'strike_price', 'theoretical_profit', 'time_to_expiration', '✓ 輸入參數驗證通過', '✗ 所有參數必須是數字', '輸入參數無效', '驗證輸入參數...']

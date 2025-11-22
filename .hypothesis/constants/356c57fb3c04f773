@@ -1,0 +1,4 @@
+# file: D:\option_trading_system\calculation_layer\module16_greeks.py
+# hypothesis_version: 6.141.1
+
+[0.05, 0.2, 0.25, 0.5, 1.0, 90.0, 100.0, 110.0, '\n【例子5】Greeks 的對稱性驗證', '%Y-%m-%d', '-', '=', 'Black-Scholes Greeks', 'Self-Calculated', '__main__', 'calculation_date', 'call', 'data_source', 'delta', 'gamma', 'model', 'option_type', 'put', 'rho', 'risk_free_rate', 'stock_price', 'strike_price', 'theta', 'time_to_expiration', 'vega', 'volatility', '✓ Greeks 計算器已初始化', '輸入參數無效']

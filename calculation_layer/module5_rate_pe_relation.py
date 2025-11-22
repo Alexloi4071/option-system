@@ -40,9 +40,10 @@ class RatePERelationCalculator:
     """
     利率與PE關係計算器
     
-    書籍來源: 《期權制勝》第十課
+    書籍來源: 《期權制勝》第十課（核心思想）
+    市場標準: 美國市場行業 PE/PEG 基準
     
-    公式 (100%書籍):
+    核心思想 (來自書籍):
     ────────────────────────────────
     合理PE = 100 / 長期債息
     
@@ -51,18 +52,50 @@ class RatePERelationCalculator:
     PE倍數與無風險利率呈反向關係
     當利率上升時，PE應該下降
     當利率下降時，PE應該上升
+    ────────────────────────────────
     
-    例子:
-    - 長期債息 4%: 合理PE = 100/4 = 25倍
-    - 長期債息 5%: 合理PE = 100/5 = 20倍
-    - 長期債息 6%: 合理PE = 100/6 = 16.67倍
-    - 長期債息 10%: 合理PE = 100/10 = 10倍
+    美國市場行業 PE 基準 (2024-2025):
+    ────────────────────────────────
+    科技股 (Technology):        25-40
+    通訊服務 (Communication):   15-25
+    消費品 (Consumer):          20-30
+    醫療保健 (Healthcare):      20-30
+    金融 (Financials):          10-15
+    工業 (Industrials):         15-25
+    能源 (Energy):              10-20
+    公用事業 (Utilities):       15-20
+    房地產 (Real Estate):       20-30
+    材料 (Materials):           12-18
+    ────────────────────────────────
+    
+    PEG 評估標準 (美國市場):
+    ────────────────────────────────
+    PEG < 1.0:   估值吸引（增長支撐高 PE）
+    PEG 1.0-1.5: 估值合理
+    PEG 1.5-2.0: 估值略高
+    PEG > 2.0:   估值偏高
     ────────────────────────────────
     """
     
+    # 美國市場行業 PE 範圍（2024-2025 標準）
+    US_SECTOR_PE_RANGES = {
+        'Technology': (25, 40),
+        'Communication Services': (15, 25),
+        'Consumer Discretionary': (20, 30),
+        'Consumer Staples': (18, 25),
+        'Healthcare': (20, 30),
+        'Financials': (10, 15),
+        'Industrials': (15, 25),
+        'Energy': (10, 20),
+        'Utilities': (15, 20),
+        'Real Estate': (20, 30),
+        'Materials': (12, 18),
+        'Unknown': (15, 25)  # 默認範圍
+    }
+    
     def __init__(self):
         """初始化計算器"""
-        logger.info("✓ 利率與PE關係計算器已初始化")
+        logger.info("* 利率與PE關係計算器已初始化（美國市場標準）")
     
     def calculate(self,
                   long_term_rate: float,
@@ -105,17 +138,18 @@ class RatePERelationCalculator:
             # 第3步: 計算PE差異
             pe_difference = current_pe - reasonable_pe
             
-            # 第4步: 確定估值
+            # 第4步: 確定估值（基於利率推算的基準 PE）
+            # 注意：這是基於利率的理論 PE，不考慮行業和增長率
             if pe_difference > 2:
-                valuation = "高估 (>2倍)"
+                valuation = "高於利率基準 (>2倍)"
             elif pe_difference > 1:
-                valuation = "略高估 (1-2倍)"
+                valuation = "略高於利率基準 (1-2倍)"
             elif pe_difference > -1:
-                valuation = "合理 (±1倍)"
+                valuation = "符合利率基準 (±1倍)"
             elif pe_difference > -2:
-                valuation = "略低估 (-2至-1倍)"
+                valuation = "略低於利率基準 (-2至-1倍)"
             else:
-                valuation = "低估 (<-2倍)"
+                valuation = "低於利率基準 (<-2倍)"
             
             # 第5步: 分析利率變化影響
             rate_change_impact = self._analyze_rate_impact(long_term_rate)
@@ -134,11 +168,11 @@ class RatePERelationCalculator:
                 calculation_date=calculation_date
             )
             
-            logger.info(f"✓ 利率與PE關係計算完成")
+            logger.info(f"* 利率與PE關係計算完成")
             return result
             
         except Exception as e:
-            logger.error(f"✗ 利率與PE關係計算失敗: {e}")
+            logger.error(f"x 利率與PE關係計算失敗: {e}")
             raise
     
     @staticmethod
@@ -161,22 +195,22 @@ class RatePERelationCalculator:
         logger.info("驗證輸入參數...")
         
         if not isinstance(long_term_rate, (int, float)):
-            logger.error(f"✗ 長期債息必須是數字")
+            logger.error(f"x 長期債息必須是數字")
             return False
         
         if long_term_rate <= 0 or long_term_rate > 20:
-            logger.error(f"✗ 長期債息必須在0-20%之間")
+            logger.error(f"x 長期債息必須在0-20%之間")
             return False
         
         if not isinstance(current_pe, (int, float)):
-            logger.error(f"✗ 當前PE必須是數字")
+            logger.error(f"x 當前PE必須是數字")
             return False
         
         if current_pe <= 0:
-            logger.error(f"✗ 當前PE必須大於0")
+            logger.error(f"x 當前PE必須大於0")
             return False
         
-        logger.info("✓ 輸入參數驗證通過")
+        logger.info("* 輸入參數驗證通過")
         return True
 
 

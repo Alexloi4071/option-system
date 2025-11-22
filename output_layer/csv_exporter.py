@@ -29,15 +29,15 @@ class CSVExporter:
         """
         self.output_dir = Path(output_dir)
         self._ensure_output_dir()
-        logger.info(f"✓ CSV導出器初始化完成，輸出目錄: {self.output_dir}")
+        logger.info(f"* CSV導出器初始化完成，輸出目錄: {self.output_dir}")
     
     def _ensure_output_dir(self) -> None:
         """確保輸出目錄存在"""
         try:
             self.output_dir.mkdir(parents=True, exist_ok=True)
-            logger.debug(f"✓ 輸出目錄已就緒: {self.output_dir}")
+            logger.debug(f"* 輸出目錄已就緒: {self.output_dir}")
         except Exception as e:
-            logger.error(f"✗ 創建輸出目錄失敗: {e}")
+            logger.error(f"x 創建輸出目錄失敗: {e}")
             raise
     
     def export_results(self, 
@@ -57,7 +57,7 @@ class CSVExporter:
         """
         try:
             if not results:
-                logger.warning("✗ 結果列表為空，無法導出")
+                logger.warning("! 結果列表為空，無法導出")
                 return False
             
             if filename is None:
@@ -83,12 +83,12 @@ class CSVExporter:
                     if i % 100 == 0:
                         logger.debug(f"  已寫入 {i} 行")
             
-            logger.info(f"✓ CSV導出成功: {filepath}")
+            logger.info(f"* CSV導出成功: {filepath}")
             logger.info(f"  總行數: {len(results)}")
             return True
             
         except Exception as e:
-            logger.error(f"✗ CSV導出失敗: {e}")
+            logger.error(f"x CSV導出失敗: {e}")
             logger.error(traceback.format_exc())
             return False
     
@@ -116,7 +116,7 @@ class CSVExporter:
             return self.export_results([result], filename)
             
         except Exception as e:
-            logger.error(f"✗ 模塊結果導出失敗: {e}")
+            logger.error(f"x 模塊結果導出失敗: {e}")
             return False
     
     def export_batch_results(self,
@@ -140,11 +140,11 @@ class CSVExporter:
             results[module_name] = success
             
             if success:
-                logger.info(f"  ✓ {module_name}: {len(data_list)} 條記錄")
+                logger.info(f"  * {module_name}: {len(data_list)} 條記錄")
             else:
-                logger.warning(f"  ✗ {module_name}: 導出失敗")
+                logger.warning(f"  x {module_name}: 導出失敗")
         
-        logger.info(f"✓ 批量導出完成，成功: {sum(results.values())}/{len(results)}")
+        logger.info(f"* 批量導出完成，成功: {sum(results.values())}/{len(results)}")
         return results
     
     def get_last_file(self) -> Optional[Path]:
@@ -155,5 +155,5 @@ class CSVExporter:
                 return None
             return max(files, key=lambda f: f.stat().st_mtime)
         except Exception as e:
-            logger.error(f"✗ 獲取檔案失敗: {e}")
+            logger.error(f"x 獲取檔案失敗: {e}")
             return None

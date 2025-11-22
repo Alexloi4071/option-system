@@ -2,6 +2,7 @@ import logging
 from dataclasses import dataclass
 from typing import Dict
 from datetime import datetime
+import math
 
 logger = logging.getLogger(__name__)
 
@@ -59,13 +60,15 @@ class SyntheticStockCalculator:
     """
     
     def __init__(self):
-        logger.info("✓ 合成正股計算器已初始化")
+        logger.info("* 合成正股計算器已初始化")
     
     def calculate(self,
                   strike_price: float,
                   call_premium: float,
                   put_premium: float,
                   current_stock_price: float,
+                  risk_free_rate: float = 0.0,
+                  time_to_expiration: float = 0.0,
                   calculation_date: str = None) -> SyntheticStockResult:
         """
         計算合成正股價格
@@ -75,6 +78,8 @@ class SyntheticStockCalculator:
             call_premium: Call期權金
             put_premium: Put期權金
             current_stock_price: 當前股價
+            risk_free_rate: 無風險利率 (小數, e.g. 0.045)
+            time_to_expiration: 到期時間 (年)
             calculation_date: 計算日期
         
         返回:
@@ -86,6 +91,7 @@ class SyntheticStockCalculator:
             logger.info(f"  Call金: ${call_premium:.2f}")
             logger.info(f"  Put金: ${put_premium:.2f}")
             logger.info(f"  當前股價: ${current_stock_price:.2f}")
+            logger.info(f"  利率: {risk_free_rate:.4f}, 時間: {time_to_expiration:.4f}年")
             
             if not self._validate_inputs(strike_price, call_premium, put_premium, current_stock_price):
                 raise ValueError("輸入參數無效")
@@ -93,9 +99,13 @@ class SyntheticStockCalculator:
             if calculation_date is None:
                 calculation_date = datetime.now().strftime('%Y-%m-%d')
             
-            # 計算合成價格
-            # 公式: 合成價 = Call金 - Put金 + 行使價
-            synthetic_price = call_premium - put_premium + strike_price
+            # 計算合成價格 (考慮利率成本)
+            # 公式: 合成價 = Call金 - Put金 + PV(行使價)
+            # PV(K) = K * e^(-rT)
+            pv_strike = strike_price * math.exp(-risk_free_rate * time_to_expiration)
+            synthetic_price = call_premium - put_premium + pv_strike
+            
+            logger.info(f"  PV(行使價): ${pv_strike:.2f}")
             
             # 計算差異
             difference = current_stock_price - synthetic_price
@@ -130,11 +140,11 @@ class SyntheticStockCalculator:
                 calculation_date=calculation_date
             )
             
-            logger.info(f"✓ 合成正股計算完成")
+            logger.info(f"* 合成正股計算完成")
             return result
             
         except Exception as e:
-            logger.error(f"✗ 合成正股計算失敗: {e}")
+            logger.error(f"x 合成正股計算失敗: {e}")
             raise
     
     @staticmethod
@@ -143,16 +153,16 @@ class SyntheticStockCalculator:
         logger.info("驗證輸入參數...")
         
         if not all(isinstance(x, (int, float)) for x in [strike_price, call_premium, put_premium, current_stock_price]):
-            logger.error("✗ 所有參數必須是數字")
+            logger.error("x 所有參數必須是數字")
             return False
         
         if strike_price <= 0 or current_stock_price <= 0:
-            logger.error("✗ 股價和行使價必須大於0")
+            logger.error("x 股價和行使價必須大於0")
             return False
         
         if call_premium < 0 or put_premium < 0:
-            logger.error("✗ 期權金不能為負")
+            logger.error("x 期權金不能為負")
             return False
         
-        logger.info("✓ 輸入參數驗證通過")
+        logger.info("* 輸入參數驗證通過")
         return True

@@ -66,7 +66,7 @@ class HedgeQuantityCalculator:
     
     def __init__(self):
         """初始化計算器"""
-        logger.info("✓ 對沖量計算器已初始化")
+        logger.info("* 對沖量計算器已初始化")
     
     def calculate(self,
                   stock_quantity: int,
@@ -121,11 +121,11 @@ class HedgeQuantityCalculator:
                 calculation_date=calculation_date
             )
             
-            logger.info(f"✓ 對沖量計算完成")
+            logger.info(f"* 對沖量計算完成")
             return result
             
         except Exception as e:
-            logger.error(f"✗ 對沖量計算失敗: {e}")
+            logger.error(f"x 對沖量計算失敗: {e}")
             raise
     
     @staticmethod
@@ -134,22 +134,22 @@ class HedgeQuantityCalculator:
         logger.info("驗證輸入參數...")
         
         if not isinstance(stock_quantity, int):
-            logger.error(f"✗ 正股數量必須是整數")
+            logger.error(f"x 正股數量必須是整數")
             return False
         
         if stock_quantity <= 0:
-            logger.error(f"✗ 正股數量必須大於0")
+            logger.error(f"x 正股數量必須大於0")
             return False
         
         if not isinstance(stock_price, (int, float)):
-            logger.error(f"✗ 股價必須是數字")
+            logger.error(f"x 股價必須是數字")
             return False
         
         if stock_price <= 0:
-            logger.error(f"✗ 股價必須大於0")
+            logger.error(f"x 股價必須大於0")
             return False
         
-        logger.info("✓ 輸入參數驗證通過")
+        logger.info("* 輸入參數驗證通過")
         return True
 
 

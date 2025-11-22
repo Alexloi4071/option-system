@@ -75,11 +75,13 @@ class ArbitrageSpreadCalculator:
     
     def __init__(self):
         """初始化計算器"""
-        logger.info("✓ 套戥水位計算器已初始化")
+        logger.info("* 套戥水位計算器已初始化")
     
     def calculate(self,
                   market_option_price: float,
                   fair_value: float,
+                  bid_price: float = None,
+                  ask_price: float = None,
                   calculation_date: str = None) -> ArbitrageSpreadResult:
         """
         計算套戥水位
@@ -87,6 +89,8 @@ class ArbitrageSpreadCalculator:
         參數:
             market_option_price: 市場期權價格 (美元)
             fair_value: 公允值 (美元)
+            bid_price: 買入價 (可選)
+            ask_price: 賣出價 (可選)
             calculation_date: 計算日期
         
         返回:
@@ -96,6 +100,8 @@ class ArbitrageSpreadCalculator:
             logger.info(f"開始計算套戥水位...")
             logger.info(f"  市場期權價格: ${market_option_price:.2f}")
             logger.info(f"  公允值: ${fair_value:.2f}")
+            if bid_price is not None and ask_price is not None:
+                logger.info(f"  Bid/Ask: ${bid_price:.2f} / ${ask_price:.2f}")
             
             # 驗證輸入
             if not self._validate_inputs(market_option_price, fair_value):
@@ -112,16 +118,41 @@ class ArbitrageSpreadCalculator:
             spread_percentage = (arbitrage_spread / fair_value) * 100 if fair_value != 0 else 0
             
             # 基於相對閾值判斷
-            if spread_percentage >= self.THRESHOLDS['strong_overvalued']:
-                recommendation = "嚴重高估 - 強烈套戥機會 (建議沽出)"
-            elif spread_percentage >= self.THRESHOLDS['overvalued']:
-                recommendation = "略高估 - 輕微套戥機會 (觀望或輕倉沽出)"
-            elif spread_percentage >= -self.THRESHOLDS['fair']:
-                recommendation = "合理定價 - 無套戥機會 (公平價格,建議觀望)"
-            elif spread_percentage >= self.THRESHOLDS['strong_undervalued']:
-                recommendation = "略低估 - 輕微套戥機會 (考慮買入)"
-            else:
-                recommendation = "嚴重低估 - 強烈套戥機會 (建議買入)"
+            recommendation = ""
+            
+            # 如果有 Bid/Ask 數據，進行更精確的判斷
+            if bid_price is not None and ask_price is not None and bid_price > 0 and ask_price > 0:
+                # 判斷是否真的有套利空間 (考慮買賣價差)
+                if fair_value < bid_price:
+                    # 理論價 < Bid，說明市場價(Bid)過高，可以 Sell at Bid
+                    real_profit_pct = ((bid_price - fair_value) / fair_value) * 100
+                    if real_profit_pct > self.THRESHOLDS['overvalued']:
+                        recommendation = f"高估 (Bid > 理論價) - 可直接沽出獲利 (潛在利潤 {real_profit_pct:.1f}%)"
+                    else:
+                        recommendation = "略高估 - 但利潤空間有限 (考慮交易成本)"
+                elif fair_value > ask_price:
+                    # 理論價 > Ask，說明市場價(Ask)過低，可以 Buy at Ask
+                    real_profit_pct = ((fair_value - ask_price) / ask_price) * 100
+                    if real_profit_pct > abs(self.THRESHOLDS['undervalued']):
+                        recommendation = f"低估 (Ask < 理論價) - 可直接買入獲利 (潛在利潤 {real_profit_pct:.1f}%)"
+                    else:
+                        recommendation = "略低估 - 但利潤空間有限 (考慮交易成本)"
+                else:
+                    # 理論價在 Bid/Ask 之間，無套利機會
+                    recommendation = "合理定價 - 理論價在買賣價差內 (無套利空間)"
+            
+            # 如果沒有 Bid/Ask 或上面的判斷未觸發 (fallback 到中間價判斷)
+            if not recommendation:
+                if spread_percentage >= self.THRESHOLDS['strong_overvalued']:
+                    recommendation = "嚴重高估 - 強烈套戥機會 (建議沽出)"
+                elif spread_percentage >= self.THRESHOLDS['overvalued']:
+                    recommendation = "略高估 - 輕微套戥機會 (觀望或輕倉沽出)"
+                elif spread_percentage >= -self.THRESHOLDS['fair']:
+                    recommendation = "合理定價 - 無套戥機會 (公平價格,建議觀望)"
+                elif spread_percentage >= self.THRESHOLDS['strong_undervalued']:
+                    recommendation = "略低估 - 輕微套戥機會 (考慮買入)"
+                else:
+                    recommendation = "嚴重低估 - 強烈套戥機會 (建議買入)"
             
             logger.info(f"  計算結果:")
             logger.info(f"    套戥水位: ${arbitrage_spread:.2f}")
@@ -137,11 +168,11 @@ class ArbitrageSpreadCalculator:
                 calculation_date=calculation_date
             )
             
-            logger.info(f"✓ 套戥水位計算完成")
+            logger.info(f"* 套戥水位計算完成")
             return result
             
         except Exception as e:
-            logger.error(f"✗ 套戥水位計算失敗: {e}")
+            logger.error(f"x 套戥水位計算失敗: {e}")
             raise
     
     @staticmethod
@@ -150,22 +181,22 @@ class ArbitrageSpreadCalculator:
         logger.info("驗證輸入參數...")
         
         if not isinstance(market_price, (int, float)):
-            logger.error(f"✗ 市場價格必須是數字")
+            logger.error(f"x 市場價格必須是數字")
             return False
         
         if market_price < 0:
-            logger.error(f"✗ 市場價格不能為負")
+            logger.error(f"x 市場價格不能為負")
             return False
         
         if not isinstance(fair_value, (int, float)):
-            logger.error(f"✗ 公允值必須是數字")
+            logger.error(f"x 公允值必須是數字")
             return False
         
         if fair_value <= 0:
-            logger.error(f"✗ 公允值必須大於0")
+            logger.error(f"x 公允值必須大於0")
             return False
         
-        logger.info("✓ 輸入參數驗證通過")
+        logger.info("* 輸入參數驗證通過")
         return True
 
 

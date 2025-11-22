@@ -1,0 +1,4 @@
+# file: D:\option_trading_system\data_layer\yahoo_finance_v2_client.py
+# hypothesis_version: 6.141.1
+
+[1.0, 429, 500, 600, '\n❌ 数据解析失败', '\n测试获取 AAPL 股票数据...', '/v7/finance/options', '/v8/finance/chart', '1d', '1mo', '=', 'AAPL', 'N/A', 'User-Agent', '__main__', 'beta', 'calls', 'chart', 'close', 'company_name', 'current_price', 'data_source', 'date', 'dividend_rate', 'eps', 'expiration', 'expirationDate', 'fifty_two_week_high', 'fifty_two_week_low', 'high', 'indicators', 'industry', 'interval', 'low', 'market_cap', 'meta', 'open', 'optionChain', 'options', 'pe_ratio', 'previousClose', 'previous_close', 'puts', 'quote', 'range', 'regularMarketDayHigh', 'regularMarketDayLow', 'regularMarketOpen', 'regularMarketPrice', 'regularMarketVolume', 'result', 'sector', 'symbol', 'text', 'timestamp', 'timestamps', 'volume', 'yahoo_finance']

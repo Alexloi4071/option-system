@@ -1,5 +1,8 @@
 from dataclasses import dataclass
 from typing import Dict
+import logging
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class PositionAnalysisResult:
@@ -47,7 +50,7 @@ class PositionAnalysisCalculator:
     """
     
     def __init__(self):
-        logger.info("✓ 倉位分析計算器已初始化")
+        logger.info("* 倉位分析計算器已初始化")
     
     def calculate(self,
                   volume: int,
@@ -114,11 +117,11 @@ class PositionAnalysisCalculator:
                 calculation_date=calculation_date
             )
             
-            logger.info(f"✓ 倉位分析完成")
+            logger.info(f"* 倉位分析完成")
             return result
             
         except Exception as e:
-            logger.error(f"✗ 倉位分析失敗: {e}")
+            logger.error(f"x 倉位分析失敗: {e}")
             raise
     
     @staticmethod
@@ -126,16 +129,16 @@ class PositionAnalysisCalculator:
         logger.info("驗證輸入參數...")
         
         if not isinstance(volume, int) or not isinstance(open_interest, int):
-            logger.error("✗ 成交量和未平倉必須是整數")
+            logger.error("x 成交量和未平倉必須是整數")
             return False
         
         if volume < 0 or open_interest < 0:
-            logger.error("✗ 成交量和未平倉不能為負")
+            logger.error("x 成交量和未平倉不能為負")
             return False
         
         if not isinstance(price_change, (int, float)):
-            logger.error("✗ 價格變化必須是數字")
+            logger.error("x 價格變化必須是數字")
             return False
         
-        logger.info("✓ 輸入參數驗證通過")
+        logger.info("* 輸入參數驗證通過")
         return True

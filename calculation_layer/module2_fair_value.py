@@ -100,7 +100,7 @@ class FairValueCalculator:
     """
     
     def __init__(self):
-        logger.info("✓ 公允值計算器已初始化")
+        logger.info("* 公允值計算器已初始化")
     
     def calculate(self,
                   stock_price: float,
@@ -189,11 +189,11 @@ class FairValueCalculator:
                 calculation_date=calculation_date
             )
             
-            logger.info(f"✓ 公允值計算完成")
+            logger.info(f"* 公允值計算完成")
             return result
             
         except Exception as e:
-            logger.error(f"✗ 公允值計算失敗: {e}")
+            logger.error(f"x 公允值計算失敗: {e}")
             raise
     
     @staticmethod
@@ -203,37 +203,37 @@ class FairValueCalculator:
         logger.info("驗證輸入參數...")
         
         if not isinstance(stock_price, (int, float)):
-            logger.error(f"✗ 股價必須是數字")
+            logger.error(f"x 股價必須是數字")
             return False
         
         if stock_price <= 0:
-            logger.error(f"✗ 股價必須大於0")
+            logger.error(f"x 股價必須大於0")
             return False
         
         if not isinstance(risk_free_rate, (int, float)):
-            logger.error(f"✗ 利率必須是數字")
+            logger.error(f"x 利率必須是數字")
             return False
         
         if risk_free_rate < 0 or risk_free_rate > 50:
-            logger.error(f"✗ 利率範圍無效")
+            logger.error(f"x 利率範圍無效")
             return False
         
         # 必須提供 expiration_date 或 days_to_expiration 之一
         if days_to_expiration is None:
             if expiration_date is None:
-                logger.error(f"✗ 必須提供 expiration_date 或 days_to_expiration")
+                logger.error(f"x 必須提供 expiration_date 或 days_to_expiration")
                 return False
             try:
                 datetime.strptime(expiration_date, '%Y-%m-%d')
             except (ValueError, TypeError):
-                logger.error(f"✗ 到期日期格式無效")
+                logger.error(f"x 到期日期格式無效")
                 return False
         else:
             if not isinstance(days_to_expiration, int) or days_to_expiration < 0:
-                logger.error(f"✗ 到期天數必須是非負整數")
+                logger.error(f"x 到期天數必須是非負整數")
                 return False
         
-        logger.info("✓ 輸入參數驗證通過")
+        logger.info("* 輸入參數驗證通過")
         return True
 
 

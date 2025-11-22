@@ -1,0 +1,4 @@
+# file: D:\option_trading_system\utils\trading_days.py
+# hypothesis_version: 6.141.1
+
+['%Y-%m-%d', 'NYSE', '⚠ 無法計算交易日，改用日曆日差: %s', '✓ 交易日曆已載入: %s', '✗ 無法載入交易日曆 (%s): %s']
