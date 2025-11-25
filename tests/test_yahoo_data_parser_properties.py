@@ -143,31 +143,32 @@ class TestYahooDataParserProperties:
         assert result['data_source'] == 'yahoo_finance'
     
     @given(
-        has_timestamps=st.booleans(),
         has_open=st.booleans(),
         has_high=st.booleans(),
         has_low=st.booleans(),
         has_close=st.booleans(),
         has_volume=st.booleans(),
-        num_points=st.integers(min_value=0, max_value=10)
+        num_points=st.integers(min_value=1, max_value=10)  # 至少需要1個數據點
     )
     @settings(max_examples=100)
     def test_parse_historical_data_default_values(
-        self, has_timestamps, has_open, has_high, has_low, has_close, has_volume, num_points
+        self, has_open, has_high, has_low, has_close, has_volume, num_points
     ):
         """
         **Feature: yahoo-api-rate-limit-handling, Property 9: Default values for missing fields**
         **Validates: Requirements 7.3**
         
-        Property: For any historical data response with missing optional fields, 
+        Property: For any historical data response with valid timestamps but missing optional OHLCV fields, 
         the system should use appropriate default values (empty lists).
+        Note: timestamps are required - without them the parser returns None (invalid data).
         """
-        # 构建历史数据
+        # 构建历史数据 - timestamps 是必需的
         data = {}
         quote_data = {}
         
-        if has_timestamps:
-            data['timestamp'] = list(range(1000000000, 1000000000 + num_points))
+        # timestamps 是必需的，沒有 timestamps 的數據是無效的
+        data['timestamp'] = list(range(1000000000, 1000000000 + num_points))
+        
         if has_open:
             quote_data['open'] = [100.0 + i for i in range(num_points)]
         if has_high:
@@ -190,8 +191,8 @@ class TestYahooDataParserProperties:
         # 解析响应
         result = YahooDataParser.parse_historical_data(response)
         
-        # 验证结果不为 None
-        assert result is not None, "Parser should return a dict, not None"
+        # 验证结果不为 None（因為有有效的 timestamps）
+        assert result is not None, "Parser should return a dict when timestamps are present"
         
         # 验证所有字段都存在
         assert 'timestamps' in result
@@ -201,21 +202,49 @@ class TestYahooDataParserProperties:
         assert 'close' in result
         assert 'volume' in result
         
-        # 验证缺失字段使用默认值（空列表）
-        expected_timestamps = list(range(1000000000, 1000000000 + num_points)) if has_timestamps else []
+        # 验证 timestamps 正確
+        expected_timestamps = list(range(1000000000, 1000000000 + num_points))
+        assert result['timestamps'] == expected_timestamps
+        
+        # 验证有數據的字段正確，缺失字段使用默認值（空列表）
         expected_open = [100.0 + i for i in range(num_points)] if has_open else []
         expected_high = [110.0 + i for i in range(num_points)] if has_high else []
         expected_low = [90.0 + i for i in range(num_points)] if has_low else []
         expected_close = [105.0 + i for i in range(num_points)] if has_close else []
         expected_volume = [1000000 + i * 1000 for i in range(num_points)] if has_volume else []
         
-        assert result['timestamps'] == expected_timestamps
         assert result['open'] == expected_open
         assert result['high'] == expected_high
         assert result['low'] == expected_low
         assert result['close'] == expected_close
         assert result['volume'] == expected_volume
         assert result['data_source'] == 'yahoo_finance'
+    
+    def test_parse_historical_data_no_timestamps_returns_none(self):
+        """
+        Test that parser returns None when timestamps are missing (invalid data).
+        """
+        data = {}
+        quote_data = {
+            'open': [100.0, 101.0],
+            'high': [110.0, 111.0],
+            'low': [90.0, 91.0],
+            'close': [105.0, 106.0],
+            'volume': [1000000, 1001000]
+        }
+        # 沒有 timestamps
+        data['indicators'] = {'quote': [quote_data]}
+        
+        response = {
+            'chart': {
+                'result': [data]
+            }
+        }
+        
+        result = YahooDataParser.parse_historical_data(response)
+        
+        # 沒有 timestamps 應該返回 None
+        assert result is None, "Parser should return None when timestamps are missing"
 
 
 if __name__ == "__main__":

@@ -377,6 +377,212 @@ class HistoricalVolatilityCalculator:
             logger.error(f"x 多窗口期計算失敗: {e}")
             raise
     
+    def calculate_iv_rank(
+        self,
+        current_iv: float,
+        historical_iv_series: pd.Series
+    ) -> float:
+        """
+        計算IV Rank（IV在52週範圍內的相對位置）
+        
+        參數:
+            current_iv: 當前IV（小數形式，如 0.25 = 25%）
+            historical_iv_series: 過去252天的IV數據（pandas Series）
+        
+        返回:
+            float: IV Rank（0-100之間的百分比）
+        
+        公式:
+            IV Rank = (當前IV - 52週最低IV) / (52週最高IV - 52週最低IV) × 100%
+        
+        判斷標準:
+            - IV Rank > 80%: IV極高，強烈建議賣期權
+            - IV Rank > 50%: IV偏高，適合賣期權
+            - IV Rank < 20%: IV偏低，適合買期權
+        
+        示例:
+            >>> calc = HistoricalVolatilityCalculator()
+            >>> # 假設52週IV範圍：20% ~ 60%
+            >>> historical_iv = pd.Series([0.20, 0.25, ..., 0.60])
+            >>> current_iv = 0.50
+            >>> iv_rank = calc.calculate_iv_rank(current_iv, historical_iv)
+            >>> print(f"IV Rank: {iv_rank:.2f}%")
+            75.00%
+        """
+        try:
+            logger.info(f"開始計算IV Rank...")
+            logger.info(f"  當前IV: {current_iv*100:.2f}%")
+            logger.info(f"  歷史數據點數: {len(historical_iv_series)}")
+            
+            # 驗證輸入
+            if len(historical_iv_series) < 2:
+                logger.warning("! 歷史IV數據不足，返回50%（中性）")
+                return 50.0
+            
+            # 計算52週範圍
+            iv_min = historical_iv_series.min()
+            iv_max = historical_iv_series.max()
+            
+            logger.info(f"  52週IV範圍: {iv_min*100:.2f}% ~ {iv_max*100:.2f}%")
+            
+            # 避免除以0
+            if iv_max == iv_min:
+                logger.warning("! IV範圍為0，返回50%（中性）")
+                return 50.0
+            
+            # 計算IV Rank
+            iv_rank = (current_iv - iv_min) / (iv_max - iv_min) * 100
+            
+            # 限制在0-100範圍
+            iv_rank = max(0.0, min(100.0, iv_rank))
+            
+            logger.info(f"  IV Rank: {iv_rank:.2f}%")
+            logger.info(f"* IV Rank計算完成")
+            
+            return round(iv_rank, 2)
+            
+        except Exception as e:
+            logger.error(f"x IV Rank計算失敗: {e}")
+            return 50.0  # 返回中性值
+    
+    def calculate_iv_percentile(
+        self,
+        current_iv: float,
+        historical_iv_series: pd.Series
+    ) -> float:
+        """
+        計算IV Percentile（當前IV在歷史中的百分位）
+        
+        參數:
+            current_iv: 當前IV（小數形式）
+            historical_iv_series: 過去252天的IV數據（pandas Series）
+        
+        返回:
+            float: IV Percentile（0-100之間的百分比）
+        
+        公式:
+            IV Percentile = (歷史中IV低於當前IV的天數) / 總天數 × 100%
+        
+        判斷標準:
+            - IV Percentile > 80%: 當前IV高於80%的歷史日子，適合賣期權
+            - IV Percentile < 30%: 當前IV低於70%的歷史日子，適合買期權
+        
+        示例:
+            >>> calc = HistoricalVolatilityCalculator()
+            >>> # 假設252天中，200天的IV低於當前IV
+            >>> iv_percentile = calc.calculate_iv_percentile(0.50, historical_iv)
+            >>> print(f"IV Percentile: {iv_percentile:.2f}%")
+            79.37%
+        """
+        try:
+            logger.info(f"開始計算IV Percentile...")
+            
+            # 驗證輸入
+            if len(historical_iv_series) < 2:
+                logger.warning("! 歷史IV數據不足，返回50%（中性）")
+                return 50.0
+            
+            # 計算低於當前IV的天數
+            days_below = (historical_iv_series < current_iv).sum()
+            total_days = len(historical_iv_series)
+            
+            # 計算百分位
+            iv_percentile = (days_below / total_days) * 100
+            
+            logger.info(f"  {days_below}/{total_days} 天的IV低於當前IV")
+            logger.info(f"  IV Percentile: {iv_percentile:.2f}%")
+            logger.info(f"* IV Percentile計算完成")
+            
+            return round(iv_percentile, 2)
+            
+        except Exception as e:
+            logger.error(f"x IV Percentile計算失敗: {e}")
+            return 50.0  # 返回中性值
+    
+    def get_iv_recommendation(
+        self,
+        iv_rank: float,
+        iv_percentile: float
+    ) -> Dict:
+        """
+        根據IV Rank和IV Percentile生成交易建議
+        
+        參數:
+            iv_rank: IV Rank（0-100）
+            iv_percentile: IV Percentile（0-100）
+        
+        返回:
+            Dict: {
+                'action': 'Short' | 'Long' | 'Neutral',
+                'reason': 原因說明,
+                'confidence': 'High' | 'Medium' | 'Low'
+            }
+        
+        判斷邏輯:
+            - IV Rank > 80% 或 IV Percentile > 80%: 強烈建議賣期權
+            - IV Rank > 50% 或 IV Percentile > 70%: 建議賣期權
+            - IV Rank < 20% 或 IV Percentile < 30%: 建議買期權
+            - 其他: 中性
+        """
+        try:
+            logger.info(f"生成IV交易建議...")
+            logger.info(f"  IV Rank: {iv_rank:.2f}%")
+            logger.info(f"  IV Percentile: {iv_percentile:.2f}%")
+            
+            # 極高IV（強烈賣出信號）
+            if iv_rank >= 80 or iv_percentile >= 80:
+                recommendation = {
+                    'action': 'Short',
+                    'reason': 'IV極高，處於歷史頂部區域，適合賣出期權收取高額權金',
+                    'confidence': 'High',
+                    'iv_rank': iv_rank,
+                    'iv_percentile': iv_percentile
+                }
+                logger.info(f"  ! 建議: {recommendation['action']} (信心度: {recommendation['confidence']})")
+            
+            # 偏高IV（賣出信號）
+            elif iv_rank >= 50 or iv_percentile >= 70:
+                recommendation = {
+                    'action': 'Short',
+                    'reason': 'IV偏高，高於歷史中位數，適合賣出期權',
+                    'confidence': 'Medium',
+                    'iv_rank': iv_rank,
+                    'iv_percentile': iv_percentile
+                }
+                logger.info(f"  建議: {recommendation['action']} (信心度: {recommendation['confidence']})")
+            
+            # 偏低IV（買入信號）
+            elif iv_rank <= 20 or iv_percentile <= 30:
+                recommendation = {
+                    'action': 'Long',
+                    'reason': 'IV偏低，低於歷史水平，適合買入期權',
+                    'confidence': 'Medium',
+                    'iv_rank': iv_rank,
+                    'iv_percentile': iv_percentile
+                }
+                logger.info(f"  建議: {recommendation['action']} (信心度: {recommendation['confidence']})")
+            
+            # 中性區域
+            else:
+                recommendation = {
+                    'action': 'Neutral',
+                    'reason': 'IV處於中性區域，無明顯優勢，建議觀望',
+                    'confidence': 'Low',
+                    'iv_rank': iv_rank,
+                    'iv_percentile': iv_percentile
+                }
+                logger.info(f"  建議: {recommendation['action']} (信心度: {recommendation['confidence']})")
+            
+            return recommendation
+            
+        except Exception as e:
+            logger.error(f"x 生成建議失敗: {e}")
+            return {
+                'action': 'Neutral',
+                'reason': '計算錯誤，無法生成建議',
+                'confidence': 'Low'
+            }
+    
     @staticmethod
     def _validate_inputs(price_series: pd.Series, window: int) -> bool:
         """

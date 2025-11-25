@@ -62,9 +62,10 @@ class DataValidator:
                 return False
             
             if 0 < data['implied_volatility'] < 1:
-                logger.warning(f"! IV看起來是小數格式 (0-1): {data['implied_volatility']}")
-                logger.warning("  期望格式: 百分比 (0-100)")
-                return False
+                # 自動轉換小數格式為百分比格式
+                original_iv = data['implied_volatility']
+                data['implied_volatility'] = original_iv * 100
+                logger.warning(f"! IV 自動轉換: {original_iv:.4f} → {data['implied_volatility']:.2f}%")
             
             # 利率驗證
             if data['risk_free_rate'] is not None:

@@ -6,6 +6,7 @@
 
 import yfinance as yf
 import pandas as pd
+import numpy as np
 from fredapi import Fred
 import finnhub
 import time
@@ -1410,6 +1411,82 @@ class DataFetcher:
             logger.error(f"x 獲取VIX失敗: {e}")
             return None
     
+    # ==================== 歷史IV數據 ====================
+    
+    def get_historical_iv(self, ticker: str, days: int = 252) -> Optional[pd.Series]:
+        """
+        獲取歷史隱含波動率數據（用於計算 IV Rank 和 IV Percentile）
+        
+        由於大多數免費 API 不提供歷史 IV 數據，此方法使用以下策略：
+        1. 嘗試從期權數據計算當前 IV
+        2. 使用歷史股價波動率作為 IV 的代理（HV 作為 IV 的近似）
+        
+        參數:
+            ticker: 股票代碼
+            days: 需要的歷史天數（默認 252 = 1年交易日）
+        
+        返回:
+            pd.Series: 歷史 IV 數據（如果可用），否則返回 None
+        
+        注意:
+            - 真正的歷史 IV 數據需要付費數據源（如 CBOE, IVolatility）
+            - 此方法使用 HV 作為 IV 的近似，這在大多數情況下是合理的
+            - 對於更精確的 IV Rank/Percentile，建議接入專業數據源
+        """
+        try:
+            logger.info(f"開始獲取 {ticker} 的歷史IV數據（{days}天）...")
+            
+            # 策略：使用歷史波動率作為 IV 的代理
+            # 原因：免費 API 通常不提供歷史 IV，但 HV 和 IV 高度相關
+            
+            # 獲取更長期的歷史數據（需要額外的數據來計算滾動 HV）
+            extended_days = days + 30  # 額外 30 天用於計算滾動窗口
+            
+            # 使用 yfinance 獲取歷史數據
+            try:
+                stock = yf.Ticker(ticker)
+                # 計算需要的期間（考慮週末和假期，大約需要 1.5 倍的日曆天數）
+                calendar_days = int(extended_days * 1.5)
+                hist = stock.history(period=f"{calendar_days}d")
+                
+                if hist.empty or len(hist) < 30:
+                    logger.warning(f"! {ticker} 歷史數據不足，無法計算歷史 IV")
+                    return None
+                
+                # 計算滾動 30 天歷史波動率作為 IV 的代理
+                log_returns = np.log(hist['Close'] / hist['Close'].shift(1))
+                rolling_hv = log_returns.rolling(window=30).std() * np.sqrt(252)
+                
+                # 移除 NaN 值
+                rolling_hv = rolling_hv.dropna()
+                
+                if len(rolling_hv) < days:
+                    logger.warning(f"! {ticker} 滾動 HV 數據不足: {len(rolling_hv)} < {days}")
+                    # 如果數據不足 252 天，但有足夠的數據（至少 60 天），仍然返回
+                    if len(rolling_hv) >= 60:
+                        logger.info(f"  使用可用的 {len(rolling_hv)} 天數據")
+                        return rolling_hv
+                    return None
+                
+                # 取最近 days 天的數據
+                historical_iv = rolling_hv.iloc[-days:]
+                
+                logger.info(f"* 成功獲取 {ticker} 歷史 IV 代理數據")
+                logger.info(f"  數據點數: {len(historical_iv)}")
+                logger.info(f"  IV 範圍: {historical_iv.min()*100:.2f}% ~ {historical_iv.max()*100:.2f}%")
+                logger.info(f"  當前 IV (HV代理): {historical_iv.iloc[-1]*100:.2f}%")
+                logger.info(f"  注意: 使用 30 天滾動 HV 作為 IV 的代理")
+                
+                return historical_iv
+                
+            except Exception as e:
+                logger.warning(f"! yfinance 獲取歷史數據失敗: {e}")
+                return None
+            
+        except Exception as e:
+            logger.error(f"x 獲取歷史 IV 失敗: {e}")
+            return None
+    
     # ==================== 業績和派息數據 ====================
     
     def get_earnings_calendar(self, ticker):
@@ -1952,14 +2029,19 @@ class DataFetcher:
             eps = self.get_eps(ticker)
             dividends = self.get_dividends(ticker)
             
-            # 5.1 歷史數據 (用於 Module 18 HV計算)
-            logger.info("\n[步驟5.1/6] 獲取歷史數據 (用於HV計算)...")
-            # 獲取足夠的歷史數據以計算 60日 HV (需要約 90 天數據)
-            historical_data = self.get_historical_data(ticker, period='3mo', interval='1d')
+            # 5.1 歷史數據 (用於 Module 18 HV計算 + IV Rank/Percentile)
+            logger.info("\n[步驟5.1/6] 獲取歷史數據 (用於HV計算和IV Rank)...")
+            # 獲取足夠的歷史數據以計算 IV Rank/Percentile (需要 252+ 天數據)
+            # 使用 1y (1年) 以確保有足夠的數據
+            historical_data = self.get_historical_data(ticker, period='1y', interval='1d')
             if historical_data is not None and not historical_data.empty:
                 logger.info(f"  * 獲取了 {len(historical_data)} 條歷史記錄")
+                if len(historical_data) >= 252:
+                    logger.info(f"  * 數據足夠計算 IV Rank/Percentile (252天基準)")
+                else:
+                    logger.warning(f"  ! 數據不足252天，IV Rank/Percentile 可能不準確")
             else:
-                logger.warning("  ! 無法獲取歷史數據，HV 計算將跳過")
+                logger.warning("  ! 無法獲取歷史數據，HV 和 IV Rank 計算將跳過")
 
             # 6. 宏觀數據
             logger.info("\n[步驟6/7] 獲取宏觀數據...")

@@ -48,10 +48,16 @@ from calculation_layer.module14_monitoring_posts import MonitoringPostsCalculato
 from calculation_layer.module15_black_scholes import BlackScholesCalculator
 from calculation_layer.module16_greeks import GreeksCalculator
 from calculation_layer.module17_implied_volatility import ImpliedVolatilityCalculator
+# 新增模塊 (Module 21 - 動量過濾器)
+from calculation_layer.module21_momentum_filter import MomentumFilter
 from calculation_layer.module18_historical_volatility import HistoricalVolatilityCalculator
 from calculation_layer.module19_put_call_parity import PutCallParityValidator
 # Module 20: 基本面健康檢查
 from calculation_layer.module20_fundamental_health import FundamentalHealthCalculator
+# Module 22: 最佳行使價分析
+from calculation_layer.module22_optimal_strike import OptimalStrikeCalculator
+# Module 23: 動態IV閾值
+from calculation_layer.module23_dynamic_iv_threshold import DynamicIVThresholdCalculator
 # 新增: 策略推薦
 from calculation_layer.strategy_recommendation import StrategyRecommender
 from output_layer.report_generator import ReportGenerator
@@ -464,14 +470,20 @@ class OptionsAnalysisSystem:
             # 模塊11: 合成正股
             try:
                 if strike_price and call_last_price >= 0 and put_last_price >= 0:
+                    # 獲取無風險利率和到期時間
+                    m11_risk_free_rate_raw = analysis_data.get('risk_free_rate', 4.5) or 4.5
+                    m11_risk_free_rate = m11_risk_free_rate_raw / 100.0  # 轉換: 4.35% → 0.0435
+                    m11_days_to_exp = analysis_data.get('days_to_expiration', 30) or 30
+                    m11_time_to_expiration = m11_days_to_exp / 252  # 使用交易日標準
+                    
                     synthetic_calc = SyntheticStockCalculator()
                     synthetic_result = synthetic_calc.calculate(
                         strike_price=strike_price,
                         call_premium=call_last_price,
                         put_premium=put_last_price,
                         current_stock_price=current_price,
-                        risk_free_rate=risk_free_rate,
-                        time_to_expiration=time_to_expiration_years,
+                        risk_free_rate=m11_risk_free_rate,
+                        time_to_expiration=m11_time_to_expiration,
                         calculation_date=analysis_date_str
                     )
                     self.analysis_results['module11_synthetic_stock'] = synthetic_result.to_dict()
@@ -865,7 +877,7 @@ class OptionsAnalysisSystem:
             except Exception as exc:
                 logger.warning("! 模塊17執行失敗: %s", exc)
             
-            # 模塊18: 歷史波動率計算
+            # 模塊18: 歷史波動率計算 + IV Rank/Percentile（增強版）
             try:
                 # 嘗試獲取歷史價格數據
                 historical_data = analysis_data.get('historical_data')
@@ -886,11 +898,82 @@ class OptionsAnalysisSystem:
                             historical_volatility=hv_30.historical_volatility
                         )
                         
-                        self.analysis_results['module18_historical_volatility'] = {
+                        result_dict = {
                             'hv_results': {k: v.to_dict() for k, v in hv_results.items()},
                             'iv_hv_comparison': iv_hv_ratio.to_dict()
                         }
+                        
+                        # ✅ 新增: IV Rank 和 IV Percentile 計算（如果有足夠的歷史數據）
+                        # 需要至少 200 天數據（約 10 個月），理想是 252 天（1年）
+                        if len(historical_data) >= 200:
+                            logger.info("  計算 IV Rank 和 IV Percentile (52週基準)...")
+                            
+                            # 嘗試獲取歷史IV數據（如果data_fetcher支持）
+                            try:
+                                historical_iv = self.fetcher.get_historical_iv(ticker, days=252)
+                                
+                                # 接受至少 200 天的數據
+                                if historical_iv is not None and len(historical_iv) >= 200:
+                                    # 計算 IV Rank
+                                    iv_rank = hv_calc.calculate_iv_rank(
+                                        current_iv=volatility_estimate,
+                                        historical_iv_series=historical_iv
+                                    )
+                                    
+                                    # 計算 IV Percentile
+                                    iv_percentile = hv_calc.calculate_iv_percentile(
+                                        current_iv=volatility_estimate,
+                                        historical_iv_series=historical_iv
+                                    )
+                                    
+                                    # 獲取交易建議
+                                    iv_recommendation = hv_calc.get_iv_recommendation(iv_rank, iv_percentile)
+                                    
+                                    result_dict['iv_rank'] = iv_rank
+                                    result_dict['iv_percentile'] = iv_percentile
+                                    result_dict['iv_recommendation'] = iv_recommendation
+                                    result_dict['note'] = '基於252個交易日(52週)的歷史IV數據'
+                                    
+                                    logger.info(f"  IV Rank: {iv_rank:.2f}%, IV Percentile: {iv_percentile:.2f}%")
+                                    logger.info(f"  建議: {iv_recommendation['action']} - {iv_recommendation['reason']}")
+                                else:
+                                    logger.info("  ! 無法獲取歷史IV數據，跳過IV Rank/Percentile計算")
+                            except Exception as e:
+                                logger.debug(f"  ! 獲取歷史IV失敗: {e}")
+                        
+                        self.analysis_results['module18_historical_volatility'] = result_dict
                         logger.info(f"* 模塊18完成: 歷史波動率計算 (HV30={hv_30.historical_volatility*100:.2f}%, IV/HV={iv_hv_ratio.iv_hv_ratio:.2f})")
+                        
+                        # ========== 崗位13: IV Rank 整合到 Module 14 ==========
+                        # 將 Module 18 計算的 IV Rank 傳入 Module 14 作為崗位13
+                        try:
+                            if 'module14_monitoring_posts' in self.analysis_results:
+                                iv_rank_value = result_dict.get('iv_rank')
+                                
+                                # 調用 check_iv_rank_post 方法
+                                iv_rank_result = monitoring_calc.check_iv_rank_post(iv_rank_value)
+                                
+                                # 更新 Module 14 結果
+                                module14_result = self.analysis_results['module14_monitoring_posts']
+                                module14_result['post13_iv_rank_status'] = iv_rank_result['status']
+                                module14_result['post_details']['post13'] = iv_rank_result
+                                
+                                # 如果 IV Rank 觸發警告，更新警報計數
+                                if iv_rank_value is not None and (iv_rank_value > 70 or iv_rank_value < 30):
+                                    module14_result['total_alerts'] = module14_result.get('total_alerts', 0) + 1
+                                    # 重新計算風險等級
+                                    alerts = module14_result['total_alerts']
+                                    if alerts >= 4:
+                                        module14_result['risk_level'] = "高風險"
+                                    elif alerts >= 2:
+                                        module14_result['risk_level'] = "中風險"
+                                    else:
+                                        module14_result['risk_level'] = "低風險"
+                                
+                                logger.info(f"  崗位13整合完成: IV Rank {iv_rank_value}% - {iv_rank_result['status']}")
+                        except Exception as e:
+                            logger.warning(f"  ! 崗位13整合失敗: {e}")
+                        
                     else:
                         self.analysis_results['module18_historical_volatility'] = {
                             'hv_results': {k: v.to_dict() for k, v in hv_results.items()}
@@ -938,10 +1021,49 @@ class OptionsAnalysisSystem:
             except Exception as exc:
                 logger.warning("! 模塊19執行失敗: %s", exc)
             
-            # ========== 模塊3: 套戥水位 (使用期權理論價) ==========
-            # 注意: Module 3 必須在 Module 15 (Black-Scholes) 之後執行
-            # 原因: 需要使用期權理論價而非股票遠期價來計算套戥水位
-            logger.info("\n→ 運行 Module 3: 套戥水位計算（使用期權理論價）...")
+            # ========== 模塊21: 動量過濾器 (新增) ==========
+            logger.info("\n→ 運行 Module 21: 動量過濾器...")
+            momentum_score = 0.5  # 默認中性動量
+            try:
+                # 嘗試獲取歷史數據
+                historical_data = analysis_data.get('historical_data')
+                if historical_data is not None and len(historical_data) >= 30:
+                    logger.info("  計算動量得分...")
+                    
+                    momentum_filter = MomentumFilter(data_fetcher=self.fetcher)
+                    momentum_result = momentum_filter.calculate(
+                        ticker=ticker,
+                        historical_data=historical_data,
+                        calculation_date=analysis_date_str
+                    )
+                    
+                    momentum_score = momentum_result.momentum_score
+                    self.analysis_results['module21_momentum_filter'] = momentum_result.to_dict()
+                    
+                    logger.info(f"* 模塊21完成: 動量過濾器")
+                    logger.info(f"  動量得分: {momentum_score:.4f}")
+                    logger.info(f"  建議: {momentum_result.recommendation}")
+                else:
+                    logger.info("! 模塊21跳過: 歷史數據不足（需要至少30天數據）")
+                    self.analysis_results['module21_momentum_filter'] = {
+                        'status': 'skipped',
+                        'reason': '歷史數據不足',
+                        'momentum_score': momentum_score,
+                        'note': '使用默認中性動量 (0.5)'
+                    }
+            except Exception as exc:
+                logger.warning(f"! 模塊21執行失敗: {exc}")
+                self.analysis_results['module21_momentum_filter'] = {
+                    'status': 'error',
+                    'reason': str(exc),
+                    'momentum_score': momentum_score,
+                    'note': '使用默認中性動量 (0.5)'
+                }
+            
+            # ========== 模塊3: 套戥水位 (使用期權理論價 + 動量整合) ==========
+            # 注意: Module 3 必須在 Module 15 (Black-Scholes) 和 Module 21 (動量過濾器) 之後執行
+            # 原因: 需要使用期權理論價而非股票遠期價來計算套戥水位，並整合動量因素
+            logger.info("\n→ 運行 Module 3: 套戥水位計算（使用期權理論價 + 動量整合）...")
             try:
                 # ✅ Task 6: 增強無期權理論價處理
                 # 從 Module 15 獲取期權理論價
@@ -951,6 +1073,7 @@ class OptionsAnalysisSystem:
                 logger.info("  檢查前置條件:")
                 logger.info(f"    市場期權價格: ${call_last_price:.2f}" if call_last_price > 0 else "    x 市場期權價格不可用")
                 logger.info(f"    Module 15 結果: {'* 可用' if bs_results else 'x 不可用'}")
+                logger.info(f"    動量得分: {momentum_score:.4f}")
                 
                 if call_last_price > 0 and bs_results:
                     # 獲取 Call 期權理論價
@@ -958,12 +1081,16 @@ class OptionsAnalysisSystem:
                     
                     if call_theoretical_price and call_theoretical_price > 0:
                         logger.info(f"    期權理論價: ${call_theoretical_price:.2f}")
-                        logger.info("  * 所有前置條件滿足，執行套戥水位計算...")
+                        logger.info("  * 所有前置條件滿足，執行套戥水位計算（含動量整合）...")
                         
                         arb_calc = ArbitrageSpreadCalculator()
-                        arb_result = arb_calc.calculate(
+                        
+                        # ✅ 使用動量整合版本
+                        arb_result = arb_calc.calculate_with_momentum(
                             market_option_price=call_last_price,
                             fair_value=call_theoretical_price,  # ✅ 使用期權理論價
+                            momentum_score=momentum_score,  # ✅ 整合動量得分
+                            ticker=ticker,
                             bid_price=call_bid,
                             ask_price=call_ask,
                             calculation_date=analysis_date_str
@@ -971,16 +1098,19 @@ class OptionsAnalysisSystem:
                         
                         # 在結果中添加數據來源標註
                         result_dict = arb_result.to_dict()
-                        result_dict['note'] = '使用 Black-Scholes 期權理論價（非股票遠期價）'
+                        result_dict['note'] = '使用 Black-Scholes 期權理論價（非股票遠期價）+ 動量過濾器'
                         result_dict['theoretical_price_source'] = 'Module 15 (Black-Scholes)'
+                        result_dict['momentum_source'] = 'Module 21 (Momentum Filter)'
                         result_dict['theoretical_price'] = round(call_theoretical_price, 2)
                         result_dict['market_price'] = round(call_last_price, 2)
+                        result_dict['momentum_score'] = round(momentum_score, 4)
                         
                         self.analysis_results['module3_arbitrage_spread'] = result_dict
-                        logger.info(f"* 模塊3完成: 套戥水位")
+                        logger.info(f"* 模塊3完成: 套戥水位（含動量整合）")
                         logger.info(f"  市場價: ${call_last_price:.2f}")
                         logger.info(f"  理論價: ${call_theoretical_price:.2f}")
                         logger.info(f"  價差: ${arb_result.arbitrage_spread:.2f} ({arb_result.spread_percentage:.2f}%)")
+                        logger.info(f"  動量得分: {momentum_score:.4f}")
                         logger.info(f"  建議: {arb_result.recommendation}")
                     else:
                         # ✅ Task 6: 詳細記錄無期權理論價的情況
@@ -1120,6 +1250,116 @@ class OptionsAnalysisSystem:
                     'reason': str(exc),
                     'error_type': type(exc).__name__,
                     'degradation_note': '! 降級: 模塊執行失敗，請檢查日誌'
+                }
+            
+            # ========== 模塊22: 最佳行使價分析 ==========
+            logger.info("\n→ 運行 Module 22: 最佳行使價分析...")
+            try:
+                # 獲取期權鏈數據
+                option_chain_raw = analysis_data.get('option_chain', {})
+                iv_rank_value = self.analysis_results.get('module18_historical_volatility', {}).get('iv_rank', 50.0)
+                
+                # 轉換 DataFrame 為 list of dicts（Module 22 期望的格式）
+                option_chain_converted = {}
+                calls_data = option_chain_raw.get('calls')
+                puts_data = option_chain_raw.get('puts')
+                
+                # 檢查並轉換 calls
+                if calls_data is not None:
+                    import pandas as pd
+                    if isinstance(calls_data, pd.DataFrame) and not calls_data.empty:
+                        option_chain_converted['calls'] = calls_data.to_dict('records')
+                        logger.info(f"  轉換 calls DataFrame: {len(option_chain_converted['calls'])} 個行使價")
+                    elif isinstance(calls_data, list):
+                        option_chain_converted['calls'] = calls_data
+                    else:
+                        option_chain_converted['calls'] = []
+                else:
+                    option_chain_converted['calls'] = []
+                
+                # 檢查並轉換 puts
+                if puts_data is not None:
+                    import pandas as pd
+                    if isinstance(puts_data, pd.DataFrame) and not puts_data.empty:
+                        option_chain_converted['puts'] = puts_data.to_dict('records')
+                        logger.info(f"  轉換 puts DataFrame: {len(option_chain_converted['puts'])} 個行使價")
+                    elif isinstance(puts_data, list):
+                        option_chain_converted['puts'] = puts_data
+                    else:
+                        option_chain_converted['puts'] = []
+                else:
+                    option_chain_converted['puts'] = []
+                
+                if option_chain_converted['calls'] or option_chain_converted['puts']:
+                    optimal_strike_calc = OptimalStrikeCalculator()
+                    
+                    # 分析四種策略的最佳行使價
+                    strategies = ['long_call', 'long_put', 'short_call', 'short_put']
+                    optimal_results = {}
+                    
+                    for strategy in strategies:
+                        result = optimal_strike_calc.analyze_strikes(
+                            current_price=current_price,
+                            option_chain=option_chain_converted,
+                            strategy_type=strategy,
+                            days_to_expiration=int(days_to_expiration) if days_to_expiration else 30,
+                            iv_rank=iv_rank_value
+                        )
+                        optimal_results[strategy] = result
+                        
+                        if result.get('best_strike'):
+                            logger.info(f"  {strategy}: 最佳行使價 ${result['best_strike']:.2f}, 評分 {result['top_recommendations'][0]['composite_score'] if result['top_recommendations'] else 0:.1f}")
+                    
+                    self.analysis_results['module22_optimal_strike'] = optimal_results
+                    logger.info("* 模塊22完成: 最佳行使價分析")
+                else:
+                    logger.info("! 模塊22跳過: 期權鏈數據不足")
+                    self.analysis_results['module22_optimal_strike'] = {
+                        'status': 'skipped',
+                        'reason': '期權鏈數據不足'
+                    }
+            except Exception as exc:
+                logger.warning(f"! 模塊22執行失敗: {exc}")
+                self.analysis_results['module22_optimal_strike'] = {
+                    'status': 'error',
+                    'reason': str(exc)
+                }
+            
+            # ========== 模塊23: 動態IV閾值 ==========
+            logger.info("\n→ 運行 Module 23: 動態IV閾值計算...")
+            try:
+                dynamic_iv_calc = DynamicIVThresholdCalculator()
+                
+                # 獲取歷史IV數據
+                historical_iv = None
+                hv_data = self.analysis_results.get('module18_historical_volatility', {})
+                if 'historical_iv' in hv_data:
+                    historical_iv = hv_data['historical_iv']
+                
+                # 計算動態閾值
+                iv_threshold_result = dynamic_iv_calc.calculate_thresholds(
+                    current_iv=analysis_data.get('implied_volatility', 25.0),
+                    historical_iv=historical_iv,
+                    vix=vix_value
+                )
+                
+                self.analysis_results['module23_dynamic_iv_threshold'] = iv_threshold_result.to_dict()
+                
+                # 獲取交易建議
+                trading_suggestion = dynamic_iv_calc.get_trading_suggestion(iv_threshold_result)
+                self.analysis_results['module23_dynamic_iv_threshold']['trading_suggestion'] = trading_suggestion
+                
+                logger.info(f"* 模塊23完成: 動態IV閾值計算")
+                logger.info(f"  當前IV: {iv_threshold_result.current_iv:.2f}%")
+                logger.info(f"  高閾值: {iv_threshold_result.high_threshold:.2f}%")
+                logger.info(f"  低閾值: {iv_threshold_result.low_threshold:.2f}%")
+                logger.info(f"  狀態: {iv_threshold_result.status}")
+                logger.info(f"  數據質量: {iv_threshold_result.data_quality}")
+            except Exception as exc:
+                logger.warning(f"! 模塊23執行失敗: {exc}")
+                self.analysis_results['module23_dynamic_iv_threshold'] = {
+                    'status': 'error',
+                    'reason': str(exc)
                 }
             
             # 新增: 策略推薦引擎

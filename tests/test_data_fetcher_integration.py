@@ -531,14 +531,14 @@ class TestYahooFinanceIntegration(unittest.TestCase):
     
     def test_fallback_chain_ibkr_to_yahoo_to_yfinance(self):
         """
-        測試完整的降級鏈: IBKR → Yahoo Finance → yfinance
+        測試完整的降級鏈: IBKR → Yahoo Finance → yfinance/Finviz
         
         場景: 
         1. IBKR 不可用
         2. Yahoo Finance 失敗
-        3. 降級到 yfinance
+        3. 降級到 yfinance 或 Finviz
         """
-        logger.info("✓ 測試: 完整降級鏈 (IBKR → Yahoo → yfinance)")
+        logger.info("✓ 測試: 完整降級鏈 (IBKR → Yahoo → yfinance/Finviz)")
         
         # 確保 IBKR 不可用
         self.fetcher.ibkr_client = None
@@ -548,7 +548,7 @@ class TestYahooFinanceIntegration(unittest.TestCase):
             with patch.object(self.fetcher.yahoo_v2_client, 'get_quote', 
                             side_effect=Exception("模擬 Yahoo API 失敗")):
                 
-                # 調用 get_stock_info（應該降級到 yfinance）
+                # 調用 get_stock_info（應該降級到 yfinance 或 Finviz）
                 stock_info = self.fetcher.get_stock_info('AAPL')
                 
                 # 驗證結果
@@ -560,15 +560,20 @@ class TestYahooFinanceIntegration(unittest.TestCase):
                     report = self.fetcher.get_api_status_report()
                     fallback_used = report.get('fallback_used', {})
                     
-                    # 驗證使用了 yfinance
+                    # 驗證使用了 yfinance 或 Finviz 作為 fallback
                     if 'stock_info' in fallback_used:
                         sources = fallback_used['stock_info']
+                        # 接受 yfinance 或 Finviz 作為有效的 fallback 來源
+                        valid_fallback = any(
+                            'yfinance' in source.lower() or 'finviz' in source.lower() 
+                            for source in sources
+                        )
                         self.assertTrue(
-                            any('yfinance' in source.lower() for source in sources),
-                            f"應該使用 yfinance，實際: {sources}"
+                            valid_fallback,
+                            f"應該使用 yfinance 或 Finviz，實際: {sources}"
                         )
                     
-                    logger.info(f"  ✓ 成功降級到 yfinance")
+                    logger.info(f"  ✓ 成功降級到備用數據源")
                     logger.info(f"  ✓ 股價: ${stock_info['current_price']:.2f}")
                 else:
                     logger.warning("  ⚠ 未能獲取股票信息")

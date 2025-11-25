@@ -45,6 +45,9 @@ class MonitoringPostsResult:
     post11_expiration_date_status: str = ""
     post12_vix_status: str = ""
     
+    # 崗位13: IV Rank 歷史判斷（美股市場增強）
+    post13_iv_rank_status: str = ""
+    
     # 詳細崗位信息
     post_details: Dict = field(default_factory=dict)
     
@@ -74,6 +77,8 @@ class MonitoringPostsResult:
             'post10_earnings_date_status': self.post10_earnings_date_status,
             'post11_expiration_date_status': self.post11_expiration_date_status,
             'post12_vix_status': self.post12_vix_status,
+            # 崗位13: IV Rank 歷史判斷
+            'post13_iv_rank_status': self.post13_iv_rank_status,
         }
         if self.post_details:
             result['post_details'] = self.post_details
@@ -179,65 +184,113 @@ class MonitoringPostsCalculator:
             # ========== 崗位4: Delta監察 (適用於沽出期權策略) ==========
             delta_target_min = 0.10
             delta_target_max = 0.15
+            delta_otm_threshold = 0.20  # 深度價外閾值（三不買原則）
+            
+            # 檢查Delta範圍
             if delta > delta_target_max or delta < delta_target_min:
                 alerts += 1
                 post4_status = "! 警報"
                 logger.warning(f"! 崗位4警報: Delta不在目標範圍 ({delta:.4f})")
             else:
                 post4_status = "OK 正常"
+            
+            # 額外檢查：深度價外期權（三不買原則）
+            if delta < delta_otm_threshold:
+                alerts += 1
+                post4_status = "! 警報 - 深度價外"
+                logger.warning(f"! 崗位4警報: Delta < {delta_otm_threshold} - 深度價外期權，勝率低（三不買原則）")
+            
             post_details['post4'] = {
                 'name': 'Delta監察',
                 'value': delta,
                 'threshold': f'{delta_target_min}-{delta_target_max}',
-                'status': post4_status
+                'otm_threshold': delta_otm_threshold,
+                'status': post4_status,
+                'note': 'Delta < 0.20 為深度價外，不建議交易（三不買原則）'
             }
             
-            # ========== 崗位5: 未平倉合約監察 ==========
-            # 調整為1000（更適合美國市場）
-            # 原因：美國期權市場流動性高，OI > 1000 已足夠
-            oi_threshold = 1000
-            if open_interest < oi_threshold:
+            # ========== 崗位5: 未平倉合約監察（三不買原則）==========
+            # 美股市場標準：OI ≥ 500（推薦）
+            # 最低標準：OI ≥ 100（可接受）
+            oi_threshold_recommended = 500
+            oi_threshold_minimum = 100
+            
+            if open_interest < oi_threshold_minimum:
+                alerts += 1
+                post5_status = "! 嚴重警報"
+                logger.warning(f"! 崗位5嚴重警報: 未平倉合約極低 ({open_interest} < {oi_threshold_minimum}) - 不建議交易（三不買原則）")
+            elif open_interest < oi_threshold_recommended:
                 alerts += 1
                 post5_status = "! 警報"
-                logger.warning(f"! 崗位5警報: 未平倉合約過低 ({open_interest} < {oi_threshold})")
+                logger.warning(f"! 崗位5警報: 未平倉合約偏低 ({open_interest} < {oi_threshold_recommended})")
             else:
                 post5_status = "OK 正常"
+            
             post_details['post5'] = {
                 'name': '未平倉合約監察',
                 'value': open_interest,
-                'threshold': oi_threshold,
+                'threshold_recommended': oi_threshold_recommended,
+                'threshold_minimum': oi_threshold_minimum,
                 'status': post5_status,
-                'note': '美國市場標準 (OI ≥ 1000)'
+                'note': '美股標準：推薦≥500，最低≥100（三不買原則）'
             }
             
-            # ========== 崗位6: 成交量監察 ==========
-            volume_threshold = 1000
-            if volume < volume_threshold:
+            # ========== 崗位6: 成交量監察（三不買原則）==========
+            # 美股市場標準：Volume ≥ 100（推薦）
+            # 最低標準：Volume ≥ 10（可接受）
+            volume_threshold_recommended = 100
+            volume_threshold_minimum = 10
+            
+            if volume < volume_threshold_minimum:
+                alerts += 1
+                post6_status = "! 嚴重警報"
+                logger.warning(f"! 崗位6嚴重警報: 成交量極低 ({volume} < {volume_threshold_minimum}) - 不建議交易（三不買原則）")
+            elif volume < volume_threshold_recommended:
                 alerts += 1
                 post6_status = "! 警報"
-                logger.warning(f"! 崗位6警報: 成交量過低 ({volume})")
+                logger.warning(f"! 崗位6警報: 成交量偏低 ({volume} < {volume_threshold_recommended})")
             else:
                 post6_status = "OK 正常"
+            
             post_details['post6'] = {
                 'name': '成交量監察',
                 'value': volume,
-                'threshold': volume_threshold,
-                'status': post6_status
+                'threshold_recommended': volume_threshold_recommended,
+                'threshold_minimum': volume_threshold_minimum,
+                'status': post6_status,
+                'note': '美股標準：推薦≥100，最低≥10（三不買原則）'
             }
             
-            # ========== 崗位7: 買賣盤差價監察 ==========
-            spread_threshold = 0.50
-            if bid_ask_spread > spread_threshold:
+            # ========== 崗位7: 買賣盤差價監察（三不買原則）==========
+            # 計算價差百分比
+            if option_premium > 0:
+                spread_percentage = (bid_ask_spread / option_premium) * 100
+            else:
+                spread_percentage = 0.0
+            
+            # 美股市場標準：價差 < 5%（推薦），< 10%（可接受）
+            spread_pct_threshold_recommended = 5.0
+            spread_pct_threshold_maximum = 10.0
+            
+            if spread_percentage > spread_pct_threshold_maximum:
+                alerts += 1
+                post7_status = "! 嚴重警報"
+                logger.warning(f"! 崗位7嚴重警報: 買賣差價過大 ({spread_percentage:.1f}% > {spread_pct_threshold_maximum}%) - 不建議交易（三不買原則）")
+            elif spread_percentage > spread_pct_threshold_recommended:
                 alerts += 1
                 post7_status = "! 警報"
-                logger.warning(f"! 崗位7警報: 買賣差價過大 (${bid_ask_spread:.2f})")
+                logger.warning(f"! 崗位7警報: 買賣差價偏大 ({spread_percentage:.1f}% > {spread_pct_threshold_recommended}%)")
             else:
                 post7_status = "OK 正常"
+            
             post_details['post7'] = {
                 'name': '買賣盤差價監察',
                 'value': bid_ask_spread,
-                'threshold': spread_threshold,
-                'status': post7_status
+                'spread_percentage': round(spread_percentage, 2),
+                'threshold_recommended': f'{spread_pct_threshold_recommended}%',
+                'threshold_maximum': f'{spread_pct_threshold_maximum}%',
+                'status': post7_status,
+                'note': '美股標準：推薦<5%，最高<10%（三不買原則）'
             }
             
             # ========== 崗位8: ATR波幅監察 ==========
@@ -299,26 +352,60 @@ class MonitoringPostsCalculator:
                 'days_remaining': days_to_earnings if days_to_earnings is not None else None
             }
             
-            # ========== 崗位11: 到期日監察 ==========
+            # ========== 崗位11: 到期日監察（三不買原則+金曹建議）==========
             post11_status = "OK 正常"
             days_to_expiration = None
+            expiration_category = "未知"
+            theta_warning = ""
+            
             if expiration_date:
                 try:
                     exp_date = datetime.strptime(expiration_date, '%Y-%m-%d')
                     days_to_expiration = (exp_date - datetime.now()).days
                     
-                    if 0 <= days_to_expiration <= 7:
+                    # 根據金曹老師的建議分類
+                    if days_to_expiration < 7:
+                        # 極短期：Theta衰減極快
+                        alerts += 1
+                        post11_status = "! 嚴重警報"
+                        expiration_category = "極短期（<7天）"
+                        theta_warning = "Theta衰減極快，時間價值每天損失巨大（三不買原則）"
+                        logger.warning(f"! 崗位11嚴重警報: {days_to_expiration}天後到期 - {theta_warning}")
+                    
+                    elif 7 <= days_to_expiration < 30:
+                        # 短期：可接受但需謹慎
+                        post11_status = "⚠️ 注意"
+                        expiration_category = "短期（7-30天）"
+                        theta_warning = "Theta衰減較快，適合短線交易"
+                        logger.info(f"  崗位11注意: {days_to_expiration}天後到期 - {theta_warning}")
+                    
+                    elif 30 <= days_to_expiration <= 90:
+                        # 最佳範圍：金曹推薦
+                        post11_status = "✓ 最佳範圍"
+                        expiration_category = "最佳範圍（30-90天）"
+                        theta_warning = "金曹老師推薦的最佳交易窗口"
+                        logger.info(f"  崗位11: {days_to_expiration}天後到期 - {theta_warning}")
+                    
+                    else:  # > 90天
+                        # 長期：時間價值過高
                         alerts += 1
                         post11_status = "! 警報"
-                        logger.warning(f"! 崗位11警報: {days_to_expiration}天後到期 ({expiration_date})")
+                        expiration_category = "長期（>90天）"
+                        theta_warning = "時間價值過高，買入成本貴（三不買原則）"
+                        logger.warning(f"! 崗位11警報: {days_to_expiration}天後到期 - {theta_warning}")
+                    
                 except:
                     pass
+            
             post_details['post11'] = {
                 'name': '到期日監察',
                 'value': expiration_date if expiration_date else "N/A",
-                'threshold': '7天內',
+                'days_remaining': days_to_expiration if days_to_expiration is not None else None,
+                'category': expiration_category,
                 'status': post11_status,
-                'days_remaining': days_to_expiration if days_to_expiration is not None else None
+                'theta_warning': theta_warning,
+                'optimal_range': '30-90天（金曹老師推薦）',
+                'note': '< 7天：極快衰減 | 7-30天：短線 | 30-90天：最佳 | > 90天：時間價值高'
             }
             
             # ========== 崗位12: 市場情緒監察(VIX) ==========
@@ -408,6 +495,93 @@ class MonitoringPostsCalculator:
         logger.info("  輸入參數驗證通過")
         return True
 
-
-# print("✓ BATCH 2完整代碼已生成")
-# print("包含: module11-14 (1200+行)")
+    def check_iv_rank_post(self, iv_rank: float) -> Dict:
+        """
+        崗位13: IV Rank 歷史判斷標準（美股市場增強）
+        
+        基於金曹12監察崗位框架，整合美股市場的 IV Rank 分析。
+        
+        來源: tastylive、CBOE 美股期權市場標準
+        
+        判斷標準:
+        - IV Rank > 70%: 高IV環境，適合賣期權策略
+        - IV Rank < 30%: 低IV環境，適合買期權策略
+        - IV Rank 30-70%: 中性IV環境，觀望或中性策略
+        
+        參數:
+            iv_rank: IV Rank 百分比 (0-100)，None 表示數據不足
+        
+        返回:
+            Dict: {
+                'name': str,
+                'value': float or None,
+                'threshold': str,
+                'status': str,
+                'note': str,
+                'strategy_suggestion': str,
+                'iv_environment': str
+            }
+        """
+        try:
+            # 處理缺失數據
+            if iv_rank is None:
+                logger.info("  崗位13: IV Rank 數據不足")
+                return {
+                    'name': 'IV Rank 歷史判斷',
+                    'value': None,
+                    'threshold': '30%-70%',
+                    'status': '! 數據不足',
+                    'note': '需要252天歷史IV數據計算IV Rank',
+                    'strategy_suggestion': '無法提供策略建議',
+                    'iv_environment': '未知'
+                }
+            
+            # 確保 IV Rank 在有效範圍內
+            iv_rank = max(0.0, min(100.0, float(iv_rank)))
+            
+            # 金曹理論 + 美股市場標準的 IV Rank 判斷
+            if iv_rank > 70:
+                # 高IV環境 - 適合做空波動率
+                status = '⚠️ 高IV環境'
+                strategy = '適合賣期權策略 (Iron Condor, Short Straddle, Credit Spread)'
+                note = f'IV Rank {iv_rank:.1f}% > 70% - 隱含波動率處於歷史高位'
+                iv_environment = '高IV環境 - 建議做空波動率策略'
+                logger.info(f"  崗位13: {status} - IV Rank {iv_rank:.1f}%")
+                
+            elif iv_rank < 30:
+                # 低IV環境 - 適合做多波動率
+                status = '⚠️ 低IV環境'
+                strategy = '適合買期權策略 (Long Straddle, Debit Spread, Long Options)'
+                note = f'IV Rank {iv_rank:.1f}% < 30% - 隱含波動率處於歷史低位'
+                iv_environment = '低IV環境 - 建議做多波動率策略'
+                logger.info(f"  崗位13: {status} - IV Rank {iv_rank:.1f}%")
+                
+            else:
+                # 中性IV環境
+                status = 'OK 中性IV環境'
+                strategy = '中性策略或觀望 (Calendar Spread, Butterfly)'
+                note = f'IV Rank {iv_rank:.1f}% 在 30%-70% 範圍內 - 正常水平'
+                iv_environment = '中性IV環境 - 無明顯優勢'
+                logger.info(f"  崗位13: {status} - IV Rank {iv_rank:.1f}%")
+            
+            return {
+                'name': 'IV Rank 歷史判斷',
+                'value': round(iv_rank, 2),
+                'threshold': '30%-70%',
+                'status': status,
+                'note': note,
+                'strategy_suggestion': strategy,
+                'iv_environment': iv_environment
+            }
+            
+        except Exception as e:
+            logger.error(f"x 崗位13 IV Rank 判斷失敗: {e}")
+            return {
+                'name': 'IV Rank 歷史判斷',
+                'value': iv_rank if iv_rank is not None else None,
+                'threshold': '30%-70%',
+                'status': 'x 錯誤',
+                'note': f'計算失敗: {e}',
+                'strategy_suggestion': '無法提供建議',
+                'iv_environment': '未知'
+            }
