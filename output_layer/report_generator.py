@@ -424,6 +424,12 @@ class ReportGenerator:
                     f.write(self._format_module19_put_call_parity(module_data))
                 elif module_name == 'module20_fundamental_health':
                     f.write(self._format_module20_fundamental_health(module_data))
+                elif module_name == 'module21_momentum_filter':
+                    f.write(self._format_module21_momentum_filter(module_data))
+                elif module_name == 'module22_optimal_strike':
+                    f.write(self._format_module22_optimal_strike(module_data))
+                elif module_name == 'module23_dynamic_iv_threshold':
+                    f.write(self._format_module23_dynamic_iv_threshold(module_data))
                 elif module_name == 'strike_selection':
                     # 顯示行使價選擇說明
                     f.write(self._format_strike_selection(module_data))
@@ -899,6 +905,239 @@ class ReportGenerator:
         report += f"│   D (60-69): 較差，需謹慎\n"
         report += f"│   F (<60): 差，基本面存在問題\n"
         report += "└────────────────────────────────────────────┘\n"
+        return report
+    
+    def _format_module21_momentum_filter(self, results: dict) -> str:
+        """格式化 Module 21 動量過濾器結果"""
+        report = "\n┌─ Module 21: 動量過濾器 ───────────────────────┐\n"
+        report += "│\n"
+        
+        # 檢查是否跳過
+        if results.get('status') == 'skipped':
+            report += f"│ ! 狀態: 跳過執行\n"
+            report += f"│ 原因: {results.get('reason', 'N/A')}\n"
+            report += f"│ 動量得分: {results.get('momentum_score', 0.5):.4f} (默認中性)\n"
+            report += "│\n"
+            if 'note' in results:
+                report += f"│ 💡 {results.get('note', '')}\n"
+            report += "└────────────────────────────────────────────────┘\n"
+            return report
+        
+        # 檢查是否錯誤
+        if results.get('status') == 'error':
+            report += f"│ x 狀態: 執行錯誤\n"
+            report += f"│ 原因: {results.get('reason', 'N/A')}\n"
+            report += "│\n"
+            report += "└────────────────────────────────────────────────┘\n"
+            return report
+        
+        # 正常結果
+        momentum_score = results.get('momentum_score', 0)
+        recommendation = results.get('recommendation', 'N/A')
+        
+        # 動量得分可視化（進度條）
+        bar_length = int(momentum_score * 20)
+        bar = '█' * bar_length + '░' * (20 - bar_length)
+        
+        report += f"│ 📈 動量得分: {momentum_score:.4f}\n"
+        report += f"│ [{bar}] {momentum_score*100:.1f}%\n"
+        report += "│\n"
+        
+        # 動量等級
+        if momentum_score > 0.7:
+            momentum_level = "🔥 強勢上漲"
+            momentum_note = "不建議逆勢Short"
+        elif momentum_score > 0.4:
+            momentum_level = "➡️ 中性"
+            momentum_note = "可謹慎操作"
+        else:
+            momentum_level = "❄️ 動量轉弱"
+            momentum_note = "可考慮Short"
+        
+        report += f"│ 動量等級: {momentum_level}\n"
+        report += f"│ 策略建議: {momentum_note}\n"
+        report += "│\n"
+        
+        # 組成部分（如果有）
+        if 'price_momentum' in results or 'volume_momentum' in results or 'relative_strength' in results:
+            report += f"│ 📊 動量組成:\n"
+            
+            if 'price_momentum' in results:
+                price_mom = results.get('price_momentum', 0)
+                report += f"│   價格動量 (50%): {price_mom:.4f}\n"
+                if 'price_change_1m' in results:
+                    change_1m = results.get('price_change_1m', 0)
+                    if change_1m is not None:
+                        report += f"│     1個月變化: {change_1m:+.2f}%\n"
+                if 'price_change_3m' in results:
+                    change_3m = results.get('price_change_3m', 0)
+                    if change_3m is not None:
+                        report += f"│     3個月變化: {change_3m:+.2f}%\n"
+            
+            if 'volume_momentum' in results:
+                vol_mom = results.get('volume_momentum', 0)
+                report += f"│   成交量動量 (30%): {vol_mom:.4f}\n"
+            
+            if 'relative_strength' in results:
+                rs = results.get('relative_strength', 0)
+                report += f"│   相對強度 (20%): {rs:.4f}\n"
+            
+            report += "│\n"
+        
+        # 策略建議
+        report += f"│ 💡 系統建議: {recommendation}\n"
+        report += "│\n"
+        report += "│ 📌 動量閾值解讀:\n"
+        report += "│   > 0.7: 強勢，避免逆勢Short\n"
+        report += "│   0.4-0.7: 中性，謹慎操作\n"
+        report += "│   < 0.4: 轉弱，可以Short\n"
+        report += "│\n"
+        report += "│ ⚠️ 注意: 與 Module 3 套戥水位配合使用\n"
+        report += "└────────────────────────────────────────────────┘\n"
+        return report
+    
+    def _format_module22_optimal_strike(self, results: dict) -> str:
+        """格式化 Module 22 最佳行使價分析結果"""
+        report = "\n┌─ Module 22: 最佳行使價分析 ───────────────────┐\n"
+        report += "│\n"
+        
+        # 檢查是否跳過
+        if results.get('status') == 'skipped':
+            report += f"│ ! 狀態: 跳過執行\n"
+            report += f"│ 原因: {results.get('reason', 'N/A')}\n"
+            report += "│\n"
+            report += "└────────────────────────────────────────────────┘\n"
+            return report
+        
+        # 檢查是否錯誤
+        if results.get('status') == 'error':
+            report += f"│ x 狀態: 執行錯誤\n"
+            report += f"│ 原因: {results.get('reason', 'N/A')}\n"
+            report += "│\n"
+            report += "└────────────────────────────────────────────────┘\n"
+            return report
+        
+        # 遍歷四種策略
+        strategies = {
+            'long_call': ('📈 Long Call', '看漲買入'),
+            'long_put': ('📉 Long Put', '看跌買入'),
+            'short_call': ('📊 Short Call', '看跌賣出'),
+            'short_put': ('💼 Short Put', '看漲賣出')
+        }
+        
+        for strategy_key, (emoji_name, desc) in strategies.items():
+            if strategy_key not in results:
+                continue
+            
+            strategy_data = results[strategy_key]
+            
+            report += f"│ {emoji_name} ({desc}):\n"
+            
+            # 最佳行使價
+            best_strike = strategy_data.get('best_strike')
+            if best_strike:
+                report += f"│   推薦行使價: ${best_strike:.2f}\n"
+                
+                # 找到對應的推薦詳情
+                if 'top_recommendations' in strategy_data and strategy_data['top_recommendations']:
+                    best_rec = strategy_data['top_recommendations'][0]
+                    
+                    # 評分
+                    score = best_rec.get('composite_score', 0)
+                    stars = '★' * int(score / 20) + '☆' * (5 - int(score / 20))
+                    report += f"│   綜合評分: {stars} ({score:.1f}/100)\n"
+                    
+                    # 關鍵指標
+                    if 'delta' in best_rec:
+                        report += f"│   Delta: {best_rec.get('delta', 0):.4f}\n"
+                    if 'premium' in best_rec:
+                        report += f"│   權利金: ${best_rec.get('premium', 0):.2f}\n"
+                    if 'liquidity_score' in best_rec:
+                        report += f"│   流動性得分: {best_rec.get('liquidity_score', 0):.1f}/100\n"
+            else:
+                report += f"│   ! 無推薦（數據不足）\n"
+            
+            report += "│\n"
+        
+        report += "│ 💡 使用建議:\n"
+        report += "│   1. 優先選擇流動性得分 > 70 的行使價\n"
+        report += "│   2. Long策略選擇 Delta 0.30-0.70 範圍\n"
+        report += "│   3. Short策略選擇 Delta 0.20-0.40 範圍\n"
+        report += "│   4. 結合 Module 14 監察崗位綜合判斷\n"
+        report += "└────────────────────────────────────────────────┘\n"
+        return report
+    
+    def _format_module23_dynamic_iv_threshold(self, results: dict) -> str:
+        """格式化 Module 23 動態IV閾值結果"""
+        report = "\n┌─ Module 23: 動態IV閾值計算 ───────────────────┐\n"
+        report += "│\n"
+        
+        # 檢查是否錯誤
+        if results.get('status') == 'error':
+            report += f"│ x 狀態: 執行錯誤\n"
+            report += f"│ 原因: {results.get('reason', 'N/A')}\n"
+            report += "│\n"
+            report += "└────────────────────────────────────────────────┘\n"
+            return report
+        
+        # 正常結果
+        current_iv = results.get('current_iv', 0)
+        high_threshold = results.get('high_threshold', 0)
+        low_threshold = results.get('low_threshold', 0)
+        iv_status = results.get('iv_status', 'N/A')
+        data_quality = results.get('data_quality', 'N/A')
+        
+        report += f"│ 📊 當前IV狀態:\n"
+        report += f"│   當前IV: {current_iv:.2f}%\n"
+        report += f"│   高閾值: {high_threshold:.2f}%\n"
+        report += f"│   低閾值: {low_threshold:.2f}%\n"
+        report += "│\n"
+        
+        # IV範圍可視化
+        range_width = high_threshold - low_threshold
+        if range_width > 0:
+            current_position = (current_iv - low_threshold) / range_width
+            current_position = max(0, min(1, current_position))
+            
+            bar_pos = int(current_position * 20)
+            bar = '░' * bar_pos + '█' + '░' * (20 - bar_pos - 1)
+            
+            report += f"│ IV範圍可視化:\n"
+            report += f"│ 低 [{bar}] 高\n"
+            report += f"│ {low_threshold:.1f}%         {current_iv:.1f}%         {high_threshold:.1f}%\n"
+            report += "│\n"
+        
+        # 狀態解讀
+        status_emoji = {
+            'high': '🔴',
+            'normal': '🟢',
+            'low': '🔵'
+        }
+        emoji = status_emoji.get(iv_status.lower() if isinstance(iv_status, str) else 'normal', '⚪')
+        
+        report += f"│ {emoji} IV狀態: {iv_status}\n"
+        
+        # 交易建議
+        if 'trading_suggestion' in results:
+            suggestion = results['trading_suggestion']
+            if isinstance(suggestion, dict):
+                report += f"│ 💡 交易建議: {suggestion.get('action', 'N/A')}\n"
+                if 'reason' in suggestion:
+                    report += f"│    理由: {suggestion.get('reason', 'N/A')}\n"
+            else:
+                report += f"│ 💡 交易建議: {suggestion}\n"
+        
+        report += "│\n"
+        
+        # 數據質量
+        report += f"│ 📌 數據質量: {data_quality}\n"
+        
+        report += "│\n"
+        report += "│ 📖 解讀:\n"
+        report += "│   🔴 HIGH: IV 偏高，考慮賣出期權\n"
+        report += "│   🟢 NORMAL: IV 合理，等待機會\n"
+        report += "│   🔵 LOW: IV 偏低，考慮買入期權\n"
+        report += "└────────────────────────────────────────────────┘\n"
         return report
     
     def _format_data_source_summary(self, raw_data: dict, calculation_results: dict) -> str:
