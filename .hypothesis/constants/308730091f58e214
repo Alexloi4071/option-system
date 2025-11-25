@@ -1,0 +1,4 @@
+# file: D:\option_trading_system\option_trading_system\option_trading_system\calculation_layer\module18_historical_volatility.py
+# hypothesis_version: 6.141.1
+
+[0.0, 0.001, 0.02, 0.35, 0.8, 1.2, 50.0, 100.0, 100, 252, '\n【例子1】計算歷史波動率', '\n【例子2】多窗口期 HV 計算', '\n【例子3】IV/HV 比率分析', '! IV範圍為0，返回50%（中性）', '! 歷史IV數據不足，返回50%（中性）', '%Y-%m-%d', '* 歷史波動率計算器已初始化', '* 輸入參數驗證通過', '-', '10天', '2024-01-01', '20天', '30天', '60天', '90天', '=', 'D', 'High', 'IV 低估', 'IV 高估', 'IV偏低，低於歷史水平，適合買入期權', 'IV偏高，高於歷史中位數，適合賣出期權', 'IV處於中性區域，無明顯優勢，建議觀望', 'Long', 'Low', 'Medium', 'Neutral', 'Short', '__main__', 'action', 'assessment', 'calculation_date', 'confidence', 'data_points', 'end_date', 'implied_volatility', 'iv_hv_ratio', 'iv_percentile', 'iv_rank', 'mean_return', 'reason', 'recommendation', 'start_date', 'std_return', 'strftime', 'window_days', 'x 價格序列包含非正值', '合理範圍', '模塊18: 歷史波動率計算器', '波動率必須大於 0', '觀望，IV 與 HV 相符', '計算錯誤，無法生成建議', '輸入參數無效', '驗證輸入參數...']

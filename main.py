@@ -61,6 +61,7 @@ from calculation_layer.module23_dynamic_iv_threshold import DynamicIVThresholdCa
 # 新增: 策略推薦
 from calculation_layer.strategy_recommendation import StrategyRecommender
 from output_layer.report_generator import ReportGenerator
+from output_layer.output_manager import OutputPathManager
 
 
 class OptionsAnalysisSystem:
@@ -89,7 +90,10 @@ class OptionsAnalysisSystem:
         
         self.fetcher = DataFetcher(use_ibkr=use_ibkr)
         self.validator = DataValidator()
-        self.report_generator = ReportGenerator()
+        
+        # 初始化 OutputPathManager 用於按股票代號分類存儲
+        self.output_manager = OutputPathManager(base_output_dir="output")
+        self.report_generator = ReportGenerator(output_manager=self.output_manager)
         self.analysis_results = {}
     
     def run_complete_analysis(self, ticker: str, expiration: str = None, 

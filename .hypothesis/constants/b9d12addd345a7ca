@@ -1,0 +1,4 @@
+# file: D:\option_trading_system\option_trading_system\option_trading_system\data_layer\ibkr_client.py
+# hypothesis_version: 6.141.1
+
+[0.0, 0.5, 100, 7497, '! IBKR 未連接，無法獲取期權鏈', '%Y-%m-%d', '* IBKR 已斷開連接', '* IBKR 連接成功', '127.0.0.1', '2024-12-20', 'AAPL', 'C', 'IBKR 已連接，無需重複連接', 'P', 'SMART', 'USD', '__main__', 'ask', 'bid', 'calls', 'data_source', 'delta', 'expiration', 'gamma', 'ibkr', 'implied_volatility', 'last', 'open_interest', 'option_type', 'paper', 'puts', 'rho', 'strike', 'theta', 'vega', 'volume', 'x IBKR 連接失敗：未連接狀態']

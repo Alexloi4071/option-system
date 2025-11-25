@@ -25,13 +25,16 @@ class DataValidator:
         """
         logger.info("開始驗證股票數據...")
         
+        # 核心必需字段（期權計算必須）
         required_fields = [
             'ticker',
             'current_price',
             'implied_volatility',
-            'eps',
             'risk_free_rate'
         ]
+        
+        # 可選但建議有的字段
+        optional_fields = ['eps', 'pe_ratio', 'market_cap']
         
         # 檢查必需字段
         missing_fields = [f for f in required_fields 
@@ -40,6 +43,12 @@ class DataValidator:
         if missing_fields:
             logger.error(f"x 缺少必需字段: {missing_fields}")
             return False
+        
+        # 檢查可選字段並警告
+        missing_optional = [f for f in optional_fields 
+                          if f not in data or data[f] is None]
+        if missing_optional:
+            logger.warning(f"! 缺少可選字段（不影響核心計算）: {missing_optional}")
         
         # 檢查數據類型和範圍
         try:

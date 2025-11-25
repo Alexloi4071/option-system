@@ -1,0 +1,4 @@
+# file: D:\option_trading_system\option_trading_system\option_trading_system\data_layer\massive_api_client.py
+# hypothesis_version: 6.141.1
+
+[1.0, 100, '%Y-%m-%d', '=', 'AAPL', 'Accept', 'Adj Close', 'Authorization', 'Close', 'Content-Type', 'Date', 'GET', 'High', 'Low', 'MASSIVE_API_KEY', 'Massive API', 'Open', 'Volume', '__main__', 'adjClose', 'adj_close', 'api_key_set', 'application/json', 'beta', 'change', 'changePercent', 'change_percent', 'close', 'coerce', 'companyName', 'company_name', 'current_price', 'data', 'data_source', 'date', 'dividendYield', 'dividend_yield', 'eps', 'error', 'from', 'high', 'history', 'industry', 'lastPrice', 'last_request_time', 'low', 'marketCap', 'market_cap', 'name', 'open', 'pe', 'peRatio', 'pe_ratio', 'percentChange', 'prevClose', 'previousClose', 'previous_close', 'price', 'prices', 'request_count', 'request_delay', 'sector', 'ticker', 'timestamp', 'to', 'volume', '✓ 連接成功', '✗ 連接失敗', '測試 Massive API']

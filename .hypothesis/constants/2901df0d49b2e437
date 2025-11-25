@@ -1,0 +1,4 @@
+# file: D:\option_trading_system\option_trading_system\option_trading_system\data_layer\rapidapi_client.py
+# hypothesis_version: 6.141.1
+
+[1.0, 500, '* RapidAPI 測試成功', '/v8/finance/chart', '1d', '1mo', 'AAPL', 'RAPIDAPI_HOST', 'RAPIDAPI_KEY', 'RapidAPI 使用量已重置', 'X-RapidAPI-Host', 'X-RapidAPI-Key', '__main__', 'interval', 'month', 'range', 'symbol', 'x RapidAPI 測試失敗']

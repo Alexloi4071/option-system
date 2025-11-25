@@ -1,0 +1,4 @@
+# file: D:\option_trading_system\option_trading_system\option_trading_system\calculation_layer\module23_dynamic_iv_threshold.py
+# hypothesis_version: 6.141.1
+
+[0.0, 5.0, 10.0, 20.0, 200, 252, '%Y-%m-%d %H:%M:%S', '* 動態IV閾值計算器已初始化', 'Butterfly', 'Calendar Spread', 'Credit Spread', 'Debit Spread', 'High', 'Iron Condor', 'Long', 'Long Options', 'Long Straddle', 'Low', 'Medium', 'Neutral', 'Short', 'Short Straddle', 'action', 'calculation_date', 'confidence', 'current_iv', 'data_quality', 'high_threshold', 'historical_days', 'insufficient', 'iv_max', 'iv_min', 'low_threshold', 'median_iv', 'percentile_25', 'percentile_75', 'reason', 'status', 'strategies', 'sufficient', '低於歷史水平', '正常範圍', '觀望', '高於歷史水平']

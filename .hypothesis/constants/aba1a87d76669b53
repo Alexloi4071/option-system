@@ -1,0 +1,4 @@
+# file: D:\option_trading_system\option_trading_system\option_trading_system\output_layer\json_exporter.py
+# hypothesis_version: 6.141.1
+
+['! 結果列表為空，無法導出', '*.json', '1.0', 'data', 'export_count', 'export_time', 'exporter_version', 'metadata', 'output/json', 'utf-8', 'w']

@@ -1,0 +1,4 @@
+# file: D:\option_trading_system\option_trading_system\option_trading_system\output_layer\csv_exporter.py
+# hypothesis_version: 6.141.1
+
+[100, '! 結果列表為空，無法導出', '*.csv', ',', 'output/csv', 'utf-8-sig', 'w']

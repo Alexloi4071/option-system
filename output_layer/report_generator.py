@@ -1,6 +1,8 @@
 # output_layer/report_generator.py
 """
 報告生成系統 (重構版 - 整合 CSV/JSON 導出器)
+
+Requirements: 15.1, 15.3, 15.4, 15.5
 """
 
 from datetime import datetime
@@ -10,6 +12,7 @@ import logging
 # 導入專門的導出器
 from output_layer.csv_exporter import CSVExporter
 from output_layer.json_exporter import JSONExporter
+from output_layer.output_manager import OutputPathManager
 
 logger = logging.getLogger(__name__)
 
@@ -25,19 +28,27 @@ class ReportGenerator:
     4. 生成純文本報告
     """
     
-    def __init__(self, output_dir='output/'):
-        """初始化報告生成器"""
+    def __init__(self, output_dir='output/', output_manager: OutputPathManager = None):
+        """
+        初始化報告生成器
+        
+        參數:
+            output_dir: 輸出目錄路徑
+            output_manager: OutputPathManager 實例（用於按股票代號分類存儲）
+        """
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(exist_ok=True)
         
-        # 初始化 CSV 和 JSON 導出器
+        # 使用 OutputPathManager 進行路徑管理
+        self.output_manager = output_manager or OutputPathManager(str(output_dir))
+        
+        # 初始化 CSV 和 JSON 導出器（舊結構，保留向後兼容）
         self.csv_exporter = CSVExporter(str(self.output_dir / 'csv'))
         self.json_exporter = JSONExporter(str(self.output_dir / 'json'))
         
         logger.info(f"* 報告生成器初始化完成")
         logger.info(f"  主輸出目錄: {self.output_dir}")
-        logger.info(f"  CSV 導出器: {self.csv_exporter.output_dir}")
-        logger.info(f"  JSON 導出器: {self.json_exporter.output_dir}")
+        logger.info(f"  使用 OutputPathManager: 按股票代號分類存儲")
     
     def get_structured_output(self, calculation_results: dict) -> dict:
         """
@@ -191,7 +202,7 @@ class ReportGenerator:
                 calculation_results: dict,
                 data_fetcher=None) -> dict:
         """
-        生成完整分析報告
+        生成完整分析報告（按股票代號分類存儲）
         
         參數:
             ticker: 股票代碼
@@ -201,6 +212,8 @@ class ReportGenerator:
             data_fetcher: DataFetcher 實例（用於獲取 API 狀態）
         
         返回: dict (報告文件位置)
+        
+        Requirements: 15.1, 15.3, 15.4, 15.5
         """
         try:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -215,34 +228,41 @@ class ReportGenerator:
                 except Exception as e:
                     logger.warning(f"! 無法獲取 API 狀態: {e}")
             
+            # 使用 OutputPathManager 獲取正確的輸出路徑
+            json_filename = f"report_{ticker}_{timestamp}.json"
+            csv_filename = f"report_{ticker}_{timestamp}.csv"
+            text_filename = f"report_{ticker}_{timestamp}.txt"
+            
+            # 獲取按股票代號分類的路徑
+            json_path = self.output_manager.get_output_path(ticker, 'json', json_filename)
+            csv_path = self.output_manager.get_output_path(ticker, 'csv', csv_filename)
+            text_path = self.output_manager.get_output_path(ticker, 'txt', text_filename)
+            
             # 1. 生成JSON報告
             json_report = self._generate_json_report(
                 ticker, analysis_date, raw_data, calculation_results, api_status
             )
-            json_filename = f"report_{ticker}_{timestamp}.json"
-            self._save_json(json_report, json_filename)
+            self._save_json_to_path(json_report, json_path)
             
             # 2. 生成CSV報告
-            csv_filename = f"report_{ticker}_{timestamp}.csv"
-            self._generate_csv_report(calculation_results, csv_filename, api_status)
+            self._generate_csv_report_to_path(calculation_results, csv_path, api_status)
             
             # 3. 生成純文本報告
-            text_filename = f"report_{ticker}_{timestamp}.txt"
-            self._generate_text_report(
-                ticker, analysis_date, raw_data, calculation_results, text_filename, api_status
+            self._generate_text_report_to_path(
+                ticker, analysis_date, raw_data, calculation_results, text_path, api_status
             )
             
-            logger.info(f"* 報告已生成")
-            logger.info(f"  JSON: {json_filename}")
-            logger.info(f"  CSV: {csv_filename}")
-            logger.info(f"  TXT: {text_filename}")
+            logger.info(f"* 報告已生成 (按股票代號分類)")
+            logger.info(f"  JSON: {json_path}")
+            logger.info(f"  CSV: {csv_path}")
+            logger.info(f"  TXT: {text_path}")
             
             return {
-                'json_file': str(self.json_exporter.output_dir / json_filename),
-                'csv_file': str(self.csv_exporter.output_dir / csv_filename),
-                'text_file': str(self.output_dir / text_filename),
+                'json_file': json_path,
+                'csv_file': csv_path,
+                'text_file': text_path,
                 'timestamp': timestamp,
-                'structured_data': self.get_structured_output(calculation_results)  # 添加結構化數據用於 Web/Telegram
+                'structured_data': self.get_structured_output(calculation_results)
             }
             
         except Exception as e:
@@ -274,7 +294,7 @@ class ReportGenerator:
     
     def _save_json(self, data, filename):
         """
-        保存JSON文件（使用 JSONExporter）
+        保存JSON文件（使用 JSONExporter）- 舊方法，保留向後兼容
         """
         # 使用 JSONExporter 導出
         success = self.json_exporter.export_results(
@@ -289,16 +309,32 @@ class ReportGenerator:
         else:
             logger.error(f"x JSON報告保存失敗: {filename}")
     
-    def _generate_csv_report(self, calculation_results, filename, api_status=None):
+    def _save_json_to_path(self, data, filepath: str):
         """
-        生成CSV報告（使用 CSVExporter）
+        保存JSON文件到指定路徑（使用 OutputPathManager）
+        
+        Requirements: 15.4
         """
-        # 準備 CSV 數據（扁平化結構）
+        import json
+        import os
+        
+        # 確保目錄存在
+        self.output_manager.ensure_directory_exists(os.path.dirname(filepath))
+        
+        try:
+            with open(filepath, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2, default=str)
+            logger.info(f"* JSON報告已保存: {filepath}")
+        except Exception as e:
+            logger.error(f"x JSON報告保存失敗: {filepath} - {e}")
+            raise
+    
+    def _prepare_csv_rows(self, calculation_results, api_status=None):
+        """準備 CSV 數據行"""
         csv_rows = []
         
         for module_name, module_data in calculation_results.items():
             if isinstance(module_data, dict):
-                # 處理字典類型的模塊數據
                 for key, value in module_data.items():
                     csv_rows.append({
                         '模塊': module_name,
@@ -306,7 +342,6 @@ class ReportGenerator:
                         '數值': str(value)
                     })
             elif isinstance(module_data, list):
-                # 處理列表類型的模塊數據（如策略）
                 for i, item in enumerate(module_data, 1):
                     if isinstance(item, dict):
                         for key, value in item.items():
@@ -316,7 +351,6 @@ class ReportGenerator:
                                 '數值': str(value)
                             })
         
-        # 添加 API 狀態信息
         if api_status:
             csv_rows.append({'模塊': '', '指標': '', '數值': ''})
             csv_rows.append({'模塊': 'API狀態', '指標': '數據源', '數值': ''})
@@ -331,6 +365,14 @@ class ReportGenerator:
                         '數值': ', '.join(sources)
                     })
         
+        return csv_rows
+    
+    def _generate_csv_report(self, calculation_results, filename, api_status=None):
+        """
+        生成CSV報告（使用 CSVExporter）- 舊方法，保留向後兼容
+        """
+        csv_rows = self._prepare_csv_rows(calculation_results, api_status)
+        
         # 使用 CSVExporter 導出
         success = self.csv_exporter.export_results(
             csv_rows,
@@ -342,10 +384,53 @@ class ReportGenerator:
         else:
             logger.error(f"x CSV報告保存失敗: {filename}")
     
+    def _generate_csv_report_to_path(self, calculation_results, filepath: str, api_status=None):
+        """
+        生成CSV報告到指定路徑（使用 OutputPathManager）
+        
+        Requirements: 15.3
+        """
+        import csv
+        import os
+        
+        csv_rows = self._prepare_csv_rows(calculation_results, api_status)
+        
+        # 確保目錄存在
+        self.output_manager.ensure_directory_exists(os.path.dirname(filepath))
+        
+        try:
+            with open(filepath, 'w', encoding='utf-8', newline='') as f:
+                if csv_rows:
+                    writer = csv.DictWriter(f, fieldnames=['模塊', '指標', '數值'])
+                    writer.writeheader()
+                    writer.writerows(csv_rows)
+            logger.info(f"* CSV報告已保存: {filepath}")
+        except Exception as e:
+            logger.error(f"x CSV報告保存失敗: {filepath} - {e}")
+            raise
+    
     def _generate_text_report(self, ticker, analysis_date, raw_data, 
                              calculation_results, filename, api_status=None):
-        """生成純文本報告"""
+        """生成純文本報告 - 舊方法，保留向後兼容"""
         filepath = self.output_dir / filename
+        self._write_text_report(filepath, ticker, analysis_date, raw_data, calculation_results, api_status)
+    
+    def _generate_text_report_to_path(self, ticker, analysis_date, raw_data, 
+                                      calculation_results, filepath: str, api_status=None):
+        """
+        生成純文本報告到指定路徑（使用 OutputPathManager）
+        
+        Requirements: 15.5
+        """
+        import os
+        
+        # 確保目錄存在
+        self.output_manager.ensure_directory_exists(os.path.dirname(filepath))
+        self._write_text_report(filepath, ticker, analysis_date, raw_data, calculation_results, api_status)
+    
+    def _write_text_report(self, filepath, ticker, analysis_date, raw_data, 
+                          calculation_results, api_status=None):
+        """寫入純文本報告內容"""
         
         with open(filepath, 'w', encoding='utf-8') as f:
             f.write("=" * 70 + "\n")
@@ -380,12 +465,21 @@ class ReportGenerator:
             f.write("=" * 70 + "\n")
             
             if raw_data:
-                f.write(f"當前股價: ${raw_data.get('current_price', 'N/A'):.2f}\n")
-                f.write(f"隱含波動率: {raw_data.get('implied_volatility', 'N/A'):.2f}%\n")
-                f.write(f"EPS: ${raw_data.get('eps', 'N/A'):.2f}\n")
-                f.write(f"派息: ${raw_data.get('annual_dividend', 'N/A'):.2f}\n")
-                f.write(f"無風險利率: {raw_data.get('risk_free_rate', 'N/A'):.2f}%\n")
-                f.write(f"VIX: {raw_data.get('vix', 'N/A'):.2f}\n\n")
+                # 安全格式化函數，處理 None 值
+                def safe_format(value, fmt=".2f", prefix="", suffix=""):
+                    if value is None:
+                        return "N/A"
+                    try:
+                        return f"{prefix}{value:{fmt}}{suffix}"
+                    except (ValueError, TypeError):
+                        return str(value)
+                
+                f.write(f"當前股價: {safe_format(raw_data.get('current_price'), prefix='$')}\n")
+                f.write(f"隱含波動率: {safe_format(raw_data.get('implied_volatility'), suffix='%')}\n")
+                f.write(f"EPS: {safe_format(raw_data.get('eps'), prefix='$')}\n")
+                f.write(f"派息: {safe_format(raw_data.get('annual_dividend'), prefix='$')}\n")
+                f.write(f"無風險利率: {safe_format(raw_data.get('risk_free_rate'), suffix='%')}\n")
+                f.write(f"VIX: {safe_format(raw_data.get('vix'))}\n\n")
             
             # 計算結果
             f.write("=" * 70 + "\n")

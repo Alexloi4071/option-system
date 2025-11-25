@@ -285,11 +285,74 @@ class OptimalStrikeCalculator:
             last_price = option.get('lastPrice', 0) or 0
             volume = option.get('volume', 0) or 0
             oi = option.get('openInterest', 0) or 0
-            iv = (option.get('impliedVolatility', 0) or 0) * 100  # 轉換為百分比
-            delta = abs(option.get('delta', 0.5) or 0.5)
-            gamma = option.get('gamma', 0) or 0
-            theta = option.get('theta', 0) or 0
-            vega = option.get('vega', 0) or 0
+            # 獲取 IV（Yahoo Finance 返回的已經是小數形式，如 0.25 表示 25%）
+            raw_iv = option.get('impliedVolatility', 0) or 0
+            # 如果 IV > 5，說明已經是百分比形式；否則轉換為百分比
+            iv = raw_iv if raw_iv > 5 else raw_iv * 100
+            
+            # 嘗試從期權數據獲取 Greeks，如果沒有則自行計算
+            delta = option.get('delta')
+            gamma = option.get('gamma')
+            theta = option.get('theta')
+            vega = option.get('vega')
+            
+            # 如果沒有 Greeks 數據，使用 Black-Scholes 計算
+            if delta is None or delta == 0:
+                try:
+                    from calculation_layer.module16_greeks import GreeksCalculator
+                    greeks_calc = GreeksCalculator()
+                    
+                    # 計算時間（年）
+                    time_to_expiry = days_to_expiration / 365.0
+                    
+                    # 確保時間不為零
+                    if time_to_expiry <= 0:
+                        time_to_expiry = 1 / 365.0  # 至少 1 天
+                    
+                    # 使用 IV 或默認值（確保波動率在合理範圍內）
+                    if iv > 0:
+                        # IV 已經是百分比形式，轉換為小數
+                        volatility = iv / 100 if iv > 1 else iv
+                        # 限制在合理範圍內 (1% - 500%)
+                        volatility = max(0.01, min(5.0, volatility))
+                    else:
+                        volatility = 0.30
+                    
+                    # 獲取無風險利率（默認 4.5%）
+                    risk_free_rate = 0.045
+                    
+                    # 計算 Greeks（使用正確的方法名）
+                    greeks_result = greeks_calc.calculate_all_greeks(
+                        stock_price=current_price,
+                        strike_price=strike,
+                        time_to_expiration=time_to_expiry,
+                        risk_free_rate=risk_free_rate,
+                        volatility=volatility,
+                        option_type='call' if option_type == 'call' else 'put'
+                    )
+                    
+                    if greeks_result:
+                        delta = abs(greeks_result.delta)
+                        gamma = greeks_result.gamma
+                        theta = greeks_result.theta
+                        vega = greeks_result.vega
+                        logger.debug(f"  計算 Greeks: Δ={delta:.4f}, Γ={gamma:.4f}, Θ={theta:.4f}, ν={vega:.4f}")
+                    else:
+                        delta = 0.5
+                        gamma = 0
+                        theta = 0
+                        vega = 0
+                except Exception as e:
+                    logger.debug(f"  計算 Greeks 失敗: {e}，使用默認值")
+                    delta = 0.5
+                    gamma = 0
+                    theta = 0
+                    vega = 0
+            else:
+                delta = abs(delta)
+                gamma = gamma or 0
+                theta = theta or 0
+                vega = vega or 0
             
             # 計算 Bid-Ask Spread 百分比
             mid_price = (bid + ask) / 2 if (bid + ask) > 0 else last_price

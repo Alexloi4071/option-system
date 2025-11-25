@@ -1,0 +1,4 @@
+# file: D:\option_trading_system\option_trading_system\option_trading_system\output_layer\output_manager.py
+# hypothesis_version: 6.141.1
+
+['--', '--execute', '.txt', 'UNKNOWN', '[/\\\\:*?"<>|]', '__main__', 'csv', 'destination', 'file_type', 'json', 'output', 'source', 'test', 'ticker', 'txt', 'utf-8', 'verify', 'w']

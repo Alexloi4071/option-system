@@ -1,0 +1,4 @@
+# file: D:\option_trading_system\option_trading_system\option_trading_system\config\settings.py
+# hypothesis_version: 6.141.1
+
+[0.1, 3.464, 8.5, 15.0, 25.0, 100, 365, 3600, '09:30', '1.0.0', '100', '127.0.0.1', '16:00', '2.0', '3', '5', '7496', '7497', 'America/New_York', 'DEBUG', 'FINNHUB_API_KEY', 'FRED_API_KEY', 'False', 'IBKR_ACCOUNT_ID', 'IBKR_CLIENT_ID', 'IBKR_ENABLED', 'IBKR_HOST', 'IBKR_PORT_LIVE', 'IBKR_PORT_PAPER', 'INFO', 'MASSIVE_API_KEY', 'MAX_RETRIES', 'RAPIDAPI_HOST', 'RAPIDAPI_KEY', 'REQUEST_DELAY', 'RETRY_DELAY', '[OK] 所有API Keys已正確配置', '[WARN] 配置警告:', 'cache/', 'finnhub', 'logs/', 'output/', 'true', 'yahoo_v2', 'yfinance']

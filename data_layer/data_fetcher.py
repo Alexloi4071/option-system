@@ -220,6 +220,40 @@ class DataFetcher:
                 logger.info("i RapidAPI 未配置，跳過初始化")
                 self.rapidapi_client = None
             
+            # Alpha Vantage 客戶端（技術指標 + 歷史數據）
+            if settings.ALPHA_VANTAGE_API_KEY:
+                try:
+                    from data_layer.alpha_vantage_client import AlphaVantageClient
+                    self.alpha_vantage_client = AlphaVantageClient(
+                        api_key=settings.ALPHA_VANTAGE_API_KEY,
+                        request_delay=12.0  # Alpha Vantage 免費版限制: 5次/分鐘
+                    )
+                    logger.info("* Alpha Vantage 客戶端已初始化（技術指標 + 歷史數據）")
+                except Exception as e:
+                    logger.warning(f"! Alpha Vantage 初始化失敗: {e}")
+                    self._record_api_failure('Alpha Vantage', str(e))
+                    self.alpha_vantage_client = None
+            else:
+                logger.info("i Alpha Vantage 未配置，跳過初始化")
+                self.alpha_vantage_client = None
+            
+            # Massive API 客戶端（備用數據源）
+            if settings.MASSIVE_API_KEY:
+                try:
+                    from data_layer.massive_api_client import MassiveAPIClient
+                    self.massive_api_client = MassiveAPIClient(
+                        api_key=settings.MASSIVE_API_KEY,
+                        request_delay=1.0
+                    )
+                    logger.info("* Massive API 客戶端已初始化（備用數據源）")
+                except Exception as e:
+                    logger.warning(f"! Massive API 初始化失敗: {e}")
+                    self._record_api_failure('Massive API', str(e))
+                    self.massive_api_client = None
+            else:
+                logger.info("i Massive API 未配置，跳過初始化")
+                self.massive_api_client = None
+            
             return True
         except Exception as e:
             logger.error(f"x 客户端初始化失敗: {e}")
@@ -336,7 +370,7 @@ class DataFetcher:
         """
         獲取股票基本信息（支持多数据源降级）
         
-        降級順序: IBKR → Yahoo Finance 2.0 → yfinance
+        降級順序: IBKR → Alpha Vantage → Yahoo Finance 2.0 → Massive API → yfinance → Finviz
         
         參數:
             ticker: 股票代碼
@@ -357,7 +391,78 @@ class DataFetcher:
         """
         logger.info(f"開始獲取 {ticker} 基本信息...")
         
-        # 方案1: 優先使用 Finviz（最準確的基本面數據）
+        # 方案0: 最高優先級 - IBKR（如果已連接）
+        if self.ibkr_client and self.ibkr_client.is_connected():
+            try:
+                self._rate_limit_delay()
+                logger.info("  使用 IBKR API (最高優先級)...")
+                stock_data = self.ibkr_client.get_stock_info(ticker)
+                
+                if stock_data and stock_data.get('current_price', 0) > 0:
+                    logger.info(f"* 成功獲取 {ticker} 基本信息 (IBKR)")
+                    logger.info(f"  當前股價: ${stock_data['current_price']:.2f}")
+                    self._record_fallback('stock_info', 'IBKR')
+                    return stock_data
+                else:
+                    logger.warning("! IBKR 返回無效數據，降級到 Alpha Vantage")
+            except Exception as e:
+                logger.warning(f"! IBKR 獲取失敗: {e}，降級到 Alpha Vantage")
+                self._record_api_failure('IBKR', f"get_stock_info: {e}")
+        
+        # 方案0.5: Alpha Vantage（第二優先級）
+        if hasattr(self, 'alpha_vantage_client') and self.alpha_vantage_client:
+            try:
+                logger.info("  使用 Alpha Vantage API...")
+                quote_data = self.alpha_vantage_client.get_quote(ticker)
+                
+                if quote_data and quote_data.get('current_price', 0) > 0:
+                    # 嘗試獲取公司概況補充數據
+                    overview = None
+                    try:
+                        overview = self.alpha_vantage_client.get_company_overview(ticker)
+                    except:
+                        pass
+                    
+                    stock_data = {
+                        'ticker': ticker,
+                        'current_price': quote_data.get('current_price', 0),
+                        'open': quote_data.get('open', 0),
+                        'high': quote_data.get('high', 0),
+                        'low': quote_data.get('low', 0),
+                        'volume': quote_data.get('volume', 0),
+                        'previous_close': quote_data.get('previous_close', 0),
+                        'change': quote_data.get('change', 0),
+                        'change_percent': quote_data.get('change_percent', 0),
+                        'data_source': 'Alpha Vantage'
+                    }
+                    
+                    # 補充公司概況數據
+                    if overview:
+                        stock_data.update({
+                            'market_cap': overview.get('market_cap', 0),
+                            'pe_ratio': overview.get('pe_ratio', 0),
+                            'forward_pe': overview.get('forward_pe', 0),
+                            'eps': overview.get('eps', 0),
+                            'beta': overview.get('beta', 0),
+                            'dividend_rate': overview.get('dividend_yield', 0),
+                            'company_name': overview.get('company_name', ''),
+                            'sector': overview.get('sector', ''),
+                            'industry': overview.get('industry', ''),
+                            'fifty_two_week_high': overview.get('52_week_high', 0),
+                            'fifty_two_week_low': overview.get('52_week_low', 0)
+                        })
+                    
+                    logger.info(f"* 成功獲取 {ticker} 基本信息 (Alpha Vantage)")
+                    logger.info(f"  當前股價: ${stock_data['current_price']:.2f}")
+                    self._record_fallback('stock_info', 'Alpha Vantage')
+                    return stock_data
+                else:
+                    logger.warning("! Alpha Vantage 返回無效數據，降級到 Finviz")
+            except Exception as e:
+                logger.warning(f"! Alpha Vantage 獲取失敗: {e}，降級到 Finviz")
+                self._record_api_failure('Alpha Vantage', f"get_stock_info: {e}")
+        
+        # 方案1: 使用 Finviz（準確的基本面數據）
         if hasattr(self, 'finviz_scraper') and self.finviz_scraper:
             try:
                 logger.info("  使用 Finviz...")
@@ -429,22 +534,6 @@ class DataFetcher:
                 logger.warning(f"! Finviz 獲取失敗: {e}，降級到 IBKR")
                 self._record_api_failure('Finviz', f"get_stock_info: {e}")
         
-        # 方案2: 嘗試使用 IBKR
-        if self.ibkr_client and self.ibkr_client.is_connected():
-            try:
-                self._rate_limit_delay()
-                logger.info("  使用 IBKR API...")
-                stock_data = self.ibkr_client.get_stock_info(ticker)
-                
-                if stock_data:
-                    logger.info(f"* 成功獲取 {ticker} 基本信息 (IBKR)")
-                    logger.info(f"  當前股價: ${stock_data['current_price']:.2f}")
-                    self._record_fallback_used('stock_info', 'IBKR')
-                    return stock_data
-            except Exception as e:
-                logger.warning(f"IBKR 獲取失敗: {e}，降級到 Yahoo Finance 2.0")
-                self._record_api_failure('IBKR', f"get_stock_info: {e}")
-        
         # 方案3: 降級到 Yahoo Finance（简化版）
         if self.yahoo_v2_client:
             try:
@@ -461,10 +550,58 @@ class DataFetcher:
                 logger.warning(f"Yahoo Finance 获取失败: {e}，降级到 yfinance")
                 self._record_api_failure('Yahoo Finance', f"get_stock_info: {e}")
         
-        # 方案4: 降级到 yfinance
+        # 方案4: 降级到 Massive API
+        if hasattr(self, 'massive_api_client') and self.massive_api_client:
+            try:
+                logger.info("  使用 Massive API...")
+                quote_data = self.massive_api_client.get_quote(ticker)
+                
+                if quote_data and quote_data.get('current_price', 0) > 0:
+                    # 嘗試獲取公司信息補充數據
+                    company_info = None
+                    try:
+                        company_info = self.massive_api_client.get_company_info(ticker)
+                    except:
+                        pass
+                    
+                    stock_data = {
+                        'ticker': ticker,
+                        'current_price': quote_data.get('current_price', 0),
+                        'open': quote_data.get('open', 0),
+                        'high': quote_data.get('high', 0),
+                        'low': quote_data.get('low', 0),
+                        'volume': quote_data.get('volume', 0),
+                        'previous_close': quote_data.get('previous_close', 0),
+                        'data_source': 'Massive API'
+                    }
+                    
+                    # 補充公司信息
+                    if company_info:
+                        stock_data.update({
+                            'market_cap': company_info.get('market_cap', 0),
+                            'pe_ratio': company_info.get('pe_ratio', 0),
+                            'eps': company_info.get('eps', 0),
+                            'beta': company_info.get('beta', 0),
+                            'dividend_rate': company_info.get('dividend_yield', 0),
+                            'company_name': company_info.get('company_name', ''),
+                            'sector': company_info.get('sector', ''),
+                            'industry': company_info.get('industry', '')
+                        })
+                    
+                    logger.info(f"* 成功獲取 {ticker} 基本信息 (Massive API)")
+                    logger.info(f"  當前股價: ${stock_data['current_price']:.2f}")
+                    self._record_fallback('stock_info', 'Massive API')
+                    return stock_data
+                else:
+                    logger.warning("! Massive API 返回無效數據，降級到 yfinance")
+            except Exception as e:
+                logger.warning(f"! Massive API 獲取失敗: {e}，降級到 yfinance")
+                self._record_api_failure('Massive API', f"get_stock_info: {e}")
+        
+        # 方案5: 降级到 yfinance（最後備用）
         try:
             self._rate_limit_delay()
-            logger.info("  使用 yfinance...")
+            logger.info("  使用 yfinance (最後備用)...")
             stock = yf.Ticker(ticker)
             info = stock.info
             
@@ -484,14 +621,17 @@ class DataFetcher:
                 'beta': info.get('beta', 0),
                 'company_name': info.get('longName', ''),
                 'sector': info.get('sector', ''),
-                'industry': info.get('industry', '')
+                'industry': info.get('industry', ''),
+                'data_source': 'yfinance'
             }
             
             logger.info(f"* 成功獲取 {ticker} 基本信息 (yfinance)")
             logger.info(f"  當前股價: ${stock_data['current_price']:.2f}")
-            logger.info(f"  市盈率: {stock_data['pe_ratio']:.2f}")
-            logger.info(f"  EPS: ${stock_data['eps']:.2f}")
-            self._record_fallback_used('stock_info', 'yfinance')
+            if stock_data['pe_ratio']:
+                logger.info(f"  市盈率: {stock_data['pe_ratio']:.2f}")
+            if stock_data['eps']:
+                logger.info(f"  EPS: ${stock_data['eps']:.2f}")
+            self._record_fallback('stock_info', 'yfinance')
             
             return stock_data
             
@@ -502,7 +642,9 @@ class DataFetcher:
     
     def get_historical_data(self, ticker, period='1mo', interval='1d', max_retries=3):
         """
-        獲取歷史OHLCV數據（帶智能重試機制和指數退避）
+        獲取歷史OHLCV數據（支持多數據源降級）
+        
+        降級順序: IBKR → Alpha Vantage → yfinance → Massive API
         
         參數:
             ticker: 股票代碼
@@ -512,46 +654,108 @@ class DataFetcher:
         
         返回: DataFrame
         """
+        logger.info(f"開始獲取 {ticker} 歷史數據... (週期: {period}, 間隔: {interval})")
+        
+        # 方案0: 最高優先級 - IBKR（如果已連接）
+        if self.ibkr_client and self.ibkr_client.is_connected():
+            try:
+                logger.info("  使用 IBKR API (最高優先級)...")
+                hist = self.ibkr_client.get_historical_data(ticker, period=period, interval=interval)
+                
+                if hist is not None and not hist.empty:
+                    logger.info(f"* 成功獲取 {ticker} 的 {len(hist)} 條歷史記錄 (IBKR)")
+                    self._record_fallback('historical_data', 'IBKR')
+                    return hist
+                else:
+                    logger.warning("! IBKR 返回空數據，降級到 Alpha Vantage")
+            except Exception as e:
+                logger.warning(f"! IBKR 獲取失敗: {e}，降級到 Alpha Vantage")
+                self._record_api_failure('IBKR', f"get_historical_data: {e}")
+        
+        # 方案0.5: Alpha Vantage（第二優先級）
+        if hasattr(self, 'alpha_vantage_client') and self.alpha_vantage_client:
+            try:
+                logger.info(f"  使用 Alpha Vantage 獲取歷史數據...")
+                
+                # 根據 period 決定 outputsize
+                outputsize = 'full' if period in ['1y', '2y', '5y', 'max'] else 'compact'
+                
+                hist = self.alpha_vantage_client.get_daily_prices(ticker, outputsize=outputsize)
+                
+                if hist is not None and not hist.empty:
+                    logger.info(f"* 成功獲取 {ticker} 的 {len(hist)} 條歷史記錄 (Alpha Vantage)")
+                    self._record_fallback('historical_data', 'Alpha Vantage')
+                    return hist
+                else:
+                    logger.warning(f"! Alpha Vantage 未獲得 {ticker} 的歷史數據，降級到 yfinance")
+                    
+            except Exception as e:
+                logger.warning(f"! Alpha Vantage 獲取失敗: {e}，降級到 yfinance")
+                self._record_api_failure('Alpha Vantage', f"get_historical_data: {e}")
+        
+        # 方案1: 嘗試使用 yfinance
         for attempt in range(max_retries + 1):
             try:
-                # 使用帶指數退避的速率限制
                 self._rate_limit_delay(retry_count=attempt)
                 
                 if attempt > 0:
                     logger.info(f"  重試獲取 {ticker} 歷史數據 (嘗試 {attempt + 1}/{max_retries + 1})...")
-                else:
-                    logger.info(f"開始獲取 {ticker} 歷史數據... (週期: {period}, 間隔: {interval})")
                 
                 stock = yf.Ticker(ticker)
                 hist = stock.history(period=period, interval=interval)
                 
-                if hist.empty:
-                    logger.warning(f"! 未獲得 {ticker} 的歷史數據")
-                    return None
-                
-                logger.info(f"* 成功獲取 {ticker} 的 {len(hist)} 條歷史記錄")
-                
-                return hist
+                if not hist.empty:
+                    logger.info(f"* 成功獲取 {ticker} 的 {len(hist)} 條歷史記錄 (yfinance)")
+                    self._record_fallback('historical_data', 'yfinance')
+                    return hist
+                else:
+                    logger.warning(f"! yfinance 未獲得 {ticker} 的歷史數據")
+                    break  # 跳出重試，嘗試降級
                 
             except Exception as e:
                 error_msg = str(e).lower()
                 
-                # 檢查是否是速率限制錯誤
                 if 'rate limit' in error_msg or '429' in error_msg or 'too many requests' in error_msg:
                     if attempt < max_retries:
                         logger.warning(f"! API 速率限制，將使用指數退避重試 (嘗試 {attempt + 1}/{max_retries + 1})")
                         continue
                     else:
-                        logger.error(f"x API 速率限制，已達最大重試次數")
+                        logger.warning(f"! yfinance 速率限制，降級到 Alpha Vantage")
                         self._record_api_failure('yfinance', f"Rate limit exceeded: {e}")
-                        return None
+                        break
                 else:
-                    if attempt < max_retries:
-                        logger.warning(f"! 獲取歷史數據失敗 (嘗試 {attempt + 1}/{max_retries + 1}): {e}")
-                    else:
-                        logger.error(f"x 獲取 {ticker} 歷史數據失敗 (已重試 {max_retries} 次): {e}")
+                    if attempt >= max_retries:
+                        logger.warning(f"! yfinance 獲取失敗，降級到 Alpha Vantage: {e}")
                         self._record_api_failure('yfinance', f"get_historical_data: {e}")
-                        return None
+                        break
+        
+        # 方案2: 降級到 Massive API
+        if hasattr(self, 'massive_api_client') and self.massive_api_client:
+            try:
+                logger.info(f"  使用 Massive API 獲取歷史數據...")
+                
+                # 根據 period 計算天數
+                period_days = {
+                    '1d': 1, '5d': 5, '1mo': 30, '3mo': 90, 
+                    '6mo': 180, '1y': 365, '2y': 730, '5y': 1825
+                }
+                days = period_days.get(period, 100)
+                
+                hist = self.massive_api_client.get_daily_prices(ticker, days=days)
+                
+                if hist is not None and not hist.empty:
+                    logger.info(f"* 成功獲取 {ticker} 的 {len(hist)} 條歷史記錄 (Massive API)")
+                    self._record_fallback('historical_data', 'Massive API')
+                    return hist
+                else:
+                    logger.warning(f"! Massive API 未獲得 {ticker} 的歷史數據")
+                    
+            except Exception as e:
+                logger.warning(f"! Massive API 獲取失敗: {e}")
+                self._record_api_failure('Massive API', f"get_historical_data: {e}")
+        
+        logger.error(f"x 所有數據源都無法獲取 {ticker} 歷史數據")
+        return None
     
     # ==================== 期權數據 ====================
     
@@ -631,7 +835,35 @@ class DataFetcher:
         if self.yahoo_v2_client:
             try:
                 logger.info("  使用 Yahoo Finance API...")
-                response = self.yahoo_v2_client.get_option_chain(ticker, expiration)
+                
+                # 先獲取可用的到期日列表
+                available_expirations = self.yahoo_v2_client.get_available_expirations(ticker)
+                
+                # 將用戶指定的到期日轉換為 timestamp 進行比較
+                from datetime import datetime
+                import calendar
+                try:
+                    exp_date = datetime.strptime(expiration, '%Y-%m-%d')
+                    # 使用 UTC 時間戳
+                    exp_timestamp = calendar.timegm(exp_date.timetuple())
+                except:
+                    exp_timestamp = None
+                
+                # 找到最接近的可用到期日
+                actual_expiration = expiration
+                actual_timestamp = exp_timestamp
+                if available_expirations and exp_timestamp:
+                    # 找到最接近的到期日
+                    closest_exp = min(available_expirations, key=lambda x: abs(x - exp_timestamp))
+                    closest_date = datetime.utcfromtimestamp(closest_exp).strftime('%Y-%m-%d')
+                    
+                    if closest_exp != exp_timestamp:
+                        logger.warning(f"! 指定到期日 {expiration} 不可用，使用最接近的: {closest_date}")
+                        actual_expiration = closest_date
+                        actual_timestamp = closest_exp
+                
+                # 使用 timestamp 而不是日期字符串
+                response = self.yahoo_v2_client.get_option_chain(ticker, actual_timestamp if actual_timestamp else actual_expiration)
                 chain_data = YahooDataParser.parse_option_chain(response)
                 
                 if chain_data and chain_data.get('calls') and chain_data.get('puts'):
@@ -645,7 +877,7 @@ class DataFetcher:
                     if 'impliedVolatility' in puts_df.columns:
                         puts_df['impliedVolatility'] = puts_df['impliedVolatility'] * 100
                     
-                    logger.info(f"* 成功獲取 {ticker} {expiration} 期權鏈 (Yahoo Finance)")
+                    logger.info(f"* 成功獲取 {ticker} {actual_expiration} 期權鏈 (Yahoo Finance)")
                     logger.info(f"  Call期權: {len(calls_df)} 個")
                     logger.info(f"  Put期權: {len(puts_df)} 個")
                     self._record_fallback('option_chain', 'Yahoo Finance')
@@ -653,9 +885,11 @@ class DataFetcher:
                     return {
                         'calls': calls_df,
                         'puts': puts_df,
-                        'expiration': expiration,
+                        'expiration': actual_expiration,
                         'data_source': 'yahoo_finance'
                     }
+                else:
+                    logger.warning("! Yahoo Finance 返回空期權數據，降級到 yfinance")
             except Exception as e:
                 logger.warning(f"! Yahoo Finance 獲取期權鏈失敗: {e}，降級到 yfinance")
                 self._record_api_failure('Yahoo Finance', f"get_option_chain: {str(e)}")
@@ -2176,6 +2410,174 @@ class DataFetcher:
         except Exception as e:
             logger.error(f"\nx 獲取完整分析數據失敗: {e}")
             return None
+
+
+    # ==================== 技術指標 (Alpha Vantage 整合) ====================
+    
+    def get_technical_indicators(self, ticker: str, indicators: list = None) -> Dict[str, Any]:
+        """
+        獲取技術指標（支持多數據源降級）
+        
+        降級順序: Finviz → Alpha Vantage → 自主計算
+        
+        參數:
+            ticker: 股票代碼
+            indicators: 指標列表 ['atr', 'rsi', 'sma', 'ema']，默認 ['atr', 'rsi']
+        
+        返回:
+            dict: 包含請求的技術指標
+        """
+        if indicators is None:
+            indicators = ['atr', 'rsi']
+        
+        logger.info(f"開始獲取 {ticker} 技術指標: {indicators}")
+        
+        results = {
+            'ticker': ticker,
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        for indicator in indicators:
+            indicator_lower = indicator.lower()
+            
+            # 方案1: 嘗試從 Finviz 獲取（如果已有數據）
+            if self.finviz_scraper:
+                try:
+                    finviz_data = self.finviz_scraper.get_stock_fundamentals(ticker)
+                    if finviz_data:
+                        if indicator_lower == 'atr' and finviz_data.get('atr'):
+                            results['atr'] = finviz_data['atr']
+                            results['atr_source'] = 'Finviz'
+                            self._record_fallback(f'technical_{indicator_lower}', 'Finviz')
+                            logger.info(f"  * ATR (Finviz): ${results['atr']:.2f}")
+                            continue
+                        elif indicator_lower == 'rsi' and finviz_data.get('rsi'):
+                            results['rsi'] = finviz_data['rsi']
+                            results['rsi_source'] = 'Finviz'
+                            self._record_fallback(f'technical_{indicator_lower}', 'Finviz')
+                            logger.info(f"  * RSI (Finviz): {results['rsi']:.2f}")
+                            continue
+                        elif indicator_lower == 'beta' and finviz_data.get('beta'):
+                            results['beta'] = finviz_data['beta']
+                            results['beta_source'] = 'Finviz'
+                            self._record_fallback(f'technical_{indicator_lower}', 'Finviz')
+                            logger.info(f"  * Beta (Finviz): {results['beta']:.2f}")
+                            continue
+                except Exception as e:
+                    logger.debug(f"  Finviz 獲取 {indicator} 失敗: {e}")
+            
+            # 方案2: 降級到 Alpha Vantage
+            if hasattr(self, 'alpha_vantage_client') and self.alpha_vantage_client:
+                try:
+                    if indicator_lower == 'atr':
+                        atr_data = self.alpha_vantage_client.get_atr(ticker)
+                        if atr_data:
+                            results['atr'] = atr_data['atr']
+                            results['atr_source'] = 'Alpha Vantage'
+                            self._record_fallback(f'technical_{indicator_lower}', 'Alpha Vantage')
+                            logger.info(f"  * ATR (Alpha Vantage): ${results['atr']:.2f}")
+                            continue
+                    
+                    elif indicator_lower == 'rsi':
+                        rsi_data = self.alpha_vantage_client.get_rsi(ticker)
+                        if rsi_data:
+                            results['rsi'] = rsi_data['rsi']
+                            results['rsi_signal'] = rsi_data.get('signal_cn', '')
+                            results['rsi_source'] = 'Alpha Vantage'
+                            self._record_fallback(f'technical_{indicator_lower}', 'Alpha Vantage')
+                            logger.info(f"  * RSI (Alpha Vantage): {results['rsi']:.2f}")
+                            continue
+                    
+                    elif indicator_lower == 'sma':
+                        sma_data = self.alpha_vantage_client.get_sma(ticker)
+                        if sma_data:
+                            results['sma'] = sma_data['sma']
+                            results['sma_source'] = 'Alpha Vantage'
+                            self._record_fallback(f'technical_{indicator_lower}', 'Alpha Vantage')
+                            logger.info(f"  * SMA (Alpha Vantage): ${results['sma']:.2f}")
+                            continue
+                    
+                    elif indicator_lower == 'ema':
+                        ema_data = self.alpha_vantage_client.get_ema(ticker)
+                        if ema_data:
+                            results['ema'] = ema_data['ema']
+                            results['ema_source'] = 'Alpha Vantage'
+                            self._record_fallback(f'technical_{indicator_lower}', 'Alpha Vantage')
+                            logger.info(f"  * EMA (Alpha Vantage): ${results['ema']:.2f}")
+                            continue
+                            
+                except Exception as e:
+                    logger.warning(f"  Alpha Vantage 獲取 {indicator} 失敗: {e}")
+                    self._record_api_failure('Alpha Vantage', f"get_{indicator}: {e}")
+            
+            # 方案3: 自主計算（僅適用於 ATR）
+            if indicator_lower == 'atr':
+                try:
+                    logger.info(f"  嘗試自主計算 ATR...")
+                    hist = self.get_historical_data(ticker, period='1mo', interval='1d')
+                    if hist is not None and len(hist) >= 14:
+                        # 計算 ATR
+                        high = hist['High']
+                        low = hist['Low']
+                        close = hist['Close']
+                        
+                        tr1 = high - low
+                        tr2 = abs(high - close.shift(1))
+                        tr3 = abs(low - close.shift(1))
+                        
+                        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+                        atr = tr.rolling(window=14).mean().iloc[-1]
+                        
+                        results['atr'] = atr
+                        results['atr_source'] = 'Self-Calculated'
+                        self._record_fallback(f'technical_{indicator_lower}', 'Self-Calculated')
+                        logger.info(f"  * ATR (自主計算): ${atr:.2f}")
+                        continue
+                except Exception as e:
+                    logger.warning(f"  自主計算 ATR 失敗: {e}")
+            
+            # 如果所有方案都失敗
+            logger.warning(f"  ! 無法獲取 {indicator}")
+            results[indicator_lower] = None
+        
+        logger.info(f"* 技術指標獲取完成")
+        return results
+    
+    def get_atr(self, ticker: str) -> Optional[float]:
+        """
+        獲取 ATR (Average True Range)
+        
+        降級順序: Finviz → Alpha Vantage → 自主計算
+        
+        參數:
+            ticker: 股票代碼
+        
+        返回:
+            float: ATR 值，失敗返回 None
+        """
+        result = self.get_technical_indicators(ticker, ['atr'])
+        return result.get('atr')
+    
+    def get_rsi(self, ticker: str) -> Optional[Dict[str, Any]]:
+        """
+        獲取 RSI (Relative Strength Index)
+        
+        降級順序: Finviz → Alpha Vantage
+        
+        參數:
+            ticker: 股票代碼
+        
+        返回:
+            dict: {'rsi': float, 'signal': str}，失敗返回 None
+        """
+        result = self.get_technical_indicators(ticker, ['rsi'])
+        if result.get('rsi') is not None:
+            return {
+                'rsi': result['rsi'],
+                'signal': result.get('rsi_signal', ''),
+                'source': result.get('rsi_source', '')
+            }
+        return None
 
 
 # 使用示例

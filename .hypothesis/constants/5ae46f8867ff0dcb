@@ -1,0 +1,4 @@
+# file: D:\option_trading_system\option_trading_system\option_trading_system\data_layer\data_validator.py
+# hypothesis_version: 6.141.1
+
+[4.5, 6.05, 22.0, 180.5, 100, '* 股票數據驗證通過', '=', 'AAPL', 'TEST', '__main__', 'calls', 'current_price', 'eps', 'expiration', 'impliedVolatility', 'implied_volatility', 'lastPrice', 'market_cap', 'pe_ratio', 'puts', 'risk_free_rate', 'strike', 'ticker', 'x Call期權鏈為空', 'x Put期權鏈為空', 'x 期權鏈為None', 'x 期權鏈缺少必需字段', '測試1: 驗證有效的股票數據', '開始驗證期權鏈數據...', '開始驗證股票數據...']

@@ -100,24 +100,54 @@ class APIConfig:
         'fallback_on_error': True  # 錯誤時自動降級
     }
     
+    ALPHA_VANTAGE = {
+        'name': 'Alpha Vantage',
+        'type': 'freemium',
+        'rate_limit': 5,  # 5次/分鐘 (免費版)
+        'daily_limit': 500,  # 500次/天 (免費版)
+        'requires_auth': True,
+        'provides': [
+            'stock_price',
+            'historical_data',
+            'atr',                # ATR 技術指標
+            'rsi',                # RSI 技術指標
+            'sma',                # SMA 移動平均
+            'ema',                # EMA 移動平均
+            'company_overview',   # 公司概況
+            'eps',                # EPS
+            'pe_ratio',           # PE 比率
+            'beta'                # Beta 係數
+        ],
+        'fallback_on_error': True
+    }
+    
     # 數據優先級（按順序嘗試，第一個失敗時自動嘗試下一個）
+    # IBKR 是最高優先級，其他都是降級備選
     DATA_PRIORITY = {
-        'stock_price': ['ibkr', 'yfinance', 'yahoo_v2', 'finnhub', 'rapidapi'],
+        'stock_price': ['ibkr', 'finviz', 'alpha_vantage', 'yfinance', 'yahoo_v2', 'finnhub', 'rapidapi'],
         'option_chain': ['ibkr', 'yfinance', 'yahoo_v2'],
         'implied_volatility': ['ibkr', 'yfinance', 'yahoo_v2'],
         'option_greeks': ['ibkr', 'yfinance'],  # IBKR提供真實Greeks，yfinance可估算
         'bid_ask_spread': ['ibkr', 'yfinance', 'yahoo_v2'],
         'risk_free_rate': ['FRED'],
-        'eps': ['yfinance', 'yahoo_v2', 'finnhub'],
-        'dividends': ['yfinance', 'yahoo_v2', 'finnhub'],
+        'eps': ['finviz', 'alpha_vantage', 'yfinance', 'yahoo_v2', 'finnhub'],
+        'pe_ratio': ['finviz', 'alpha_vantage', 'yfinance', 'yahoo_v2'],
+        'dividends': ['yfinance', 'alpha_vantage', 'yahoo_v2', 'finnhub'],
         'vix': ['FRED', 'yfinance'],
         'earnings_date': ['finnhub'],           # 业绩日期（岗位10）
-        'dividend_date': ['yfinance', 'finnhub'], # 派息日期（岗位9）
-        'historical_data': ['ibkr', 'yfinance', 'yahoo_v2', 'rapidapi'],
-        'real_time_quote': ['ibkr', 'yahoo_v2', 'finnhub', 'rapidapi'],
+        'dividend_date': ['yfinance', 'alpha_vantage', 'finnhub'], # 派息日期（岗位9）
+        'historical_data': ['ibkr', 'alpha_vantage', 'yfinance', 'yahoo_v2', 'rapidapi'],
+        'real_time_quote': ['ibkr', 'alpha_vantage', 'yahoo_v2', 'finnhub', 'rapidapi'],
         'company_news': ['finnhub', 'rapidapi'],
         'open_interest': ['ibkr', 'yfinance'],
-        'volume': ['ibkr', 'yfinance', 'yahoo_v2']
+        'volume': ['ibkr', 'yfinance', 'yahoo_v2'],
+        # 技術指標 - Alpha Vantage 專長
+        'atr': ['finviz', 'alpha_vantage'],
+        'rsi': ['finviz', 'alpha_vantage'],
+        'sma': ['alpha_vantage'],
+        'ema': ['alpha_vantage'],
+        'beta': ['finviz', 'alpha_vantage', 'yfinance'],
+        'company_overview': ['finviz', 'alpha_vantage', 'yfinance']
     }
 
 

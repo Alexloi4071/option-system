@@ -1,12 +1,13 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Yahoo Finance API 客户端（简化版，无需 OAuth）
+Yahoo Finance API 客户端（简化版，支持 Crumb 驗證）
 使用公开的 Yahoo Finance API
 """
 
 import time
 import logging
+import re
 from typing import Optional, Dict, Any
 import requests
 
@@ -15,12 +16,14 @@ logger = logging.getLogger(__name__)
 
 
 class YahooFinanceV2Client:
-    """Yahoo Finance API 客户端（简化版，无需 OAuth）"""
+    """Yahoo Finance API 客户端（支持 Crumb 驗證）"""
     
     # Yahoo Finance API 端点
     API_BASE_URL = 'https://query1.finance.yahoo.com'
+    API_BASE_URL_V2 = 'https://query2.finance.yahoo.com'
     CHART_ENDPOINT = '/v8/finance/chart'
     OPTIONS_ENDPOINT = '/v7/finance/options'
+    CRUMB_URL = 'https://fc.yahoo.com'
     
     def __init__(
         self, 
@@ -40,12 +43,72 @@ class YahooFinanceV2Client:
         self.max_retries = max_retries
         self.last_request_time = 0
         
+        # 创建 Session 以保持 cookies
+        self.session = requests.Session()
+        
         # 设置 User-Agent（关键！）
         self.headers = {
-            'User-Agent': user_agent or self._get_default_user_agent()
+            'User-Agent': user_agent or self._get_default_user_agent(),
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate',
+            'Connection': 'keep-alive',
         }
+        self.session.headers.update(self.headers)
+        
+        # Crumb 和 cookies
+        self.crumb = None
+        self.cookies = None
+        
+        # 初始化時獲取 crumb
+        self._init_crumb()
         
         logger.info(f"Yahoo Finance 客户端已初始化 (User-Agent: {self.headers['User-Agent'][:50]}...)")
+    
+    def _init_crumb(self):
+        """初始化 Crumb 驗證"""
+        try:
+            # 第一步：訪問 Yahoo Finance 獲取 cookies
+            logger.debug("正在獲取 Yahoo Finance cookies...")
+            
+            # 訪問主頁獲取 cookies
+            response = self.session.get(
+                'https://finance.yahoo.com',
+                headers=self.headers,
+                timeout=10
+            )
+            
+            # 第二步：獲取 crumb
+            crumb_url = f'{self.API_BASE_URL}/v1/test/getcrumb'
+            crumb_response = self.session.get(crumb_url, timeout=10)
+            
+            if crumb_response.status_code == 200:
+                crumb_text = crumb_response.text.strip()
+                # 驗證 crumb 不是錯誤信息
+                if crumb_text and not crumb_text.startswith('{') and 'error' not in crumb_text.lower():
+                    self.crumb = crumb_text
+                    logger.info(f"* 成功獲取 Yahoo Finance Crumb")
+                    return
+                else:
+                    logger.debug(f"  Crumb 響應無效: {crumb_text[:50]}...")
+            
+            # 備用方法：從頁面提取 crumb
+            logger.debug("嘗試從頁面提取 crumb...")
+            quote_url = 'https://finance.yahoo.com/quote/AAPL'
+            page_response = self.session.get(quote_url, timeout=10)
+            
+            if page_response.status_code == 200:
+                # 嘗試從頁面中提取 crumb
+                crumb_match = re.search(r'"crumb":"([^"]+)"', page_response.text)
+                if crumb_match:
+                    self.crumb = crumb_match.group(1)
+                    logger.info(f"* 從頁面提取 Crumb 成功")
+                    return
+            
+            logger.warning("! 無法獲取 Crumb，將使用無 Crumb 模式")
+            
+        except Exception as e:
+            logger.warning(f"! 獲取 Crumb 失敗: {e}，將使用無 Crumb 模式")
     
     def _get_default_user_agent(self) -> str:
         """获取默认 User-Agent"""
@@ -62,15 +125,17 @@ class YahooFinanceV2Client:
         self, 
         endpoint: str, 
         params: Optional[Dict[str, Any]] = None,
-        retry_count: int = 0
+        retry_count: int = 0,
+        use_v2: bool = False
     ) -> Dict[str, Any]:
         """
-        发送 API 请求（包含重试逻辑）
+        发送 API 请求（包含重试逻辑和 Crumb 驗證）
         
         Args:
             endpoint: API 端点路径
             params: 查询参数
             retry_count: 当前重试次数
+            use_v2: 是否使用 query2 端點
             
         Returns:
             API 响应（JSON）
@@ -80,14 +145,21 @@ class YahooFinanceV2Client:
         """
         self._rate_limit_delay()
         
-        url = f"{self.API_BASE_URL}{endpoint}"
+        base_url = self.API_BASE_URL_V2 if use_v2 else self.API_BASE_URL
+        url = f"{base_url}{endpoint}"
         start_time = time.time()
+        
+        # 添加 crumb 參數（如果有）
+        if params is None:
+            params = {}
+        if self.crumb:
+            params['crumb'] = self.crumb
         
         try:
             logger.info(f"Requesting {url} with params {params}")
             logger.debug(f"User-Agent: {self.headers.get('User-Agent', 'MISSING')}")
             
-            response = requests.get(url, params=params, headers=self.headers, timeout=10)
+            response = self.session.get(url, params=params, timeout=15)
             response.raise_for_status()
             
             elapsed_time = time.time() - start_time
@@ -154,7 +226,30 @@ class YahooFinanceV2Client:
                     )
                     raise
             
-            # 4xx: 客户端错误（除 429）- 不重试
+            # 401: Unauthorized - 可能是 Crumb 過期，嘗試重新獲取
+            elif status_code == 401:
+                if retry_count < self.max_retries:
+                    logger.warning(f"! 401 Unauthorized - 嘗試重新獲取 Crumb...")
+                    self._init_crumb()
+                    
+                    # 如果成功獲取新 crumb，重試
+                    if self.crumb:
+                        time.sleep(2)
+                        return self._make_request(endpoint, params, retry_count + 1, use_v2)
+                    else:
+                        # 嘗試使用 query2 端點
+                        if not use_v2:
+                            logger.warning("! 嘗試使用 query2 端點...")
+                            time.sleep(2)
+                            return self._make_request(endpoint, params, retry_count + 1, use_v2=True)
+                
+                logger.error(
+                    f"x Client error ({status_code}) - No retry. "
+                    f"URL: {url}, Response: {response_body}"
+                )
+                raise
+            
+            # 4xx: 其他客户端错误 - 不重试
             else:
                 logger.error(
                     f"x Client error ({status_code}) - No retry. "
@@ -237,17 +332,68 @@ class YahooFinanceV2Client:
         
         Args:
             symbol: 股票代码
-            expiration: 到期日（可选）
+            expiration: 到期日（可选，格式 YYYY-MM-DD 或 Unix timestamp）
         
         Returns:
             dict: 期权链数据
         """
         endpoint = f"{self.OPTIONS_ENDPOINT}/{symbol}"
         params = {}
+        
+        # 將日期轉換為 Unix 時間戳
         if expiration:
-            params['date'] = expiration
+            # 如果已經是數字（timestamp），直接使用
+            if isinstance(expiration, (int, float)):
+                params['date'] = int(expiration)
+            elif expiration.isdigit():
+                params['date'] = int(expiration)
+            else:
+                try:
+                    from datetime import datetime
+                    import calendar
+                    # 解析日期
+                    exp_date = datetime.strptime(expiration, '%Y-%m-%d')
+                    # 使用 UTC 時間戳（避免時區問題）
+                    timestamp = calendar.timegm(exp_date.timetuple())
+                    params['date'] = timestamp
+                    logger.debug(f"期權到期日: {expiration} -> Unix timestamp: {timestamp}")
+                except ValueError:
+                    # 如果解析失敗，直接使用原始值
+                    params['date'] = expiration
         
         return self._make_request(endpoint, params)
+    
+    def get_available_expirations(self, symbol: str) -> list:
+        """
+        獲取可用的期權到期日列表
+        
+        Args:
+            symbol: 股票代碼
+        
+        Returns:
+            list: 可用的到期日列表（Unix timestamp）
+        """
+        try:
+            endpoint = f"{self.OPTIONS_ENDPOINT}/{symbol}"
+            response = self._make_request(endpoint, {})
+            
+            if not response:
+                return []
+            
+            option_chain = response.get('optionChain', {})
+            result = option_chain.get('result', [])
+            
+            if not result:
+                return []
+            
+            expirations = result[0].get('expirationDates', [])
+            logger.info(f"* 獲取 {symbol} 可用到期日: {len(expirations)} 個")
+            
+            return expirations
+            
+        except Exception as e:
+            logger.error(f"x 獲取 {symbol} 到期日列表失敗: {e}")
+            return []
 
 
 
@@ -404,10 +550,28 @@ class YahooDataParser:
                 return None
             
             data = result[0]
+            
+            # 調試：顯示數據結構
+            logger.debug(f"  期權數據鍵: {list(data.keys())}")
+            
             options = data.get('options', [])
             
             if not options or len(options) == 0:
+                # 嘗試直接從 data 獲取 calls 和 puts
+                calls = data.get('calls', [])
+                puts = data.get('puts', [])
+                
+                if calls or puts:
+                    logger.debug(f"  從 data 直接獲取: {len(calls)} calls, {len(puts)} puts")
+                    return {
+                        'calls': calls,
+                        'puts': puts,
+                        'expiration': data.get('expirationDate', ''),
+                        'data_source': 'yahoo_finance'
+                    }
+                
                 logger.error("x No options data in response")
+                logger.debug(f"  data 結構: {list(data.keys())}")
                 return None
             
             option_data = options[0]

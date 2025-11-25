@@ -1,0 +1,4 @@
+# file: D:\option_trading_system\option_trading_system\option_trading_system\output_layer\output_manager.py
+# hypothesis_version: 6.141.1
+
+['--', '--execute', '.txt', 'AUX', 'COM1', 'COM2', 'COM3', 'COM4', 'COM5', 'COM6', 'COM7', 'COM8', 'COM9', 'CON', 'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9', 'NUL', 'PRN', 'UNKNOWN', '[/\\\\:*?"<>|]', '__main__', 'csv', 'destination', 'file_type', 'json', 'output', 'source', 'test', 'ticker', 'txt', 'utf-8', 'verify', 'w']

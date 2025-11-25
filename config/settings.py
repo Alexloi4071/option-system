@@ -34,6 +34,12 @@ class Settings:
     RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY", "")
     RAPIDAPI_HOST = os.getenv("RAPIDAPI_HOST", "yahoo-finance127.p.rapidapi.com")
     
+    # Alpha Vantage 設置
+    ALPHA_VANTAGE_API_KEY = os.getenv("ALPHA_VANTAGE_API_KEY", "")
+    
+    # Massive API 設置
+    MASSIVE_API_KEY = os.getenv("MASSIVE_API_KEY", "")
+    
     # Yahoo Finance API 設置（公開API，無需認證）
     # 注意：Yahoo Finance API 已簡化，不需要 OAuth 認證
     # 系統會自動添加必需的 User-Agent header
@@ -88,6 +94,12 @@ class Settings:
         
         if not cls.RAPIDAPI_KEY:
             warnings.append("RAPIDAPI_KEY未設置，備用數據源不可用")
+        
+        if not cls.ALPHA_VANTAGE_API_KEY:
+            warnings.append("ALPHA_VANTAGE_API_KEY未設置，Alpha Vantage功能不可用")
+        
+        if not cls.MASSIVE_API_KEY:
+            warnings.append("MASSIVE_API_KEY未設置，Massive API功能不可用")
         
         # IBKR 配置檢查（僅在啟用時檢查）
         if cls.IBKR_ENABLED:
