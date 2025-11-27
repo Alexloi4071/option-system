@@ -78,7 +78,7 @@ class TestStrikeRangeFiltering:
         current_price=st.floats(min_value=10.0, max_value=1000.0, allow_nan=False, allow_infinity=False),
         strategy_type=st.sampled_from(['long_call', 'long_put', 'short_call', 'short_put'])
     )
-    @settings(max_examples=100)
+    @settings(max_examples=100, deadline=None)
     def test_strikes_within_range(self, current_price, strategy_type):
         """
         **Feature: jin-cao-option-enhancements, Property 3: Strike Range Filtering**

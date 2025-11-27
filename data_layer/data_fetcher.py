@@ -2202,6 +2202,29 @@ class DataFetcher:
             
             current_price = stock_info['current_price']
             
+            # ✅ 補充 Finviz 數據（如果主數據源不是 Finviz）
+            if stock_info.get('data_source') != 'Finviz' and hasattr(self, 'finviz_scraper') and self.finviz_scraper:
+                logger.info("  補充 Finviz 數據...")
+                try:
+                    finviz_data = self.finviz_scraper.get_stock_fundamentals(ticker)
+                    if finviz_data:
+                        # 補充 Finviz 特有的字段
+                        finviz_fields_to_add = [
+                            'insider_own', 'inst_own', 'short_float', 'avg_volume',
+                            'peg', 'roe', 'roa', 'profit_margin', 'operating_margin',
+                            'debt_eq', 'atr', 'rsi', 'beta', 'target_price',
+                            'forward_pe', 'sector', 'industry', 'company_name'
+                        ]
+                        for field in finviz_fields_to_add:
+                            if finviz_data.get(field) is not None and stock_info.get(field) is None:
+                                stock_info[field] = finviz_data[field]
+                        # 特殊處理：peg -> peg_ratio
+                        if finviz_data.get('peg') is not None and stock_info.get('peg_ratio') is None:
+                            stock_info['peg_ratio'] = finviz_data['peg']
+                        logger.info(f"  * Finviz 數據補充完成")
+                except Exception as e:
+                    logger.warning(f"  ! Finviz 數據補充失敗: {e}")
+            
             # 如果 current_price 為 0，嘗試從歷史數據獲取
             if current_price == 0:
                 logger.info("  嘗試從歷史數據獲取當前價格...")

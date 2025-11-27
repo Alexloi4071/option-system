@@ -51,6 +51,7 @@ class StrikeAnalysis:
     iv: float = 0.0
     iv_rank: float = 50.0
     iv_skew: float = 0.0  # 相對於ATM的IV差異
+    iv_source: str = 'unknown'  # IV 來源: 'module17', 'yahoo', 'default'
     
     # 評分
     liquidity_score: float = 0.0
@@ -66,6 +67,15 @@ class StrikeAnalysis:
     max_loss: float = 0.0
     breakeven: float = 0.0
     potential_profit: float = 0.0
+    
+    # 增強風險回報指標 (Requirements 3.1)
+    win_probability: float = 0.0  # 勝率估算（基於 Delta）
+    expected_return: float = 0.0  # 預期收益
+    theta_adjusted_return: float = 0.0  # Theta 調整後的預期收益
+    
+    # Put-Call Parity 驗證字段 (Requirements 4.4)
+    parity_valid: Optional[bool] = None  # Parity 驗證是否通過
+    parity_deviation_pct: Optional[float] = None  # Parity 偏離百分比
     
     def to_dict(self) -> Dict:
         return {
@@ -85,6 +95,7 @@ class StrikeAnalysis:
             'iv': round(self.iv, 2),
             'iv_rank': round(self.iv_rank, 2),
             'iv_skew': round(self.iv_skew, 2),
+            'iv_source': self.iv_source,
             'liquidity_score': round(self.liquidity_score, 2),
             'greeks_score': round(self.greeks_score, 2),
             'iv_score': round(self.iv_score, 2),
@@ -93,7 +104,12 @@ class StrikeAnalysis:
             'strategy_suitability': self.strategy_suitability,
             'max_loss': round(self.max_loss, 2),
             'breakeven': round(self.breakeven, 2),
-            'potential_profit': round(self.potential_profit, 2)
+            'potential_profit': round(self.potential_profit, 2),
+            'win_probability': round(self.win_probability, 4),
+            'expected_return': round(self.expected_return, 2),
+            'theta_adjusted_return': round(self.theta_adjusted_return, 2),
+            'parity_valid': self.parity_valid,
+            'parity_deviation_pct': round(self.parity_deviation_pct, 2) if self.parity_deviation_pct is not None else None
         }
 
 
@@ -127,8 +143,143 @@ class OptimalStrikeCalculator:
     RECOMMENDED_OPEN_INTEREST = 500
     RECOMMENDED_BID_ASK_SPREAD_PCT = 5.0
     
+    # IV 默認值
+    DEFAULT_IV = 0.30
+    
     def __init__(self):
         logger.info("* 最佳行使價計算器已初始化")
+        self._iv_calculator = None
+    
+    def _get_iv_calculator(self):
+        """延遲初始化 IV 計算器"""
+        if self._iv_calculator is None:
+            from calculation_layer.module17_implied_volatility import ImpliedVolatilityCalculator
+            self._iv_calculator = ImpliedVolatilityCalculator()
+        return self._iv_calculator
+    
+    def _normalize_iv(self, raw_iv: float) -> float:
+        """
+        標準化 IV 為小數形式
+        
+        規則:
+        - 0.05 <= raw_iv <= 3.0: 視為小數形式
+        - 5 <= raw_iv <= 300: 視為百分比形式，除以 100
+        - 其他: 使用默認值 0.30
+        
+        返回:
+            float: 標準化後的 IV，範圍 [0.01, 5.0]
+        
+        Requirements: 1.4, 1.5, 2.1, 2.2, 2.3, 2.5
+        """
+        original_iv = raw_iv
+        
+        # 處理無效值
+        if raw_iv is None or raw_iv <= 0:
+            logger.debug(f"  IV 無效 ({raw_iv})，使用默認值 {self.DEFAULT_IV}")
+            return self.DEFAULT_IV
+        
+        # 檢測格式並轉換
+        if 5.0 <= raw_iv <= 300.0:
+            # 百分比形式 (5-300) -> 轉換為小數
+            normalized_iv = raw_iv / 100.0
+            logger.debug(f"  IV 格式轉換: {original_iv}% -> {normalized_iv:.4f} (百分比->小數)")
+        elif 0.05 <= raw_iv <= 3.0:
+            # 已經是小數形式
+            normalized_iv = raw_iv
+            logger.debug(f"  IV 已是小數形式: {normalized_iv:.4f}")
+        elif raw_iv > 300.0:
+            # 異常高的百分比值
+            normalized_iv = raw_iv / 100.0
+            logger.warning(f"  IV 異常高 ({raw_iv})，轉換為 {normalized_iv:.4f}")
+        elif raw_iv < 0.05 and raw_iv > 0:
+            # 非常低的小數值
+            normalized_iv = raw_iv
+            logger.debug(f"  IV 非常低: {normalized_iv:.4f}")
+        else:
+            # 其他情況使用默認值
+            logger.warning(f"  IV 格式無法識別 ({raw_iv})，使用默認值 {self.DEFAULT_IV}")
+            return self.DEFAULT_IV
+        
+        # 限制在合理範圍內 [0.01, 5.0]
+        clamped_iv = max(0.01, min(5.0, normalized_iv))
+        
+        if clamped_iv != normalized_iv:
+            logger.debug(f"  IV 被限制: {normalized_iv:.4f} -> {clamped_iv:.4f}")
+        
+        return clamped_iv
+    
+    def _get_corrected_iv(
+        self,
+        option: Dict,
+        current_price: float,
+        strike: float,
+        option_type: str,
+        time_to_expiration: float,
+        risk_free_rate: float = 0.045
+    ) -> tuple:
+        """
+        獲取校正後的 IV
+        
+        策略優先級:
+        1. Module 17 從市場價格反推（最準確）
+        2. Yahoo Finance IV（需驗證）
+        3. 默認值 0.30
+        
+        參數:
+            option: 期權數據字典
+            current_price: 當前股價
+            strike: 行使價
+            option_type: 期權類型 ('call' 或 'put')
+            time_to_expiration: 到期時間（年）
+            risk_free_rate: 無風險利率
+        
+        返回:
+            tuple: (iv: float, source: str)
+                - iv: 小數形式的 IV（如 0.35 表示 35%）
+                - source: IV 來源 ('module17', 'yahoo', 'default')
+        
+        Requirements: 1.1, 1.2, 1.3, 1.6
+        """
+        # 獲取市場價格
+        market_price = option.get('lastPrice', 0) or 0
+        if market_price <= 0:
+            bid = option.get('bid', 0) or 0
+            ask = option.get('ask', 0) or 0
+            market_price = (bid + ask) / 2 if (bid + ask) > 0 else 0
+        
+        # 策略 1: 使用 Module 17 從市場價格反推 IV
+        if market_price > 0 and time_to_expiration > 0:
+            try:
+                iv_calculator = self._get_iv_calculator()
+                iv_result = iv_calculator.calculate_implied_volatility(
+                    market_price=market_price,
+                    stock_price=current_price,
+                    strike_price=strike,
+                    risk_free_rate=risk_free_rate,
+                    time_to_expiration=time_to_expiration,
+                    option_type=option_type
+                )
+                
+                if iv_result.converged:
+                    # Module 17 返回的 IV 已經是小數形式
+                    corrected_iv = self._normalize_iv(iv_result.implied_volatility)
+                    logger.debug(f"  使用 Module 17 計算 IV: {corrected_iv:.4f} (收斂)")
+                    return (corrected_iv, 'module17')
+                else:
+                    logger.debug(f"  Module 17 IV 計算未收斂，嘗試 Yahoo Finance IV")
+            except Exception as e:
+                logger.debug(f"  Module 17 IV 計算失敗: {e}，嘗試 Yahoo Finance IV")
+        
+        # 策略 2: 使用 Yahoo Finance IV（需驗證和標準化）
+        raw_yahoo_iv = option.get('impliedVolatility', 0) or 0
+        if raw_yahoo_iv > 0:
+            corrected_iv = self._normalize_iv(raw_yahoo_iv)
+            logger.debug(f"  使用 Yahoo Finance IV: {raw_yahoo_iv} -> {corrected_iv:.4f}")
+            return (corrected_iv, 'yahoo')
+        
+        # 策略 3: 使用默認值
+        logger.warning(f"  IV 數據無效或缺失，使用默認值 {self.DEFAULT_IV}")
+        return (self.DEFAULT_IV, 'default')
     
     def analyze_strikes(
         self,
@@ -245,6 +396,32 @@ class OptimalStrikeCalculator:
             
             best_strike = analyzed_strikes[0].strike if analyzed_strikes else 0
             
+            # 執行 Put-Call Parity 驗證
+            # Requirements 4.1, 4.2, 4.3, 4.4
+            time_to_expiry = days_to_expiration / 365.0
+            parity_validation = self._validate_parity_for_atm(
+                option_chain=option_chain,
+                current_price=current_price,
+                time_to_expiration=time_to_expiry,
+                risk_free_rate=0.045
+            )
+            
+            # 如果 Parity 驗證成功，將結果添加到每個分析的行使價
+            # Requirements 4.4: 在報告中顯示 Parity 驗證狀態和偏離百分比
+            if parity_validation is not None:
+                for analysis in analyzed_strikes:
+                    analysis.parity_valid = parity_validation['valid']
+                    analysis.parity_deviation_pct = parity_validation['deviation_pct']
+            
+            # 執行波動率微笑分析
+            # Requirements 5.6: 在分析流程中整合波動率微笑分析
+            volatility_smile_result = self._analyze_volatility_smile(
+                option_chain=option_chain,
+                current_price=current_price,
+                time_to_expiration=time_to_expiry,
+                risk_free_rate=0.045
+            )
+            
             result = {
                 'analyzed_strikes': [s.to_dict() for s in analyzed_strikes],
                 'top_recommendations': top_recommendations,
@@ -253,7 +430,9 @@ class OptimalStrikeCalculator:
                 'strategy_type': strategy_type,
                 'current_price': current_price,
                 'analysis_summary': self._generate_summary(analyzed_strikes[0], strategy_type) if analyzed_strikes else "無推薦",
-                'calculation_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                'calculation_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'parity_validation': parity_validation,  # 添加 Parity 驗證結果
+                'volatility_smile': volatility_smile_result  # 添加波動率微笑分析結果 (Requirements 5.6)
             }
             
             logger.info(f"* 最佳行使價分析完成")
@@ -285,10 +464,27 @@ class OptimalStrikeCalculator:
             last_price = option.get('lastPrice', 0) or 0
             volume = option.get('volume', 0) or 0
             oi = option.get('openInterest', 0) or 0
-            # 獲取 IV（Yahoo Finance 返回的已經是小數形式，如 0.25 表示 25%）
-            raw_iv = option.get('impliedVolatility', 0) or 0
-            # 如果 IV > 5，說明已經是百分比形式；否則轉換為百分比
-            iv = raw_iv if raw_iv > 5 else raw_iv * 100
+            
+            # 計算時間（年）
+            time_to_expiry = days_to_expiration / 365.0
+            if time_to_expiry <= 0:
+                time_to_expiry = 1 / 365.0  # 至少 1 天
+            
+            # 獲取無風險利率（默認 4.5%）
+            risk_free_rate = 0.045
+            
+            # 使用新的 IV 處理邏輯獲取校正後的 IV
+            corrected_iv, iv_source = self._get_corrected_iv(
+                option=option,
+                current_price=current_price,
+                strike=strike,
+                option_type=option_type,
+                time_to_expiration=time_to_expiry,
+                risk_free_rate=risk_free_rate
+            )
+            
+            # IV 已經是小數形式，轉換為百分比用於顯示
+            iv_display = corrected_iv * 100
             
             # 嘗試從期權數據獲取 Greeks，如果沒有則自行計算
             delta = option.get('delta')
@@ -302,24 +498,8 @@ class OptimalStrikeCalculator:
                     from calculation_layer.module16_greeks import GreeksCalculator
                     greeks_calc = GreeksCalculator()
                     
-                    # 計算時間（年）
-                    time_to_expiry = days_to_expiration / 365.0
-                    
-                    # 確保時間不為零
-                    if time_to_expiry <= 0:
-                        time_to_expiry = 1 / 365.0  # 至少 1 天
-                    
-                    # 使用 IV 或默認值（確保波動率在合理範圍內）
-                    if iv > 0:
-                        # IV 已經是百分比形式，轉換為小數
-                        volatility = iv / 100 if iv > 1 else iv
-                        # 限制在合理範圍內 (1% - 500%)
-                        volatility = max(0.01, min(5.0, volatility))
-                    else:
-                        volatility = 0.30
-                    
-                    # 獲取無風險利率（默認 4.5%）
-                    risk_free_rate = 0.045
+                    # 使用校正後的 IV（已經是小數形式）計算 Greeks
+                    volatility = corrected_iv
                     
                     # 計算 Greeks（使用正確的方法名）
                     greeks_result = greeks_calc.calculate_all_greeks(
@@ -372,16 +552,20 @@ class OptimalStrikeCalculator:
                 volume=volume,
                 open_interest=oi,
                 bid_ask_spread_pct=bid_ask_spread_pct,
-                iv=iv,
-                iv_rank=iv_rank
+                iv=iv_display,  # 使用百分比形式顯示
+                iv_rank=iv_rank,
+                iv_source=iv_source  # 記錄 IV 來源
             )
             
             # 計算各項評分
             analysis.liquidity_score = self._calculate_liquidity_score(analysis)
             analysis.greeks_score = self._calculate_greeks_score(analysis, strategy_type)
             analysis.iv_score = self._calculate_iv_score(analysis, strategy_type)
-            analysis.risk_reward_score = self._calculate_risk_reward_score(
-                analysis, current_price, strategy_type, target_price
+            # 使用增強的風險回報評分 v2（包含勝率和 Theta 調整）
+            # Requirements: 3.1
+            analysis.risk_reward_score = self._calculate_risk_reward_score_v2(
+                analysis, current_price, strategy_type, target_price, 
+                holding_days=days_to_expiration
             )
             
             return analysis
@@ -614,6 +798,134 @@ class OptimalStrikeCalculator:
         
         return min(100.0, max(0.0, score))
     
+    def _calculate_risk_reward_score_v2(
+        self,
+        analysis: StrikeAnalysis,
+        current_price: float,
+        strategy_type: str,
+        target_price: Optional[float],
+        holding_days: int = 30
+    ) -> float:
+        """
+        增強的風險回報評分 (0-100)
+        
+        新增考慮因素:
+        - 勝率估算（基於 Delta）
+        - 時間衰減影響（基於 Theta）
+        - 預期收益計算
+        
+        公式:
+        win_probability = Delta (for bullish) or |Delta| (for bearish)
+        expected_return = potential_profit × win_probability - max_loss × (1 - win_probability)
+        theta_loss = |Theta| × holding_days (only for Long strategies)
+        adjusted_return = expected_return - theta_loss
+        
+        Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6
+        
+        返回:
+            float: 評分 0-100
+        """
+        # 首先調用原始方法計算基本的 max_loss, breakeven, potential_profit
+        premium = analysis.last_price if analysis.last_price > 0 else (analysis.bid + analysis.ask) / 2
+        strike = analysis.strike
+        
+        # 設定目標價格（如果未提供，使用 ±10% 作為目標）
+        if target_price is None:
+            if strategy_type in ['long_call', 'short_put']:
+                target_price = current_price * 1.10  # 看漲目標
+            else:
+                target_price = current_price * 0.90  # 看跌目標
+        
+        # 計算基本風險回報指標
+        if strategy_type == 'long_call':
+            analysis.max_loss = premium
+            analysis.breakeven = strike + premium
+            analysis.potential_profit = max(0, target_price - strike - premium)
+            
+        elif strategy_type == 'long_put':
+            analysis.max_loss = premium
+            analysis.breakeven = strike - premium
+            analysis.potential_profit = max(0, strike - target_price - premium)
+            
+        elif strategy_type == 'short_call':
+            analysis.max_loss = float('inf')  # 理論上無限
+            analysis.breakeven = strike + premium
+            analysis.potential_profit = premium
+            
+        elif strategy_type == 'short_put':
+            analysis.max_loss = strike - premium  # 最大損失是股票跌到0
+            analysis.breakeven = strike - premium
+            analysis.potential_profit = premium
+        
+        # 計算勝率（基於 Delta）
+        # Requirements 3.1: 使用 Delta 估算勝率
+        delta = abs(analysis.delta)
+        
+        # 對於 Long Call/Short Put（看漲策略），勝率 = Delta
+        # 對於 Long Put/Short Call（看跌策略），勝率 = |Delta|
+        # Delta 代表期權到期時處於價內的概率
+        if strategy_type in ['long_call', 'short_put']:
+            # 看漲策略: Delta 直接代表勝率
+            analysis.win_probability = delta
+        else:
+            # 看跌策略: 1 - Delta 代表勝率（因為 Put 的 Delta 是負的，我們用絕對值）
+            # 但對於 Put，Delta 的絕對值本身就代表價內概率
+            analysis.win_probability = delta
+        
+        # 計算預期收益
+        # Requirements 3.3: expected_return = potential_profit × win_probability - max_loss × (1 - win_probability)
+        max_loss_for_calc = analysis.max_loss
+        
+        # 對於 Short Call，max_loss 是無限的，使用一個合理的估計值
+        if max_loss_for_calc == float('inf'):
+            # 使用 2 倍當前股價作為最大損失估計
+            max_loss_for_calc = current_price * 2
+        
+        analysis.expected_return = (
+            analysis.potential_profit * analysis.win_probability - 
+            max_loss_for_calc * (1 - analysis.win_probability)
+        )
+        
+        # 計算 Theta 調整
+        # Requirements 3.2, 3.6: Long 策略需要扣除 Theta 損失，Short 策略不扣除
+        theta_loss = 0.0
+        if strategy_type in ['long_call', 'long_put']:
+            # Long 策略: Theta 是負的，代表每天的時間價值損失
+            # theta_loss = |Theta| × holding_days
+            theta_loss = abs(analysis.theta) * holding_days
+            analysis.theta_adjusted_return = analysis.expected_return - theta_loss
+            logger.debug(f"  Long 策略 Theta 調整: 預期收益 {analysis.expected_return:.2f} - Theta損失 {theta_loss:.2f} = {analysis.theta_adjusted_return:.2f}")
+        else:
+            # Short 策略: Theta 收益（不扣除，因為 Theta 對 Short 有利）
+            # Requirements 3.6: Short 策略不扣除 Theta 損失
+            analysis.theta_adjusted_return = analysis.expected_return
+            logger.debug(f"  Short 策略: 預期收益 {analysis.expected_return:.2f} (Theta 有利，不扣除)")
+        
+        # 計算評分
+        # Requirements 3.4, 3.5: 根據調整後的預期收益計算評分
+        adjusted_return = analysis.theta_adjusted_return
+        
+        if adjusted_return <= 0:
+            # Requirements 3.5: 調整後預期收益為負，評分為 20.0
+            score = 20.0
+            logger.debug(f"  調整後預期收益為負 ({adjusted_return:.2f})，評分 20.0")
+        else:
+            # Requirements 3.4: 調整後預期收益為正，根據收益率評分
+            # 收益率 = 調整後預期收益 / 最大損失
+            if max_loss_for_calc > 0:
+                return_rate = adjusted_return / max_loss_for_calc
+                
+                # 評分範圍 [40, 100]，基於收益率
+                # 收益率 >= 100% -> 100 分
+                # 收益率 0% -> 40 分
+                # 線性插值
+                score = min(100.0, 40.0 + return_rate * 60.0)
+                logger.debug(f"  收益率 {return_rate:.2%}，評分 {score:.1f}")
+            else:
+                score = 40.0
+        
+        return min(100.0, max(0.0, score))
+    
     def calculate_composite_score(self, analysis: StrikeAnalysis, strategy_type: str) -> float:
         """
         計算綜合評分 (0-100)
@@ -659,5 +971,218 @@ class OptimalStrikeCalculator:
             'current_price': 0,
             'analysis_summary': f"分析失敗: {reason}",
             'calculation_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            'error': reason
+            'error': reason,
+            'parity_validation': None,  # Put-Call Parity 驗證結果
+            'volatility_smile': None  # 波動率微笑分析結果 (Requirements 5.6)
         }
+    
+    def _validate_parity_for_atm(
+        self,
+        option_chain: Dict[str, Any],
+        current_price: float,
+        time_to_expiration: float,
+        risk_free_rate: float = 0.045
+    ) -> Optional[Dict]:
+        """
+        驗證 ATM 期權的 Put-Call Parity
+        
+        參數:
+            option_chain: 期權鏈數據 {'calls': [...], 'puts': [...]}
+            current_price: 當前股價
+            time_to_expiration: 到期時間（年）
+            risk_free_rate: 無風險利率
+        
+        返回:
+            Dict: {
+                'valid': bool,
+                'deviation_pct': float,
+                'arbitrage_opportunity': bool,
+                'strategy': str,
+                'atm_strike': float,
+                'call_price': float,
+                'put_price': float
+            }
+            或 None（如果驗證失敗）
+        
+        Requirements: 4.1, 4.5
+        """
+        try:
+            logger.info("開始驗證 ATM 期權的 Put-Call Parity...")
+            
+            calls = option_chain.get('calls', [])
+            puts = option_chain.get('puts', [])
+            
+            if not calls or not puts:
+                logger.warning("! 期權鏈數據不完整，跳過 Parity 驗證")
+                return None
+            
+            # 找到最接近 ATM 的行使價
+            atm_strike = None
+            min_distance = float('inf')
+            
+            # 從 calls 中找到所有行使價
+            call_strikes = {opt.get('strike', 0): opt for opt in calls if opt.get('strike', 0) > 0}
+            put_strikes = {opt.get('strike', 0): opt for opt in puts if opt.get('strike', 0) > 0}
+            
+            # 找到同時存在於 calls 和 puts 的行使價中最接近 ATM 的
+            common_strikes = set(call_strikes.keys()) & set(put_strikes.keys())
+            
+            if not common_strikes:
+                logger.warning("! 沒有找到同時存在 Call 和 Put 的行使價")
+                return None
+            
+            for strike in common_strikes:
+                distance = abs(strike - current_price)
+                if distance < min_distance:
+                    min_distance = distance
+                    atm_strike = strike
+            
+            if atm_strike is None:
+                logger.warning("! 無法找到 ATM 行使價")
+                return None
+            
+            logger.info(f"  ATM 行使價: ${atm_strike:.2f} (股價: ${current_price:.2f})")
+            
+            # 獲取 ATM Call 和 Put 的價格
+            atm_call = call_strikes[atm_strike]
+            atm_put = put_strikes[atm_strike]
+            
+            # 獲取價格（優先使用 lastPrice，否則使用 mid price）
+            call_price = atm_call.get('lastPrice', 0) or 0
+            if call_price <= 0:
+                bid = atm_call.get('bid', 0) or 0
+                ask = atm_call.get('ask', 0) or 0
+                call_price = (bid + ask) / 2 if (bid + ask) > 0 else 0
+            
+            put_price = atm_put.get('lastPrice', 0) or 0
+            if put_price <= 0:
+                bid = atm_put.get('bid', 0) or 0
+                ask = atm_put.get('ask', 0) or 0
+                put_price = (bid + ask) / 2 if (bid + ask) > 0 else 0
+            
+            # 驗證價格有效性
+            if call_price <= 0 or put_price <= 0:
+                logger.warning(f"! ATM 期權價格無效: Call=${call_price}, Put=${put_price}")
+                return None
+            
+            logger.info(f"  ATM Call 價格: ${call_price:.4f}")
+            logger.info(f"  ATM Put 價格: ${put_price:.4f}")
+            
+            # 調用 Module 19 進行 Parity 驗證
+            from calculation_layer.module19_put_call_parity import PutCallParityValidator
+            
+            parity_validator = PutCallParityValidator()
+            parity_result = parity_validator.validate_parity(
+                call_price=call_price,
+                put_price=put_price,
+                stock_price=current_price,
+                strike_price=atm_strike,
+                risk_free_rate=risk_free_rate,
+                time_to_expiration=time_to_expiration
+            )
+            
+            # 判斷是否超過 2% 偏離閾值
+            # Requirements 4.2: 偏離超過 2% 時標記為可能定價錯誤
+            deviation_pct = abs(parity_result.deviation_percentage)
+            is_valid = deviation_pct <= 2.0
+            
+            result = {
+                'valid': is_valid,
+                'deviation_pct': parity_result.deviation_percentage,
+                'arbitrage_opportunity': parity_result.arbitrage_opportunity,
+                'strategy': parity_result.strategy,
+                'atm_strike': atm_strike,
+                'call_price': call_price,
+                'put_price': put_price,
+                'theoretical_difference': parity_result.theoretical_difference,
+                'actual_difference': parity_result.actual_difference,
+                'theoretical_profit': parity_result.theoretical_profit
+            }
+            
+            if not is_valid:
+                logger.warning(f"! Put-Call Parity 偏離超過 2%: {deviation_pct:.2f}%")
+            else:
+                logger.info(f"* Put-Call Parity 驗證通過，偏離: {deviation_pct:.2f}%")
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"x Put-Call Parity 驗證失敗: {e}")
+            return None
+    
+    def _analyze_volatility_smile(
+        self,
+        option_chain: Dict[str, Any],
+        current_price: float,
+        time_to_expiration: float,
+        risk_free_rate: float = 0.045
+    ) -> Optional[Dict]:
+        """
+        執行波動率微笑分析
+        
+        參數:
+            option_chain: 期權鏈數據 {'calls': [...], 'puts': [...]}
+            current_price: 當前股價
+            time_to_expiration: 到期時間（年）
+            risk_free_rate: 無風險利率
+        
+        返回:
+            Dict: 波動率微笑分析結果（包含可視化數據）
+            或 None（如果分析失敗）
+        
+        Requirements: 5.6
+        """
+        try:
+            logger.info("開始波動率微笑分析...")
+            
+            # 創建 VolatilitySmileAnalyzer 實例
+            from calculation_layer.module24_volatility_smile import VolatilitySmileAnalyzer
+            
+            smile_analyzer = VolatilitySmileAnalyzer()
+            
+            # 調用 analyze_smile 方法
+            smile_result = smile_analyzer.analyze_smile(
+                option_chain=option_chain,
+                current_price=current_price,
+                time_to_expiration=time_to_expiration,
+                risk_free_rate=risk_free_rate
+            )
+            
+            # 轉換為字典格式，包含可視化數據
+            result_dict = smile_result.to_dict()
+            
+            # 添加可視化數據用於圖表繪製
+            # Requirements 5.6: 包含可視化數據用於圖表
+            result_dict['visualization'] = {
+                'chart_type': 'volatility_smile',
+                'x_axis': 'strike_price',
+                'y_axis': 'implied_volatility',
+                'call_data': [
+                    {'strike': strike, 'iv': iv}
+                    for strike, iv in result_dict['call_ivs']
+                ],
+                'put_data': [
+                    {'strike': strike, 'iv': iv}
+                    for strike, iv in result_dict['put_ivs']
+                ],
+                'atm_marker': {
+                    'strike': result_dict['atm_strike'],
+                    'iv': result_dict['atm_iv']
+                },
+                'annotations': {
+                    'skew': result_dict['skew'],
+                    'shape': result_dict['smile_shape'],
+                    'skew_25delta': result_dict['skew_25delta']
+                }
+            }
+            
+            logger.info(f"* 波動率微笑分析完成")
+            logger.info(f"  ATM IV: {result_dict['atm_iv']:.2f}%")
+            logger.info(f"  Skew: {result_dict['skew']:.2f}%")
+            logger.info(f"  形狀: {result_dict['smile_shape']}")
+            
+            return result_dict
+            
+        except Exception as e:
+            logger.error(f"x 波動率微笑分析失敗: {e}")
+            return None

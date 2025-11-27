@@ -330,17 +330,103 @@ class ReportGenerator:
             raise
     
     def _prepare_csv_rows(self, calculation_results, api_status=None):
-        """準備 CSV 數據行"""
+        """準備 CSV 數據行（增強版 - 支持深度嵌套）"""
         csv_rows = []
+        
+        def flatten_dict(data, prefix=''):
+            """遞歸展平嵌套字典"""
+            rows = []
+            if isinstance(data, dict):
+                for key, value in data.items():
+                    new_prefix = f"{prefix}.{key}" if prefix else key
+                    if isinstance(value, dict):
+                        # 對於特定的大型嵌套結構，只提取關鍵信息
+                        if key in ['analyzed_strikes', 'call_ivs', 'put_ivs', 'visualization']:
+                            # 跳過詳細的行使價列表，只記錄數量
+                            if isinstance(value, list):
+                                rows.append((new_prefix + '_count', len(value)))
+                            continue
+                        rows.extend(flatten_dict(value, new_prefix))
+                    elif isinstance(value, list):
+                        if len(value) > 0 and isinstance(value[0], dict):
+                            # 對於字典列表，只記錄數量和第一個元素的關鍵信息
+                            rows.append((new_prefix + '_count', len(value)))
+                            if key == 'top_recommendations' and len(value) > 0:
+                                # 記錄最佳推薦
+                                best = value[0]
+                                rows.append((new_prefix + '_best_strike', best.get('strike', 'N/A')))
+                                rows.append((new_prefix + '_best_score', best.get('composite_score', 'N/A')))
+                        else:
+                            rows.append((new_prefix, str(value)[:200]))  # 限制長度
+                    else:
+                        rows.append((new_prefix, value))
+            return rows
         
         for module_name, module_data in calculation_results.items():
             if isinstance(module_data, dict):
-                for key, value in module_data.items():
-                    csv_rows.append({
-                        '模塊': module_name,
-                        '指標': key,
-                        '數值': str(value)
-                    })
+                # 特殊處理 module22（最佳行使價分析）
+                if module_name == 'module22_optimal_strike':
+                    for strategy_key in ['long_call', 'long_put', 'short_call', 'short_put']:
+                        if strategy_key in module_data:
+                            strategy_data = module_data[strategy_key]
+                            # 提取關鍵信息
+                            csv_rows.append({
+                                '模塊': f"{module_name}_{strategy_key}",
+                                '指標': 'best_strike',
+                                '數值': str(strategy_data.get('best_strike', 'N/A'))
+                            })
+                            csv_rows.append({
+                                '模塊': f"{module_name}_{strategy_key}",
+                                '指標': 'total_analyzed',
+                                '數值': str(strategy_data.get('total_analyzed', 0))
+                            })
+                            csv_rows.append({
+                                '模塊': f"{module_name}_{strategy_key}",
+                                '指標': 'analysis_summary',
+                                '數值': str(strategy_data.get('analysis_summary', 'N/A'))
+                            })
+                            
+                            # 波動率微笑關鍵數據
+                            if 'volatility_smile' in strategy_data:
+                                smile = strategy_data['volatility_smile']
+                                csv_rows.append({
+                                    '模塊': f"{module_name}_{strategy_key}_smile",
+                                    '指標': 'atm_iv',
+                                    '數值': str(smile.get('atm_iv', 'N/A'))
+                                })
+                                csv_rows.append({
+                                    '模塊': f"{module_name}_{strategy_key}_smile",
+                                    '指標': 'skew',
+                                    '數值': str(smile.get('skew', 'N/A'))
+                                })
+                                csv_rows.append({
+                                    '模塊': f"{module_name}_{strategy_key}_smile",
+                                    '指標': 'smile_shape',
+                                    '數值': str(smile.get('smile_shape', 'N/A'))
+                                })
+                            
+                            # Parity 驗證關鍵數據
+                            if 'parity_validation' in strategy_data:
+                                parity = strategy_data['parity_validation']
+                                csv_rows.append({
+                                    '模塊': f"{module_name}_{strategy_key}_parity",
+                                    '指標': 'deviation_pct',
+                                    '數值': str(parity.get('deviation_pct', 'N/A'))
+                                })
+                                csv_rows.append({
+                                    '模塊': f"{module_name}_{strategy_key}_parity",
+                                    '指標': 'arbitrage_opportunity',
+                                    '數值': str(parity.get('arbitrage_opportunity', False))
+                                })
+                else:
+                    # 一般模塊處理
+                    flattened = flatten_dict(module_data)
+                    for key, value in flattened:
+                        csv_rows.append({
+                            '模塊': module_name,
+                            '指標': key,
+                            '數值': str(value)
+                        })
             elif isinstance(module_data, list):
                 for i, item in enumerate(module_data, 1):
                     if isinstance(item, dict):
@@ -350,6 +436,33 @@ class ReportGenerator:
                                 '指標': key,
                                 '數值': str(value)
                             })
+        
+        # 添加 IV Rank 和 IV Percentile 到 CSV（如果存在）
+        module18_data = calculation_results.get('module18_historical_volatility', {})
+        if module18_data.get('iv_rank') is not None:
+            csv_rows.append({
+                '模塊': 'IV_Analysis',
+                '指標': 'iv_rank',
+                '數值': str(module18_data.get('iv_rank'))
+            })
+        if module18_data.get('iv_percentile') is not None:
+            csv_rows.append({
+                '模塊': 'IV_Analysis',
+                '指標': 'iv_percentile',
+                '數值': str(module18_data.get('iv_percentile'))
+            })
+        if module18_data.get('iv_recommendation'):
+            rec = module18_data['iv_recommendation']
+            csv_rows.append({
+                '模塊': 'IV_Analysis',
+                '指標': 'iv_recommendation_action',
+                '數值': str(rec.get('action', 'N/A'))
+            })
+            csv_rows.append({
+                '模塊': 'IV_Analysis',
+                '指標': 'iv_recommendation_reason',
+                '數值': str(rec.get('reason', 'N/A'))
+            })
         
         if api_status:
             csv_rows.append({'模塊': '', '指標': '', '數值': ''})
@@ -479,7 +592,27 @@ class ReportGenerator:
                 f.write(f"EPS: {safe_format(raw_data.get('eps'), prefix='$')}\n")
                 f.write(f"派息: {safe_format(raw_data.get('annual_dividend'), prefix='$')}\n")
                 f.write(f"無風險利率: {safe_format(raw_data.get('risk_free_rate'), suffix='%')}\n")
-                f.write(f"VIX: {safe_format(raw_data.get('vix'))}\n\n")
+                f.write(f"VIX: {safe_format(raw_data.get('vix'))}\n")
+                
+                # 從計算結果中獲取 IV Rank 和 IV Percentile
+                module18_data = calculation_results.get('module18_historical_volatility', {})
+                iv_rank = module18_data.get('iv_rank')
+                iv_percentile = module18_data.get('iv_percentile')
+                
+                if iv_rank is not None:
+                    f.write(f"IV Rank: {iv_rank:.2f}%")
+                    if iv_rank < 30:
+                        f.write(" (低IV環境)")
+                    elif iv_rank > 70:
+                        f.write(" (高IV環境)")
+                    else:
+                        f.write(" (正常)")
+                    f.write("\n")
+                
+                if iv_percentile is not None:
+                    f.write(f"IV Percentile: {iv_percentile:.2f}%\n")
+                
+                f.write("\n")
             
             # 計算結果
             f.write("=" * 70 + "\n")
@@ -708,13 +841,61 @@ class ReportGenerator:
             report += f"│   評估: {assessment}\n"
             report += f"│   建議: {recommendation}\n"
             report += "│\n"
-            report += "│ 💡 解讀:\n"
-            report += "│   比率 > 1.2: IV 高估，考慮賣出期權\n"
-            report += "│   比率 < 0.8: IV 低估，考慮買入期權\n"
-            report += "│   0.8-1.2: 合理範圍\n"
         
+        # 新增: IV Rank 和 IV Percentile 顯示
+        iv_rank = results.get('iv_rank')
+        iv_percentile = results.get('iv_percentile')
+        iv_recommendation = results.get('iv_recommendation', {})
+        
+        if iv_rank is not None or iv_percentile is not None:
+            report += "│ 📈 IV Rank / IV Percentile 分析:\n"
+            if iv_rank is not None:
+                # IV Rank 可視化
+                rank_bar = self._create_progress_bar(iv_rank, 100, 20)
+                report += f"│   IV Rank: {iv_rank:.2f}%\n"
+                report += f"│   {rank_bar}\n"
+                
+                # IV Rank 狀態判斷
+                if iv_rank < 30:
+                    rank_status = "🔵 低IV環境 - 適合買入期權"
+                elif iv_rank > 70:
+                    rank_status = "🔴 高IV環境 - 適合賣出期權"
+                else:
+                    rank_status = "🟢 正常IV環境 - 觀望"
+                report += f"│   狀態: {rank_status}\n"
+            
+            if iv_percentile is not None:
+                report += f"│   IV Percentile: {iv_percentile:.2f}%\n"
+            report += "│\n"
+            
+            # IV 交易建議
+            if iv_recommendation:
+                action = iv_recommendation.get('action', 'N/A')
+                reason = iv_recommendation.get('reason', 'N/A')
+                confidence = iv_recommendation.get('confidence', 'N/A')
+                report += f"│ 💡 IV 交易建議:\n"
+                report += f"│   建議: {action}\n"
+                report += f"│   原因: {reason}\n"
+                report += f"│   信心度: {confidence}\n"
+                report += "│\n"
+        
+        report += "│ 📖 解讀:\n"
+        report += "│   IV Rank < 30%: IV 偏低，考慮買入期權\n"
+        report += "│   IV Rank > 70%: IV 偏高，考慮賣出期權\n"
+        report += "│   IV/HV > 1.2: IV 高估 | IV/HV < 0.8: IV 低估\n"
         report += "└────────────────────────────────────────────┘\n"
         return report
+    
+    def _create_progress_bar(self, value: float, max_value: float, width: int = 20) -> str:
+        """創建進度條可視化"""
+        if max_value <= 0:
+            return "[" + "░" * width + "]"
+        
+        filled = int((value / max_value) * width)
+        filled = max(0, min(filled, width))
+        empty = width - filled
+        
+        return f"[{'█' * filled}{'░' * empty}] {value:.1f}%"
     
     def _format_module19_put_call_parity(self, results: dict) -> str:
         """格式化 Put-Call Parity 結果"""
@@ -1158,6 +1339,103 @@ class ReportGenerator:
         report += "│   2. Long策略選擇 Delta 0.30-0.70 範圍\n"
         report += "│   3. Short策略選擇 Delta 0.20-0.40 範圍\n"
         report += "│   4. 結合 Module 14 監察崗位綜合判斷\n"
+        report += "└────────────────────────────────────────────────┘\n"
+        
+        # 添加波動率微笑分析（如果存在）
+        # 從任一策略中獲取波動率微笑數據
+        smile_data = None
+        for strategy_key in ['long_call', 'long_put', 'short_call', 'short_put']:
+            if strategy_key in results and 'volatility_smile' in results[strategy_key]:
+                smile_data = results[strategy_key]['volatility_smile']
+                break
+        
+        if smile_data:
+            report += self._format_volatility_smile(smile_data)
+        
+        # 添加 Put-Call Parity 驗證（如果存在）
+        parity_data = None
+        for strategy_key in ['long_call', 'long_put', 'short_call', 'short_put']:
+            if strategy_key in results and 'parity_validation' in results[strategy_key]:
+                parity_data = results[strategy_key]['parity_validation']
+                break
+        
+        if parity_data:
+            report += self._format_parity_validation(parity_data)
+        
+        return report
+    
+    def _format_volatility_smile(self, smile_data: dict) -> str:
+        """格式化波動率微笑分析結果"""
+        report = "\n┌─ 波動率微笑分析 (Volatility Smile) ──────────┐\n"
+        report += "│\n"
+        
+        atm_iv = smile_data.get('atm_iv', 0)
+        atm_strike = smile_data.get('atm_strike', 0)
+        skew = smile_data.get('skew', 0)
+        smile_shape = smile_data.get('smile_shape', 'N/A')
+        skew_25delta = smile_data.get('skew_25delta', 0)
+        current_price = smile_data.get('current_price', 0)
+        
+        report += f"│ 📊 基本指標:\n"
+        report += f"│   當前股價: ${current_price:.2f}\n"
+        report += f"│   ATM 行使價: ${atm_strike:.2f}\n"
+        report += f"│   ATM IV: {atm_iv:.2f}%\n"
+        report += "│\n"
+        
+        report += f"│ 📈 偏斜分析:\n"
+        report += f"│   Skew (OTM Put - OTM Call): {skew:.2f}%\n"
+        report += f"│   25-Delta Skew: {skew_25delta:.2f}%\n"
+        report += f"│   微笑形狀: {smile_shape}\n"
+        report += "│\n"
+        
+        # 微笑形狀解讀
+        report += f"│ 💡 形狀解讀:\n"
+        if smile_shape == 'put_skew':
+            report += "│   Put Skew: OTM Put IV > OTM Call IV\n"
+            report += "│   市場預期下跌風險較大（股票期權常見）\n"
+        elif smile_shape == 'call_skew':
+            report += "│   Call Skew: OTM Call IV > OTM Put IV\n"
+            report += "│   市場預期上漲風險較大（商品期權常見）\n"
+        else:
+            report += "│   Symmetric: OTM Put IV ≈ OTM Call IV\n"
+            report += "│   市場對上下風險預期相近\n"
+        
+        report += "└────────────────────────────────────────────────┘\n"
+        return report
+    
+    def _format_parity_validation(self, parity_data: dict) -> str:
+        """格式化 Put-Call Parity 驗證結果"""
+        report = "\n┌─ Put-Call Parity 驗證 ────────────────────────┐\n"
+        report += "│\n"
+        
+        valid = parity_data.get('valid', False)
+        deviation_pct = parity_data.get('deviation_pct', 0)
+        arbitrage_opportunity = parity_data.get('arbitrage_opportunity', False)
+        strategy = parity_data.get('strategy', 'N/A')
+        atm_strike = parity_data.get('atm_strike', 0)
+        call_price = parity_data.get('call_price', 0)
+        put_price = parity_data.get('put_price', 0)
+        
+        report += f"│ 📊 ATM 期權價格:\n"
+        report += f"│   行使價: ${atm_strike:.2f}\n"
+        report += f"│   Call 價格: ${call_price:.2f}\n"
+        report += f"│   Put 價格: ${put_price:.2f}\n"
+        report += "│\n"
+        
+        report += f"│ 🔍 Parity 驗證:\n"
+        report += f"│   偏差: {deviation_pct:.2f}%\n"
+        report += f"│   狀態: {'✓ 通過' if valid else '⚠️ 偏差較大'}\n"
+        report += f"│   套利機會: {'存在' if arbitrage_opportunity else '不存在'}\n"
+        
+        if arbitrage_opportunity:
+            theoretical_profit = parity_data.get('theoretical_profit', 0)
+            report += f"│   理論利潤: ${theoretical_profit:.2f}\n"
+            report += f"│   建議策略: {strategy}\n"
+        
+        report += "│\n"
+        report += "│ 💡 說明:\n"
+        report += "│   偏差 < 2%: Parity 成立，無套利機會\n"
+        report += "│   偏差 > 2%: 可能存在定價異常\n"
         report += "└────────────────────────────────────────────────┘\n"
         return report
     

@@ -188,19 +188,45 @@ class FinvizScraper:
                         value = cells[i + 1].get_text(strip=True)
                         data_dict[key] = value
             
-            # 提取公司名稱
+            # 提取公司名稱、Sector、Industry、Country（從 tab-link 類的鏈接獲取）
             company_name = None
-            title_tag = soup.find('h1', class_='quote-header_ticker-wrapper_company')
-            if title_tag:
-                company_name = title_tag.get_text(strip=True)
+            sector = None
+            industry = None
+            country = None
+            tab_links = soup.find_all('a', class_='tab-link')
+            for i, link in enumerate(tab_links):
+                href = link.get('href', '')
+                text = link.get_text(strip=True)
+                # 第一個 tab-link 是公司名稱（指向公司網站）
+                if i == 0:
+                    company_name = text
+                elif 'f=sec_' in href:
+                    sector = text
+                elif 'f=ind_' in href:
+                    industry = text
+                elif 'f=geo_' in href:
+                    country = text
+            
+            # 解析股息（Finviz 格式: "1.03 (0.37%)" 或 "1.07 (0.39%)"）
+            dividend_yield = None
+            dividend_ttm = data_dict.get('Dividend TTM', '')
+            dividend_est = data_dict.get('Dividend Est.', '')
+            # 優先使用 TTM，否則用 Est
+            dividend_str = dividend_ttm or dividend_est
+            if dividend_str:
+                # 提取括號內的百分比
+                import re
+                match = re.search(r'\((\d+\.?\d*)%\)', dividend_str)
+                if match:
+                    dividend_yield = float(match.group(1))
             
             # 映射到標準格式
             result = {
                 'ticker': ticker.upper(),
                 'company_name': company_name,
-                'sector': data_dict.get('Sector'),
-                'industry': data_dict.get('Industry'),
-                'country': data_dict.get('Country'),
+                'sector': sector,
+                'industry': industry,
+                'country': country,
                 'market_cap': self._parse_value(data_dict.get('Market Cap')),
                 'pe': self._parse_value(data_dict.get('P/E')),
                 'forward_pe': self._parse_value(data_dict.get('Forward P/E')),
@@ -209,9 +235,9 @@ class FinvizScraper:
                 'eps_next_y': self._parse_value(data_dict.get('EPS next Y')),
                 'price': self._parse_value(data_dict.get('Price')),
                 'target_price': self._parse_value(data_dict.get('Target Price')),
-                'dividend_yield': self._parse_value(data_dict.get('Dividend %')),
+                'dividend_yield': dividend_yield,
                 'beta': self._parse_value(data_dict.get('Beta')),
-                'atr': self._parse_value(data_dict.get('ATR')),
+                'atr': self._parse_value(data_dict.get('ATR (14)')),  # 修正: ATR → ATR (14)
                 'rsi': self._parse_value(data_dict.get('RSI (14)')),
                 'volume': self._parse_value(data_dict.get('Volume')),
                 'avg_volume': self._parse_value(data_dict.get('Avg Volume')),
