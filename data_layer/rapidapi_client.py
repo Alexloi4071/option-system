@@ -178,20 +178,21 @@ class RapidAPIClient:
         """
         logger.info(f"從 RapidAPI 獲取 {ticker} 報價...")
         
-        endpoint = "/v8/finance/chart"
+        # yahoo-finance15 API 端點
+        # 嘗試 v1/markets/quote (real-time) 或 v1/markets/quote (snapshot)
+        endpoint = "/api/v1/markets/quote"
         params = {
-            'symbol': ticker,
-            'interval': '1d',
-            'range': '1d'
+            'ticker': ticker,
+            'type': 'STOCKS'
         }
         
         response = self._make_request(endpoint, params)
         
         if response:
-            logger.info(f"* 成功從 RapidAPI 獲取 {ticker} 報價")
+            logger.info(f"[OK] 成功從 RapidAPI 獲取 {ticker} 報價")
             return response
         else:
-            logger.warning(f"! RapidAPI 獲取 {ticker} 報價失敗")
+            logger.warning(f"[!] RapidAPI 獲取 {ticker} 報價失敗")
             return None
     
     def get_historical_data(
@@ -211,20 +212,111 @@ class RapidAPIClient:
         """
         logger.info(f"從 RapidAPI 獲取 {ticker} 歷史數據 ({period})...")
         
-        endpoint = "/v8/finance/chart"
+        # yahoo-finance15 API 端點
+        endpoint = "/api/v1/markets/stock/history"
         params = {
             'symbol': ticker,
             'interval': '1d',
-            'range': period
+            'diffandsplits': 'false'
         }
         
         response = self._make_request(endpoint, params)
         
         if response:
-            logger.info(f"* 成功從 RapidAPI 獲取 {ticker} 歷史數據")
+            logger.info(f"[OK] 成功從 RapidAPI 獲取 {ticker} 歷史數據")
             return response
         else:
-            logger.warning(f"! RapidAPI 獲取 {ticker} 歷史數據失敗")
+            logger.warning(f"[!] RapidAPI 獲取 {ticker} 歷史數據失敗")
+            return None
+    
+    def get_market_news(self, ticker: str = None) -> Optional[Dict[str, Any]]:
+        """
+        獲取市場新聞
+        
+        Args:
+            ticker: 股票代碼（可選，不提供則獲取一般市場新聞）
+        
+        Returns:
+            新聞數據字典，失敗返回 None
+        """
+        logger.info(f"從 RapidAPI 獲取市場新聞...")
+        
+        # yahoo-finance15 API 端點
+        endpoint = "/api/v1/markets/news"
+        params = {}
+        if ticker:
+            params['ticker'] = ticker
+        
+        response = self._make_request(endpoint, params)
+        
+        if response:
+            logger.info(f"[OK] 成功從 RapidAPI 獲取市場新聞")
+            return response
+        else:
+            logger.warning(f"[!] RapidAPI 獲取市場新聞失敗")
+            return None
+    
+    def get_stock_modules(
+        self,
+        ticker: str,
+        module: str = 'asset-profile'
+    ) -> Optional[Dict[str, Any]]:
+        """
+        獲取股票模塊數據（公司資料、財務數據等）
+        
+        Args:
+            ticker: 股票代碼
+            module: 模塊類型 (asset-profile, financial-data, etc.)
+        
+        Returns:
+            模塊數據字典，失敗返回 None
+        """
+        logger.info(f"從 RapidAPI 獲取 {ticker} {module} 數據...")
+        
+        # yahoo-finance15 API 端點
+        endpoint = "/api/v1/markets/stock/modules"
+        params = {
+            'ticker': ticker,
+            'module': module
+        }
+        
+        response = self._make_request(endpoint, params)
+        
+        if response:
+            logger.info(f"[OK] 成功從 RapidAPI 獲取 {ticker} {module} 數據")
+            return response
+        else:
+            logger.warning(f"[!] RapidAPI 獲取 {ticker} {module} 數據失敗")
+            return None
+    
+    def get_options(self, ticker: str, expiration: str = None) -> Optional[Dict[str, Any]]:
+        """
+        獲取期權鏈數據
+        
+        Args:
+            ticker: 股票代碼
+            expiration: 到期日（可選，格式 YYYY-MM-DD）
+        
+        Returns:
+            期權鏈數據字典，失敗返回 None
+        """
+        logger.info(f"從 RapidAPI 獲取 {ticker} 期權鏈...")
+        
+        # yahoo-finance15 API 端點
+        endpoint = "/api/v1/markets/options"
+        params = {
+            'ticker': ticker
+        }
+        if expiration:
+            params['date'] = expiration
+        
+        response = self._make_request(endpoint, params)
+        
+        if response:
+            logger.info(f"[OK] 成功從 RapidAPI 獲取 {ticker} 期權鏈")
+            return response
+        else:
+            logger.warning(f"[!] RapidAPI 獲取 {ticker} 期權鏈失敗")
             return None
 
 

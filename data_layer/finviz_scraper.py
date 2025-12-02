@@ -22,6 +22,7 @@ class FinvizScraper:
     - 獲取股票基本面數據（EPS, PE, PEG, 市值等）
     - 獲取財務報表數據（收入、利潤、現金流等）
     - 獲取技術指標（Beta, ATR, RSI等）
+    - 支持 Elite 帳戶（需要設置 cookies）
     
     使用示例:
         >>> scraper = FinvizScraper()
@@ -29,19 +30,27 @@ class FinvizScraper:
         >>> print(f"EPS: {data['eps']}, PE: {data['pe']}")
     """
     
+    # 免費版 URL
     BASE_URL = "https://finviz.com/quote.ashx"
     STATEMENTS_URL = "https://finviz.com/quote.ashx"
     
-    def __init__(self, request_delay: float = 1.0):
+    # Elite 版 URL
+    ELITE_BASE_URL = "https://elite.finviz.com/quote.ashx"
+    ELITE_STATEMENTS_URL = "https://elite.finviz.com/quote.ashx"
+    
+    def __init__(self, request_delay: float = 1.0, use_elite: bool = False, elite_cookies: dict = None):
         """
         初始化 Finviz 抓取器
         
         參數:
             request_delay: 請求間隔（秒），避免被封禁
+            use_elite: 是否使用 Elite 版本
+            elite_cookies: Elite 帳戶的 cookies（從瀏覽器獲取）
         """
         self.request_delay = request_delay
         self.last_request_time = 0
         self.session = requests.Session()
+        self.use_elite = use_elite
         
         # 設置 User-Agent（重要！避免被識別為爬蟲）
         self.headers = {
@@ -53,7 +62,13 @@ class FinvizScraper:
             'Upgrade-Insecure-Requests': '1'
         }
         
-        logger.info("* Finviz 抓取器已初始化")
+        # 如果使用 Elite 版本，設置 cookies
+        if use_elite and elite_cookies:
+            for name, value in elite_cookies.items():
+                self.session.cookies.set(name, value)
+            logger.info("* Finviz Elite 抓取器已初始化（使用 cookies 認證）")
+        else:
+            logger.info("* Finviz 抓取器已初始化（免費版）")
     
     def _rate_limit(self):
         """速率限制"""
@@ -155,8 +170,9 @@ class FinvizScraper:
             self._rate_limit()
             logger.info(f"開始從 Finviz 獲取 {ticker} 基本面數據...")
             
-            # 構建 URL
-            url = f"{self.BASE_URL}?t={ticker.upper()}"
+            # 構建 URL（根據是否使用 Elite 版本）
+            base_url = self.ELITE_BASE_URL if self.use_elite else self.BASE_URL
+            url = f"{base_url}?t={ticker.upper()}"
             
             # 發送請求
             response = self.session.get(url, headers=self.headers, timeout=10)

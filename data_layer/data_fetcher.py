@@ -10,8 +10,9 @@ import numpy as np
 from fredapi import Fred
 import finnhub
 import time
+import traceback
 from datetime import datetime, timedelta
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, Any, List
 import logging
 import sys
 import os
@@ -127,8 +128,8 @@ class DataFetcher:
             # IBKR 客户端（如果启用）
             if self.use_ibkr:
                 try:
-                    port = settings.IBKR_PORT_PAPER if settings.IBKR_ENABLED else settings.IBKR_PORT_LIVE
-                    mode = 'paper' if port == settings.IBKR_PORT_PAPER else 'live'
+                    port = settings.IBKR_PORT_PAPER if settings.IBKR_USE_PAPER else settings.IBKR_PORT_LIVE
+                    mode = 'paper' if settings.IBKR_USE_PAPER else 'live'
                     
                     self.ibkr_client = IBKRClient(
                         host=settings.IBKR_HOST,
@@ -259,29 +260,726 @@ class DataFetcher:
             logger.error(f"x 客户端初始化失敗: {e}")
             return False
     
-    def _record_api_failure(self, api_name: str, error_message: str):
-        """記錄 API 故障"""
+    def _record_api_failure(
+        self, 
+        api_name: str, 
+        error_message: str,
+        operation: str = None,
+        request_url: str = None,
+        request_params: Dict = None,
+        response_status: int = None,
+        stack_trace: str = None
+    ):
+        """
+        記錄 API 故障（增強版）
+        
+        記錄完整的錯誤上下文信息，包括請求 URL、參數和響應狀態碼。
+        同時實現錯誤日誌清理機制，限制每個 API 最多保留 100 條記錄，
+        並清理超過 24 小時的舊記錄。
+        
+        參數:
+            api_name: API 名稱 ('Finnhub', 'Yahoo V2', etc.)
+            error_message: 錯誤消息
+            operation: 操作名稱 ('get_earnings_calendar', etc.)
+            request_url: 請求 URL（可選）
+            request_params: 請求參數（可選）
+            response_status: HTTP 響應狀態碼（可選）
+            stack_trace: 錯誤堆棧（可選）
+        
+        Requirements: 5.3, 5.4, 7.1, 7.2, 7.3, 7.4
+        """
         if api_name not in self.api_failures:
             self.api_failures[api_name] = []
-        self.api_failures[api_name].append({
+        
+        # 構建詳細的錯誤記錄
+        error_record = {
             'timestamp': datetime.now().isoformat(),
             'error': error_message
-        })
-        logger.debug(f"記錄 API 故障: {api_name} - {error_message}")
+        }
+        
+        # 添加可選的上下文信息
+        if operation:
+            error_record['operation'] = operation
+        if request_url:
+            # 清理敏感信息（API Keys）
+            error_record['request_url'] = self._sanitize_url(request_url)
+        if request_params:
+            # 清理敏感信息
+            error_record['request_params'] = self._sanitize_params(request_params)
+        if response_status:
+            error_record['response_status'] = response_status
+        if stack_trace:
+            # 截斷過長的堆棧信息
+            error_record['stack_trace'] = stack_trace[:2000] if len(stack_trace) > 2000 else stack_trace
+        
+        self.api_failures[api_name].append(error_record)
+        
+        # 錯誤日誌清理機制
+        self._cleanup_api_failure_records(api_name)
+        
+        # 記錄日誌（使用結構化格式）
+        log_parts = [f"API 故障: {api_name}"]
+        if operation:
+            log_parts.append(f"操作: {operation}")
+        log_parts.append(f"錯誤: {error_message}")
+        if response_status:
+            log_parts.append(f"狀態碼: {response_status}")
+        
+        logger.warning(" | ".join(log_parts))
+        
+        if stack_trace:
+            logger.debug(f"堆棧信息: {stack_trace[:500]}...")
     
-    def _record_fallback(self, data_type: str, source_used: str):
-        """記錄使用的降級數據源"""
+    def _cleanup_api_failure_records(self, api_name: str):
+        """
+        清理 API 故障記錄
+        
+        限制每個 API 最多保留 100 條記錄，並清理超過 24 小時的舊記錄。
+        
+        參數:
+            api_name: API 名稱
+        
+        Requirements: 7.1, 7.2
+        """
+        if api_name not in self.api_failures:
+            return
+        
+        records = self.api_failures[api_name]
+        
+        # 限制: 每個 API 最多保留 100 條記錄
+        max_records = getattr(settings, 'MAX_API_FAILURE_RECORDS', 100)
+        if len(records) > max_records:
+            self.api_failures[api_name] = records[-max_records:]
+            logger.debug(f"清理 {api_name} 故障記錄，保留最近 {max_records} 條")
+        
+        # 清理超過 24 小時的記錄
+        retention_hours = getattr(settings, 'API_FAILURE_RETENTION_HOURS', 24)
+        cutoff_time = datetime.now() - timedelta(hours=retention_hours)
+        
+        original_count = len(self.api_failures[api_name])
+        self.api_failures[api_name] = [
+            record for record in self.api_failures[api_name]
+            if self._parse_timestamp(record.get('timestamp', '')) > cutoff_time
+        ]
+        
+        cleaned_count = original_count - len(self.api_failures[api_name])
+        if cleaned_count > 0:
+            logger.debug(f"清理 {api_name} 過期故障記錄: {cleaned_count} 條")
+    
+    def _parse_timestamp(self, timestamp_str: str) -> datetime:
+        """
+        解析時間戳字符串
+        
+        參數:
+            timestamp_str: ISO 格式的時間戳字符串
+        
+        返回:
+            datetime 對象，解析失敗時返回最小時間
+        """
+        try:
+            return datetime.fromisoformat(timestamp_str)
+        except (ValueError, TypeError):
+            return datetime.min
+    
+    def _sanitize_url(self, url: str) -> str:
+        """
+        清理 URL 中的敏感信息（API Keys）
+        
+        參數:
+            url: 原始 URL
+        
+        返回:
+            清理後的 URL
+        """
+        if not url:
+            return url
+        
+        # 替換常見的 API Key 參數
+        import re
+        patterns = [
+            (r'(api_?key=)[^&]+', r'\1***'),
+            (r'(apikey=)[^&]+', r'\1***'),
+            (r'(token=)[^&]+', r'\1***'),
+            (r'(key=)[^&]+', r'\1***'),
+        ]
+        
+        result = url
+        for pattern, replacement in patterns:
+            result = re.sub(pattern, replacement, result, flags=re.IGNORECASE)
+        
+        return result
+    
+    def _sanitize_params(self, params: Dict) -> Dict:
+        """
+        清理參數中的敏感信息
+        
+        參數:
+            params: 原始參數字典
+        
+        返回:
+            清理後的參數字典
+        """
+        if not params:
+            return params
+        
+        sensitive_keys = ['api_key', 'apikey', 'token', 'key', 'secret', 'password']
+        result = params.copy()
+        
+        for key in result:
+            if any(sensitive in key.lower() for sensitive in sensitive_keys):
+                result[key] = '***'
+        
+        return result
+    
+    def _sanitize_log_message(self, message: str) -> str:
+        """
+        清理日誌消息中的敏感信息
+        
+        在所有日誌輸出前清理敏感信息，包括 API Keys、密碼等。
+        只顯示 API Key 的前4位和後4位，中間用 *** 替代。
+        
+        參數:
+            message: 原始日誌消息
+        
+        返回:
+            清理後的日誌消息
+        
+        Requirements: Security Considerations
+        """
+        if not message:
+            return message
+        
+        import re
+        
+        # 從環境變量獲取需要清理的 API Keys
+        api_key_names = [
+            'FRED_API_KEY', 'FINNHUB_API_KEY', 'RAPIDAPI_KEY',
+            'ALPHA_VANTAGE_API_KEY', 'MASSIVE_API_KEY'
+        ]
+        
+        result = message
+        
+        for key_name in api_key_names:
+            key_value = os.environ.get(key_name, '')
+            if key_value and len(key_value) > 8 and key_value in result:
+                # 只顯示前4位和後4位
+                masked = f"{key_value[:4]}...{key_value[-4:]}"
+                result = result.replace(key_value, masked)
+        
+        # 清理常見的敏感模式
+        patterns = [
+            # API Key 模式 (32-64 字符的字母數字字符串)
+            (r'(["\']?(?:api[_-]?key|apikey|token|secret)["\']?\s*[:=]\s*["\']?)([a-zA-Z0-9]{32,64})(["\']?)', 
+             r'\1***REDACTED***\3'),
+            # Bearer Token
+            (r'(Bearer\s+)[a-zA-Z0-9._-]+', r'\1***REDACTED***'),
+        ]
+        
+        for pattern, replacement in patterns:
+            result = re.sub(pattern, replacement, result, flags=re.IGNORECASE)
+        
+        return result
+    
+    def _validate_ticker(self, ticker: str) -> bool:
+        """
+        驗證股票代碼格式
+        
+        確保股票代碼符合有效格式，防止注入攻擊和無效請求。
+        
+        有效格式:
+        - 1-10 個字符
+        - 只允許大寫字母、數字、點號(.)和連字符(-)
+        - 例如: AAPL, BRK.B, BRK-A, GOOGL
+        
+        參數:
+            ticker: 股票代碼
+        
+        返回:
+            bool: 是否為有效的股票代碼
+        
+        Requirements: Security Considerations
+        """
+        if not ticker:
+            logger.warning("股票代碼為空")
+            return False
+        
+        import re
+        
+        # 轉換為大寫
+        ticker_upper = ticker.upper().strip()
+        
+        # 驗證長度
+        if len(ticker_upper) < 1 or len(ticker_upper) > 10:
+            logger.warning(f"股票代碼長度無效: {len(ticker_upper)} (應為 1-10)")
+            return False
+        
+        # 驗證格式: 只允許字母、數字、點號和連字符
+        pattern = r'^[A-Z0-9.\-]{1,10}$'
+        if not re.match(pattern, ticker_upper):
+            logger.warning(f"股票代碼格式無效: {ticker_upper}")
+            return False
+        
+        # 不允許以點號或連字符開頭或結尾
+        if ticker_upper.startswith('.') or ticker_upper.startswith('-'):
+            logger.warning(f"股票代碼不能以特殊字符開頭: {ticker_upper}")
+            return False
+        
+        if ticker_upper.endswith('.') or ticker_upper.endswith('-'):
+            logger.warning(f"股票代碼不能以特殊字符結尾: {ticker_upper}")
+            return False
+        
+        return True
+    
+    def _normalize_ticker(self, ticker: str) -> Optional[str]:
+        """
+        標準化股票代碼
+        
+        將股票代碼轉換為標準格式（大寫、去除空白）。
+        如果代碼無效，返回 None。
+        
+        參數:
+            ticker: 原始股票代碼
+        
+        返回:
+            str: 標準化後的股票代碼，無效時返回 None
+        
+        Requirements: Security Considerations
+        """
+        if not ticker:
+            return None
+        
+        normalized = ticker.upper().strip()
+        
+        if self._validate_ticker(normalized):
+            return normalized
+        
+        return None
+    
+    def _handle_api_failure(
+        self, 
+        api_name: str, 
+        operation: str, 
+        error: Exception,
+        request_url: str = None,
+        request_params: Dict = None,
+        response_status: int = None
+    ) -> None:
+        """
+        統一的 API 失敗處理
+        
+        提供統一的錯誤處理接口，自動提取錯誤類型、消息和堆棧信息，
+        並調用 _record_api_failure 記錄詳細的錯誤上下文。
+        
+        參數:
+            api_name: API 名稱 ('Finnhub', 'Yahoo V2', etc.)
+            operation: 操作名稱 ('get_earnings_calendar', etc.)
+            error: 異常對象
+            request_url: 請求 URL（可選）
+            request_params: 請求參數（可選）
+            response_status: HTTP 響應狀態碼（可選）
+        
+        Requirements: 5.3, 5.4, 7.1, 7.2, 7.3, 7.4
+        """
+        # 提取錯誤信息
+        error_type = type(error).__name__
+        error_message = str(error)
+        stack_trace = traceback.format_exc()
+        
+        # 構建完整的錯誤消息
+        full_error_message = f"{operation}: [{error_type}] {error_message}"
+        
+        # 記錄 API 故障
+        self._record_api_failure(
+            api_name=api_name,
+            error_message=full_error_message,
+            operation=operation,
+            request_url=request_url,
+            request_params=request_params,
+            response_status=response_status,
+            stack_trace=stack_trace
+        )
+        
+        # 記錄詳細的錯誤日誌
+        logger.error(f"✗ {api_name} {operation} 失敗: [{error_type}] {error_message}")
+        logger.debug(f"完整堆棧信息:\n{stack_trace}")
+    
+    def cleanup_all_api_failure_records(self):
+        """
+        清理所有 API 的故障記錄
+        
+        遍歷所有 API 並執行清理操作。
+        """
+        for api_name in list(self.api_failures.keys()):
+            self._cleanup_api_failure_records(api_name)
+        
+        logger.info("已清理所有 API 故障記錄")
+    
+    def get_api_failure_summary(self) -> Dict[str, Any]:
+        """
+        獲取 API 故障摘要
+        
+        返回:
+            dict: 包含各 API 故障統計的摘要
+        """
+        summary = {}
+        
+        for api_name, records in self.api_failures.items():
+            if not records:
+                continue
+            
+            # 統計各操作的故障次數
+            operation_counts = {}
+            status_counts = {}
+            
+            for record in records:
+                op = record.get('operation', 'unknown')
+                operation_counts[op] = operation_counts.get(op, 0) + 1
+                
+                status = record.get('response_status')
+                if status:
+                    status_counts[status] = status_counts.get(status, 0) + 1
+            
+            # 獲取最近的錯誤
+            latest_error = records[-1] if records else None
+            
+            summary[api_name] = {
+                'total_failures': len(records),
+                'operation_counts': operation_counts,
+                'status_counts': status_counts,
+                'latest_error': latest_error,
+                'first_failure': records[0].get('timestamp') if records else None,
+                'last_failure': records[-1].get('timestamp') if records else None
+            }
+        
+        return summary
+    
+    def _record_fallback(
+        self, 
+        data_type: str, 
+        source_used: str,
+        success: bool = True,
+        error_reason: str = None
+    ):
+        """
+        記錄使用的降級數據源（增強版）
+        
+        記錄完整的嘗試路徑，包括成功和失敗的數據源，以及失敗原因。
+        這使得可以追蹤每次數據獲取操作的完整降級路徑。
+        
+        參數:
+            data_type: 數據類型 ('stock_info', 'option_chain', etc.)
+            source_used: 使用的數據源名稱
+            success: 是否成功獲取數據
+            error_reason: 失敗原因（僅當 success=False 時使用）
+        
+        Requirements: 5.2, 5.5
+        """
+        # 初始化 fallback_used 結構
         if data_type not in self.fallback_used:
             self.fallback_used[data_type] = []
-        if source_used not in self.fallback_used[data_type]:
-            self.fallback_used[data_type].append(source_used)
+        
+        # 初始化嘗試路徑追蹤結構
+        if not hasattr(self, '_attempt_paths'):
+            self._attempt_paths = {}
+        
+        if data_type not in self._attempt_paths:
+            self._attempt_paths[data_type] = {
+                'current_attempt': [],
+                'history': []
+            }
+        
+        # 記錄當前嘗試
+        attempt_record = {
+            'source': source_used,
+            'success': success,
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        if not success and error_reason:
+            attempt_record['error_reason'] = error_reason
+        
+        self._attempt_paths[data_type]['current_attempt'].append(attempt_record)
+        
+        # 如果成功，記錄到 fallback_used 並完成當前嘗試路徑
+        if success:
+            if source_used not in self.fallback_used[data_type]:
+                self.fallback_used[data_type].append(source_used)
+            
+            # 輸出完整的嘗試路徑日誌
+            self._log_attempt_path(data_type)
+            
+            # 保存到歷史記錄並重置當前嘗試
+            self._attempt_paths[data_type]['history'].append(
+                self._attempt_paths[data_type]['current_attempt'].copy()
+            )
+            self._attempt_paths[data_type]['current_attempt'] = []
+            
+            # 限制歷史記錄數量（最多保留 50 條）
+            if len(self._attempt_paths[data_type]['history']) > 50:
+                self._attempt_paths[data_type]['history'] = \
+                    self._attempt_paths[data_type]['history'][-50:]
+    
+    def _log_attempt_path(self, data_type: str):
+        """
+        輸出完整的嘗試路徑日誌
+        
+        在日誌中輸出數據獲取操作的完整嘗試路徑，包括所有嘗試過的數據源
+        及其結果（成功/失敗）。
+        
+        參數:
+            data_type: 數據類型
+        
+        Requirements: 5.5
+        """
+        if not hasattr(self, '_attempt_paths') or data_type not in self._attempt_paths:
+            return
+        
+        attempts = self._attempt_paths[data_type]['current_attempt']
+        if not attempts:
+            return
+        
+        # 構建嘗試路徑字符串
+        path_parts = []
+        for attempt in attempts:
+            source = attempt['source']
+            if attempt['success']:
+                path_parts.append(f"{source}(✓)")
+            else:
+                error = attempt.get('error_reason', 'failed')
+                # 截斷過長的錯誤信息
+                if len(error) > 30:
+                    error = error[:27] + '...'
+                path_parts.append(f"{source}(✗:{error})")
+        
+        path_str = " → ".join(path_parts)
+        
+        # 統計信息
+        total_attempts = len(attempts)
+        failed_attempts = sum(1 for a in attempts if not a['success'])
+        
+        # 輸出日誌
+        if failed_attempts > 0:
+            logger.info(f"  降級路徑 [{data_type}]: {path_str}")
+            logger.info(f"  嘗試統計: {total_attempts} 次嘗試, {failed_attempts} 次失敗")
+        else:
+            logger.debug(f"  數據源路徑 [{data_type}]: {path_str}")
+    
+    def _record_fallback_failure(self, data_type: str, source: str, error_reason: str):
+        """
+        記錄降級嘗試失敗
+        
+        當某個數據源嘗試失敗時調用此方法，記錄失敗信息到嘗試路徑中。
+        
+        參數:
+            data_type: 數據類型
+            source: 失敗的數據源名稱
+            error_reason: 失敗原因
+        
+        Requirements: 5.2, 5.5
+        """
+        self._record_fallback(data_type, source, success=False, error_reason=error_reason)
+    
+    def get_attempt_path_summary(self, data_type: str = None) -> Dict[str, Any]:
+        """
+        獲取嘗試路徑摘要
+        
+        返回指定數據類型或所有數據類型的嘗試路徑統計信息。
+        
+        參數:
+            data_type: 數據類型（可選，如不指定則返回所有類型）
+        
+        返回:
+            dict: 嘗試路徑摘要，包含各數據類型的嘗試統計
+        
+        Requirements: 5.5
+        """
+        if not hasattr(self, '_attempt_paths'):
+            return {}
+        
+        def summarize_type(dt: str) -> Dict:
+            if dt not in self._attempt_paths:
+                return {}
+            
+            history = self._attempt_paths[dt]['history']
+            if not history:
+                return {'total_operations': 0}
+            
+            # 統計各數據源的使用次數和成功率
+            source_stats = {}
+            total_attempts = 0
+            total_failures = 0
+            
+            for path in history:
+                for attempt in path:
+                    source = attempt['source']
+                    if source not in source_stats:
+                        source_stats[source] = {'attempts': 0, 'successes': 0, 'failures': 0}
+                    
+                    source_stats[source]['attempts'] += 1
+                    total_attempts += 1
+                    
+                    if attempt['success']:
+                        source_stats[source]['successes'] += 1
+                    else:
+                        source_stats[source]['failures'] += 1
+                        total_failures += 1
+            
+            # 計算成功率
+            for source in source_stats:
+                stats = source_stats[source]
+                stats['success_rate'] = (
+                    stats['successes'] / stats['attempts'] * 100 
+                    if stats['attempts'] > 0 else 0
+                )
+            
+            return {
+                'total_operations': len(history),
+                'total_attempts': total_attempts,
+                'total_failures': total_failures,
+                'average_attempts_per_operation': total_attempts / len(history) if history else 0,
+                'source_statistics': source_stats
+            }
+        
+        if data_type:
+            return {data_type: summarize_type(data_type)}
+        else:
+            return {dt: summarize_type(dt) for dt in self._attempt_paths.keys()}
+    
+    def _validate_and_supplement_finviz_data(
+        self, 
+        finviz_data: Dict, 
+        ticker: str
+    ) -> Optional[Dict]:
+        """
+        驗證 Finviz 數據並補充缺失的關鍵字段
+        
+        當 Finviz 返回部分數據時，此方法會：
+        1. 記錄哪些字段可用、哪些字段缺失
+        2. 對於關鍵字段（price, eps_ttm, pe）缺失時，嘗試從 yfinance 補充
+        3. 對於非關鍵字段缺失，使用 None 值並繼續處理
+        4. 評估數據質量（complete/partial/minimal）
+        
+        參數:
+            finviz_data: 從 Finviz 獲取的原始數據
+            ticker: 股票代碼
+        
+        返回:
+            dict: 增強後的數據，包含以下額外字段：
+                - 'missing_fields': 缺失的字段列表
+                - 'supplemented_fields': 從 yfinance 補充的字段列表
+                - 'data_quality': 'complete' | 'partial' | 'minimal'
+                - 'data_source': 數據來源標記
+            如果關鍵字段無法補充，返回 None
+        
+        Requirements: 4.1, 4.2, 4.3, 4.4, 4.5
+        """
+        # 定義所有預期的 Finviz 字段
+        EXPECTED_FINVIZ_FIELDS = [
+            'price', 'eps_ttm', 'pe', 'forward_pe', 'peg', 'market_cap',
+            'volume', 'dividend_yield', 'beta', 'atr', 'rsi', 'company_name',
+            'sector', 'industry', 'target_price', 'profit_margin', 
+            'operating_margin', 'roe', 'roa', 'debt_eq', 'insider_own',
+            'inst_own', 'short_float', 'avg_volume', 'eps_next_y'
+        ]
+        
+        # 定義關鍵字段（必須有值才能繼續）
+        CRITICAL_FIELDS = ['price', 'eps_ttm', 'pe']
+        
+        # 初始化結果
+        result = finviz_data.copy()
+        result['missing_fields'] = []
+        result['supplemented_fields'] = []
+        result['data_source'] = 'Finviz'
+        
+        # 記錄缺失的字段
+        for field in EXPECTED_FINVIZ_FIELDS:
+            if field not in result or result.get(field) is None:
+                result['missing_fields'].append(field)
+        
+        # 記錄字段可用性日誌
+        available_count = len(EXPECTED_FINVIZ_FIELDS) - len(result['missing_fields'])
+        logger.info(f"  Finviz 字段可用性: {available_count}/{len(EXPECTED_FINVIZ_FIELDS)}")
+        
+        if result['missing_fields']:
+            logger.debug(f"  缺失字段: {', '.join(result['missing_fields'])}")
+        
+        # 檢查關鍵字段是否缺失
+        missing_critical = [f for f in CRITICAL_FIELDS if f in result['missing_fields']]
+        
+        if missing_critical:
+            logger.warning(f"  ! Finviz 缺失關鍵字段: {', '.join(missing_critical)}")
+            
+            # 嘗試從 yfinance 補充關鍵字段
+            try:
+                logger.info(f"  嘗試從 yfinance 補充關鍵字段...")
+                yf_ticker = yf.Ticker(ticker)
+                yf_info = yf_ticker.info
+                
+                # 映射 yfinance 字段到 Finviz 字段
+                yf_field_mapping = {
+                    'price': 'currentPrice',
+                    'eps_ttm': 'trailingEps',
+                    'pe': 'trailingPE'
+                }
+                
+                supplemented = []
+                for finviz_field in missing_critical:
+                    yf_field = yf_field_mapping.get(finviz_field)
+                    if yf_field and yf_info.get(yf_field) is not None:
+                        result[finviz_field] = yf_info[yf_field]
+                        supplemented.append(finviz_field)
+                        logger.info(f"    * 補充 {finviz_field}: {result[finviz_field]}")
+                
+                if supplemented:
+                    result['supplemented_fields'] = supplemented
+                    result['data_source'] = 'Finviz+yfinance'
+                    # 從 missing_fields 中移除已補充的字段
+                    result['missing_fields'] = [f for f in result['missing_fields'] if f not in supplemented]
+                    logger.info(f"  * 成功從 yfinance 補充 {len(supplemented)} 個關鍵字段")
+                
+                # 再次檢查是否還有關鍵字段缺失
+                still_missing_critical = [f for f in CRITICAL_FIELDS if result.get(f) is None]
+                if still_missing_critical:
+                    logger.error(f"  x 無法補充關鍵字段: {', '.join(still_missing_critical)}")
+                    self._record_api_failure('Finviz', f"Missing critical fields: {still_missing_critical}")
+                    return None
+                    
+            except Exception as e:
+                logger.error(f"  x yfinance 補充失敗: {e}")
+                self._record_api_failure('yfinance', f"supplement_finviz: {e}")
+                return None
+        
+        # 計算數據質量
+        total_fields = len(EXPECTED_FINVIZ_FIELDS)
+        available_fields = total_fields - len(result['missing_fields'])
+        quality_ratio = available_fields / total_fields
+        
+        if quality_ratio >= 0.9:
+            result['data_quality'] = 'complete'
+        elif quality_ratio >= 0.6:
+            result['data_quality'] = 'partial'
+        else:
+            result['data_quality'] = 'minimal'
+        
+        logger.info(f"  數據質量: {result['data_quality']} ({available_fields}/{total_fields} 字段, {quality_ratio*100:.1f}%)")
+        
+        return result
     
     def get_api_status_report(self) -> Dict[str, Any]:
         """
         獲取 API 狀態報告（增強版）
         
+        返回包含以下信息的報告：
+        - API 故障記錄
+        - 降級使用情況
+        - 成功率統計
+        - 自主計算統計
+        - 數據源健康度評分
+        
         返回:
             dict: 包含 API 故障、降級使用情況和自主計算統計的報告
+        
+        Requirements: 6.1, 6.2, 6.3, 6.4, 6.5
         """
         # 計算降級使用統計
         total_fallback_calls = sum(len(sources) for sources in self.fallback_used.values())
@@ -312,6 +1010,16 @@ class DataFetcher:
         api_failure_counts = {api: len(errors) for api, errors in self.api_failures.items()}
         total_failures = sum(api_failure_counts.values())
         
+        # 計算成功率統計（Requirements 6.2）
+        success_rate_stats = self._calculate_success_rates()
+        
+        # 計算數據源健康度評分（Requirements 6.5）
+        health_score = self._calculate_health_score(
+            total_failures, 
+            total_fallback_calls,
+            success_rate_stats
+        )
+        
         return {
             # 原有字段
             'api_failures': self.api_failures,
@@ -330,6 +1038,15 @@ class DataFetcher:
                 'fallback_by_type': fallback_stats
             },
             
+            # 成功率統計（Requirements 6.2）
+            'success_rates': success_rate_stats,
+            
+            # 降級使用統計（Requirements 6.3）
+            'fallback_statistics': self.get_attempt_path_summary(),
+            
+            # 數據源健康度評分（Requirements 6.5）
+            'health_score': health_score,
+            
             # 自主計算模塊可用性
             'self_calculation_available': {
                 'bs_calculator': self.bs_calculator is not None,
@@ -337,6 +1054,219 @@ class DataFetcher:
                 'iv_calculator': self.iv_calculator is not None
             }
         }
+    
+    def _calculate_success_rates(self) -> Dict[str, Any]:
+        """
+        計算各 API 的成功率統計
+        
+        基於嘗試路徑歷史記錄計算每個數據源的成功率。
+        
+        返回:
+            dict: 各 API 的成功率統計
+        
+        Requirements: 6.2
+        """
+        if not hasattr(self, '_attempt_paths'):
+            return {}
+        
+        api_stats = {}
+        
+        for data_type, paths_data in self._attempt_paths.items():
+            history = paths_data.get('history', [])
+            
+            for path in history:
+                for attempt in path:
+                    source = attempt['source']
+                    
+                    if source not in api_stats:
+                        api_stats[source] = {
+                            'total_attempts': 0,
+                            'successes': 0,
+                            'failures': 0
+                        }
+                    
+                    api_stats[source]['total_attempts'] += 1
+                    if attempt['success']:
+                        api_stats[source]['successes'] += 1
+                    else:
+                        api_stats[source]['failures'] += 1
+        
+        # 計算成功率
+        for source, stats in api_stats.items():
+            if stats['total_attempts'] > 0:
+                stats['success_rate'] = round(
+                    stats['successes'] / stats['total_attempts'] * 100, 2
+                )
+            else:
+                stats['success_rate'] = 0.0
+        
+        return api_stats
+    
+    def _calculate_health_score(
+        self, 
+        total_failures: int, 
+        total_fallback_calls: int,
+        success_rates: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        計算數據源健康度評分
+        
+        評分標準：
+        - 100: 優秀 - 無故障，主要數據源正常
+        - 80-99: 良好 - 少量故障，降級正常工作
+        - 60-79: 一般 - 較多故障，依賴降級方案
+        - 40-59: 較差 - 大量故障，數據可靠性下降
+        - 0-39: 危險 - 嚴重故障，需要立即處理
+        
+        返回:
+            dict: 健康度評分和狀態
+        
+        Requirements: 6.5
+        """
+        # 基礎分數 100
+        score = 100.0
+        issues = []
+        
+        # 根據故障數量扣分
+        if total_failures > 0:
+            # 每個故障扣 2 分，最多扣 30 分
+            failure_penalty = min(total_failures * 2, 30)
+            score -= failure_penalty
+            if total_failures > 5:
+                issues.append(f"高故障率: {total_failures} 次故障")
+        
+        # 根據降級使用情況扣分
+        if total_fallback_calls > 0:
+            # 計算主要數據源的成功率
+            primary_sources = ['finnhub', 'Finviz', 'IBKR', 'Yahoo V2']
+            primary_success_rate = 0
+            primary_count = 0
+            
+            for source in primary_sources:
+                if source in success_rates:
+                    primary_success_rate += success_rates[source].get('success_rate', 0)
+                    primary_count += 1
+            
+            if primary_count > 0:
+                avg_primary_rate = primary_success_rate / primary_count
+                if avg_primary_rate < 80:
+                    # 主要數據源成功率低於 80% 扣分
+                    rate_penalty = (80 - avg_primary_rate) * 0.5
+                    score -= rate_penalty
+                    issues.append(f"主要數據源成功率低: {avg_primary_rate:.1f}%")
+        
+        # 檢查關鍵客戶端可用性
+        if not self.finnhub_client:
+            score -= 10
+            issues.append("Finnhub 客戶端不可用")
+        
+        if self.use_ibkr and (not self.ibkr_client or not self.ibkr_client.is_connected()):
+            score -= 15
+            issues.append("IBKR 已啟用但未連接")
+        
+        # 確保分數在 0-100 範圍內
+        score = max(0, min(100, score))
+        
+        # 確定健康狀態
+        if score >= 80:
+            status = 'healthy'
+            status_text = '健康'
+        elif score >= 60:
+            status = 'degraded'
+            status_text = '降級'
+        elif score >= 40:
+            status = 'warning'
+            status_text = '警告'
+        else:
+            status = 'critical'
+            status_text = '危險'
+        
+        return {
+            'score': round(score, 1),
+            'status': status,
+            'status_text': status_text,
+            'issues': issues,
+            'timestamp': datetime.now().isoformat()
+        }
+    
+    def get_health_check(self) -> Dict[str, Any]:
+        """
+        系統健康檢查
+        
+        執行快速健康檢查，返回系統狀態和任何警告或錯誤。
+        
+        返回:
+            dict: 健康檢查結果
+            {
+                'status': 'healthy' | 'degraded' | 'unhealthy',
+                'warnings': List[str],
+                'errors': List[str],
+                'api_availability': Dict[str, bool],
+                'timestamp': str
+            }
+        
+        Requirements: 6.1, 6.2, 6.3, 6.4, 6.5
+        """
+        health = {
+            'status': 'healthy',
+            'warnings': [],
+            'errors': [],
+            'api_availability': {},
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        # 檢查各 API 客戶端可用性
+        health['api_availability'] = {
+            'finnhub': self.finnhub_client is not None,
+            'fred': self.fred_client is not None,
+            'yahoo_v2': self.yahoo_v2_client is not None,
+            'yfinance': self.yfinance_client is not None,
+            'finviz': self.finviz_scraper is not None,
+            'ibkr': self.ibkr_client is not None and (
+                self.ibkr_client.is_connected() if self.ibkr_client else False
+            ),
+            'rapidapi': getattr(self, 'rapidapi_client', None) is not None,
+            'alpha_vantage': getattr(self, 'alpha_vantage_client', None) is not None,
+            'massive_api': getattr(self, 'massive_api_client', None) is not None
+        }
+        
+        # 檢查 API 故障率
+        for api_name, failures in self.api_failures.items():
+            failure_count = len(failures)
+            if failure_count > 10:
+                health['errors'].append(f"{api_name} 有 {failure_count} 次故障")
+            elif failure_count > 5:
+                health['warnings'].append(f"{api_name} 有 {failure_count} 次故障")
+        
+        # 檢查 RapidAPI 使用量
+        if hasattr(self, 'rapidapi_client') and self.rapidapi_client:
+            if hasattr(self.rapidapi_client, 'rate_limiter'):
+                usage = getattr(self.rapidapi_client.rate_limiter, 'usage_count', 0)
+                if usage > 450:
+                    health['warnings'].append(f"RapidAPI 使用量接近限制: {usage}/500")
+                elif usage > 400:
+                    health['warnings'].append(f"RapidAPI 使用量較高: {usage}/500")
+        
+        # 檢查 IBKR 連接狀態
+        if self.use_ibkr:
+            if not self.ibkr_client:
+                health['warnings'].append("IBKR 已啟用但客戶端未初始化")
+            elif not self.ibkr_client.is_connected():
+                health['warnings'].append("IBKR 已啟用但未連接")
+        
+        # 檢查自主計算模塊
+        if not self.bs_calculator or not self.greeks_calculator or not self.iv_calculator:
+            health['warnings'].append("部分自主計算模塊不可用")
+        
+        # 確定整體狀態
+        if health['errors']:
+            health['status'] = 'unhealthy'
+        elif health['warnings']:
+            health['status'] = 'degraded'
+        else:
+            health['status'] = 'healthy'
+        
+        return health
     
     def _rate_limit_delay(self, retry_count: int = 0):
         """
@@ -370,7 +1300,7 @@ class DataFetcher:
         """
         獲取股票基本信息（支持多数据源降级）
         
-        降級順序: IBKR → Alpha Vantage → Yahoo Finance 2.0 → Massive API → yfinance → Finviz
+        降級順序: IBKR → Finnhub → Alpha Vantage → Finviz → Yahoo Finance → yfinance
         
         參數:
             ticker: 股票代碼
@@ -404,12 +1334,70 @@ class DataFetcher:
                     self._record_fallback('stock_info', 'IBKR')
                     return stock_data
                 else:
-                    logger.warning("! IBKR 返回無效數據，降級到 Alpha Vantage")
+                    logger.warning("! IBKR 返回無效數據，降級到 Finnhub")
+                    self._record_fallback_failure('stock_info', 'IBKR', '返回無效數據')
             except Exception as e:
-                logger.warning(f"! IBKR 獲取失敗: {e}，降級到 Alpha Vantage")
+                logger.warning(f"! IBKR 獲取失敗: {e}，降級到 Finnhub")
                 self._record_api_failure('IBKR', f"get_stock_info: {e}")
+                self._record_fallback_failure('stock_info', 'IBKR', str(e))
         
-        # 方案0.5: Alpha Vantage（第二優先級）
+        # 方案1: Finnhub（實時股價，第二優先級）
+        if self.finnhub_client:
+            try:
+                logger.info("  使用 Finnhub API...")
+                self._rate_limit_delay()
+                
+                # 獲取實時報價
+                quote = self.finnhub_client.quote(ticker)
+                
+                if quote and quote.get('c', 0) > 0:  # 'c' = current price
+                    # 獲取公司基本資料
+                    profile = None
+                    try:
+                        profile = self.finnhub_client.company_profile2(symbol=ticker)
+                    except:
+                        pass
+                    
+                    stock_data = {
+                        'ticker': ticker,
+                        'current_price': quote.get('c', 0),  # current price
+                        'open': quote.get('o', 0),  # open
+                        'high': quote.get('h', 0),  # high
+                        'low': quote.get('l', 0),  # low
+                        'previous_close': quote.get('pc', 0),  # previous close
+                        'change': quote.get('d', 0),  # change
+                        'change_percent': quote.get('dp', 0),  # change percent
+                        'volume': None,  # Finnhub quote 不提供 volume
+                        'data_source': 'Finnhub'
+                    }
+                    
+                    # 補充公司資料
+                    if profile:
+                        stock_data.update({
+                            'company_name': profile.get('name', ''),
+                            'market_cap': profile.get('marketCapitalization', 0) * 1000000 if profile.get('marketCapitalization') else 0,
+                            'sector': profile.get('finnhubIndustry', ''),
+                            'industry': profile.get('finnhubIndustry', ''),
+                            'country': profile.get('country', ''),
+                            'exchange': profile.get('exchange', ''),
+                            'ipo_date': profile.get('ipo', ''),
+                            'logo': profile.get('logo', ''),
+                            'weburl': profile.get('weburl', '')
+                        })
+                    
+                    logger.info(f"* 成功獲取 {ticker} 基本信息 (Finnhub)")
+                    logger.info(f"  當前股價: ${stock_data['current_price']:.2f}")
+                    self._record_fallback('stock_info', 'Finnhub')
+                    return stock_data
+                else:
+                    logger.warning("! Finnhub 返回無效數據，降級到 Alpha Vantage")
+                    self._record_fallback_failure('stock_info', 'Finnhub', '返回無效數據')
+            except Exception as e:
+                logger.warning(f"! Finnhub 獲取失敗: {e}，降級到 Alpha Vantage")
+                self._record_api_failure('Finnhub', f"get_stock_info: {e}")
+                self._record_fallback_failure('stock_info', 'Finnhub', str(e))
+        
+        # 方案2: Alpha Vantage（第三優先級）
         if hasattr(self, 'alpha_vantage_client') and self.alpha_vantage_client:
             try:
                 logger.info("  使用 Alpha Vantage API...")
@@ -458,11 +1446,13 @@ class DataFetcher:
                     return stock_data
                 else:
                     logger.warning("! Alpha Vantage 返回無效數據，降級到 Finviz")
+                    self._record_fallback_failure('stock_info', 'Alpha Vantage', '返回無效數據')
             except Exception as e:
                 logger.warning(f"! Alpha Vantage 獲取失敗: {e}，降級到 Finviz")
                 self._record_api_failure('Alpha Vantage', f"get_stock_info: {e}")
+                self._record_fallback_failure('stock_info', 'Alpha Vantage', str(e))
         
-        # 方案1: 使用 Finviz（準確的基本面數據）
+        # 方案3: 使用 Finviz（準確的基本面數據）
         if hasattr(self, 'finviz_scraper') and self.finviz_scraper:
             try:
                 logger.info("  使用 Finviz...")
@@ -526,13 +1516,16 @@ class DataFetcher:
                         self._record_fallback('stock_info', 'Finviz')
                         return stock_data
                     else:
-                        logger.warning("! Finviz 數據驗證失敗，降級到 IBKR")
+                        logger.warning("! Finviz 數據驗證失敗，降級到 Yahoo Finance")
+                        self._record_fallback_failure('stock_info', 'Finviz', '數據驗證失敗')
                 else:
-                    logger.warning("! Finviz 未返回數據，降級到 IBKR")
+                    logger.warning("! Finviz 未返回數據，降級到 Yahoo Finance")
+                    self._record_fallback_failure('stock_info', 'Finviz', '未返回數據')
                     
             except Exception as e:
-                logger.warning(f"! Finviz 獲取失敗: {e}，降級到 IBKR")
+                logger.warning(f"! Finviz 獲取失敗: {e}，降級到 Yahoo Finance")
                 self._record_api_failure('Finviz', f"get_stock_info: {e}")
+                self._record_fallback_failure('stock_info', 'Finviz', str(e))
         
         # 方案3: 降級到 Yahoo Finance（简化版）
         if self.yahoo_v2_client:
@@ -546,9 +1539,13 @@ class DataFetcher:
                     logger.info(f"  當前股價: ${stock_data['current_price']:.2f}")
                     self._record_fallback('stock_info', 'Yahoo Finance')
                     return stock_data
+                else:
+                    logger.warning("! Yahoo Finance 返回空數據，降級到 Massive API")
+                    self._record_fallback_failure('stock_info', 'Yahoo Finance', '返回空數據')
             except Exception as e:
-                logger.warning(f"Yahoo Finance 获取失败: {e}，降级到 yfinance")
+                logger.warning(f"Yahoo Finance 获取失败: {e}，降级到 Massive API")
                 self._record_api_failure('Yahoo Finance', f"get_stock_info: {e}")
+                self._record_fallback_failure('stock_info', 'Yahoo Finance', str(e))
         
         # 方案4: 降级到 Massive API
         if hasattr(self, 'massive_api_client') and self.massive_api_client:
@@ -594,9 +1591,11 @@ class DataFetcher:
                     return stock_data
                 else:
                     logger.warning("! Massive API 返回無效數據，降級到 yfinance")
+                    self._record_fallback_failure('stock_info', 'Massive API', '返回無效數據')
             except Exception as e:
                 logger.warning(f"! Massive API 獲取失敗: {e}，降級到 yfinance")
                 self._record_api_failure('Massive API', f"get_stock_info: {e}")
+                self._record_fallback_failure('stock_info', 'Massive API', str(e))
         
         # 方案5: 降级到 yfinance（最後備用）
         try:
@@ -668,11 +1667,53 @@ class DataFetcher:
                     return hist
                 else:
                     logger.warning("! IBKR 返回空數據，降級到 Alpha Vantage")
+                    self._record_fallback_failure('historical_data', 'IBKR', '返回空數據')
             except Exception as e:
                 logger.warning(f"! IBKR 獲取失敗: {e}，降級到 Alpha Vantage")
                 self._record_api_failure('IBKR', f"get_historical_data: {e}")
+                self._record_fallback_failure('historical_data', 'IBKR', str(e))
         
-        # 方案0.5: Alpha Vantage（第二優先級）
+        # 方案0.5: Yahoo Finance V2（第二優先級 - 更穩定）
+        if self.yahoo_v2_client:
+            try:
+                logger.info(f"  使用 Yahoo Finance V2 獲取歷史數據...")
+                
+                response = self.yahoo_v2_client.get_historical_data(ticker, period=period, interval=interval)
+                
+                if response and 'chart' in response:
+                    result = response['chart'].get('result', [])
+                    if result and len(result) > 0:
+                        data = result[0]
+                        timestamps = data.get('timestamp', [])
+                        indicators = data.get('indicators', {})
+                        quote = indicators.get('quote', [{}])[0]
+                        
+                        if timestamps and quote:
+                            hist = pd.DataFrame({
+                                'Open': quote.get('open', []),
+                                'High': quote.get('high', []),
+                                'Low': quote.get('low', []),
+                                'Close': quote.get('close', []),
+                                'Volume': quote.get('volume', [])
+                            }, index=pd.to_datetime(timestamps, unit='s'))
+                            
+                            # 移除 NaN 行
+                            hist = hist.dropna()
+                            
+                            if not hist.empty:
+                                logger.info(f"* 成功獲取 {ticker} 的 {len(hist)} 條歷史記錄 (Yahoo Finance V2)")
+                                self._record_fallback('historical_data', 'Yahoo Finance V2')
+                                return hist
+                
+                logger.warning(f"! Yahoo Finance V2 未獲得 {ticker} 的歷史數據，降級到 Alpha Vantage")
+                self._record_fallback_failure('historical_data', 'Yahoo Finance V2', '未獲得數據')
+                    
+            except Exception as e:
+                logger.warning(f"! Yahoo Finance V2 獲取失敗: {e}，降級到 Alpha Vantage")
+                self._record_api_failure('Yahoo Finance V2', f"get_historical_data: {e}")
+                self._record_fallback_failure('historical_data', 'Yahoo Finance V2', str(e))
+        
+        # 方案0.6: Alpha Vantage（第三優先級）
         if hasattr(self, 'alpha_vantage_client') and self.alpha_vantage_client:
             try:
                 logger.info(f"  使用 Alpha Vantage 獲取歷史數據...")
@@ -688,10 +1729,12 @@ class DataFetcher:
                     return hist
                 else:
                     logger.warning(f"! Alpha Vantage 未獲得 {ticker} 的歷史數據，降級到 yfinance")
+                    self._record_fallback_failure('historical_data', 'Alpha Vantage', '未獲得數據')
                     
             except Exception as e:
                 logger.warning(f"! Alpha Vantage 獲取失敗: {e}，降級到 yfinance")
                 self._record_api_failure('Alpha Vantage', f"get_historical_data: {e}")
+                self._record_fallback_failure('historical_data', 'Alpha Vantage', str(e))
         
         # 方案1: 嘗試使用 yfinance
         for attempt in range(max_retries + 1):
@@ -710,6 +1753,7 @@ class DataFetcher:
                     return hist
                 else:
                     logger.warning(f"! yfinance 未獲得 {ticker} 的歷史數據")
+                    self._record_fallback_failure('historical_data', 'yfinance', '未獲得數據')
                     break  # 跳出重試，嘗試降級
                 
             except Exception as e:
@@ -720,13 +1764,15 @@ class DataFetcher:
                         logger.warning(f"! API 速率限制，將使用指數退避重試 (嘗試 {attempt + 1}/{max_retries + 1})")
                         continue
                     else:
-                        logger.warning(f"! yfinance 速率限制，降級到 Alpha Vantage")
+                        logger.warning(f"! yfinance 速率限制，降級到 Massive API")
                         self._record_api_failure('yfinance', f"Rate limit exceeded: {e}")
+                        self._record_fallback_failure('historical_data', 'yfinance', '速率限制')
                         break
                 else:
                     if attempt >= max_retries:
-                        logger.warning(f"! yfinance 獲取失敗，降級到 Alpha Vantage: {e}")
+                        logger.warning(f"! yfinance 獲取失敗，降級到 Massive API: {e}")
                         self._record_api_failure('yfinance', f"get_historical_data: {e}")
+                        self._record_fallback_failure('historical_data', 'yfinance', str(e))
                         break
         
         # 方案2: 降級到 Massive API
@@ -748,12 +1794,62 @@ class DataFetcher:
                     self._record_fallback('historical_data', 'Massive API')
                     return hist
                 else:
-                    logger.warning(f"! Massive API 未獲得 {ticker} 的歷史數據")
+                    logger.warning(f"! Massive API 未獲得 {ticker} 的歷史數據，降級到 RapidAPI")
+                    self._record_fallback_failure('historical_data', 'Massive API', '未獲得數據')
                     
             except Exception as e:
-                logger.warning(f"! Massive API 獲取失敗: {e}")
+                logger.warning(f"! Massive API 獲取失敗: {e}，降級到 RapidAPI")
                 self._record_api_failure('Massive API', f"get_historical_data: {e}")
+                self._record_fallback_failure('historical_data', 'Massive API', str(e))
         
+        # 方案3: 降級到 RapidAPI（最後備用）
+        if hasattr(self, 'rapidapi_client') and self.rapidapi_client:
+            try:
+                logger.info(f"  使用 RapidAPI 獲取歷史數據...")
+                
+                response = self.rapidapi_client.get_historical_data(ticker, period=period)
+                
+                if response and response.get('body'):
+                    body = response['body']
+                    
+                    # 解析 RapidAPI 歷史數據
+                    if isinstance(body, list) and len(body) > 0:
+                        hist = pd.DataFrame(body)
+                        
+                        # 標準化列名
+                        column_mapping = {
+                            'date': 'Date',
+                            'open': 'Open',
+                            'high': 'High',
+                            'low': 'Low',
+                            'close': 'Close',
+                            'volume': 'Volume'
+                        }
+                        
+                        for old_name, new_name in column_mapping.items():
+                            if old_name in hist.columns:
+                                hist.rename(columns={old_name: new_name}, inplace=True)
+                        
+                        # 設置日期索引
+                        if 'Date' in hist.columns:
+                            hist['Date'] = pd.to_datetime(hist['Date'])
+                            hist.set_index('Date', inplace=True)
+                        
+                        if not hist.empty:
+                            logger.info(f"* 成功獲取 {ticker} 的 {len(hist)} 條歷史記錄 (RapidAPI)")
+                            self._record_fallback('historical_data', 'RapidAPI')
+                            return hist
+                
+                logger.warning(f"! RapidAPI 未獲得 {ticker} 的歷史數據")
+                self._record_fallback_failure('historical_data', 'RapidAPI', '未獲得數據')
+                    
+            except Exception as e:
+                logger.warning(f"! RapidAPI 獲取失敗: {e}")
+                self._record_api_failure('RapidAPI', f"get_historical_data: {e}")
+                self._record_fallback_failure('historical_data', 'RapidAPI', str(e))
+        
+        # 所有數據源都失敗，輸出完整嘗試路徑
+        self._log_attempt_path('historical_data')
         logger.error(f"x 所有數據源都無法獲取 {ticker} 歷史數據")
         return None
     
@@ -791,6 +1887,10 @@ class DataFetcher:
         """
         獲取完整期權鏈（支持多數據源降級）
         
+        降級順序: IBKR → Yahoo Finance V2 → yfinance
+        
+        注意: Finnhub 不提供期權數據，所以不在降級順序中
+        
         參數:
             ticker: 股票代碼
             expiration: 到期日期 (YYYY-MM-DD格式)
@@ -816,20 +1916,29 @@ class DataFetcher:
                     calls_df = pd.DataFrame(chain_data['calls'])
                     puts_df = pd.DataFrame(chain_data['puts'])
                     
-                    logger.info(f"* 成功獲取 {ticker} {expiration} 期權鏈 (IBKR)")
-                    logger.info(f"  Call期權: {len(calls_df)} 個")
-                    logger.info(f"  Put期權: {len(puts_df)} 個")
-                    self._record_fallback('option_chain', 'ibkr')
-                    
-                    return {
-                        'calls': calls_df,
-                        'puts': puts_df,
-                        'expiration': expiration,
-                        'data_source': 'ibkr'
-                    }
+                    # 檢查是否真的有數據（不只是空 DataFrame）
+                    if len(calls_df) > 0 or len(puts_df) > 0:
+                        logger.info(f"* 成功獲取 {ticker} {expiration} 期權鏈 (IBKR)")
+                        logger.info(f"  Call期權: {len(calls_df)} 個")
+                        logger.info(f"  Put期權: {len(puts_df)} 個")
+                        self._record_fallback('option_chain', 'ibkr')
+                        
+                        return {
+                            'calls': calls_df,
+                            'puts': puts_df,
+                            'expiration': expiration,
+                            'data_source': 'ibkr'
+                        }
+                    else:
+                        logger.warning(f"! IBKR 返回 0 個期權合約，降級到 Yahoo Finance")
+                        self._record_fallback_failure('option_chain', 'IBKR', '返回0個合約')
+                else:
+                    logger.warning("! IBKR 返回空期權數據，降級到 Yahoo Finance")
+                    self._record_fallback_failure('option_chain', 'IBKR', '返回空數據')
             except Exception as e:
                 logger.warning(f"! IBKR 獲取期權鏈失敗: {e}，降級到 Yahoo Finance")
                 self._record_api_failure('ibkr', f"get_option_chain: {str(e)}")
+                self._record_fallback_failure('option_chain', 'IBKR', str(e))
         
         # 方案2: 降級到 Yahoo Finance V2（簡化版，帶 User-Agent）
         if self.yahoo_v2_client:
@@ -890,9 +1999,11 @@ class DataFetcher:
                     }
                 else:
                     logger.warning("! Yahoo Finance 返回空期權數據，降級到 yfinance")
+                    self._record_fallback_failure('option_chain', 'Yahoo Finance', '返回空數據')
             except Exception as e:
                 logger.warning(f"! Yahoo Finance 獲取期權鏈失敗: {e}，降級到 yfinance")
                 self._record_api_failure('Yahoo Finance', f"get_option_chain: {str(e)}")
+                self._record_fallback_failure('option_chain', 'Yahoo Finance', str(e))
         
         # 方案3: 降級到 yfinance
         try:
@@ -930,8 +2041,72 @@ class DataFetcher:
         except Exception as e:
             logger.error(f"x yfinance 獲取期權鏈失敗: {e}")
             self._record_api_failure('yfinance', f"get_option_chain: {str(e)}")
+            self._record_fallback_failure('option_chain', 'yfinance', str(e))
         
-        # 方案3: 最後降級 - 返回空數據結構（避免系統崩潰）
+        # 方案4: 嘗試 RapidAPI（如果啟用）
+        if hasattr(self, 'rapidapi_client') and self.rapidapi_client:
+            try:
+                logger.info("  使用 RapidAPI...")
+                response = self.rapidapi_client.get_options(ticker, expiration)
+                
+                if response and response.get('body'):
+                    body = response['body']
+                    
+                    # 解析 RapidAPI 期權數據
+                    calls_data = body.get('calls', [])
+                    puts_data = body.get('puts', [])
+                    
+                    if calls_data or puts_data:
+                        calls_df = pd.DataFrame(calls_data) if calls_data else pd.DataFrame()
+                        puts_df = pd.DataFrame(puts_data) if puts_data else pd.DataFrame()
+                        
+                        # 標準化列名（如果需要）
+                        column_mapping = {
+                            'strike': 'strike',
+                            'lastPrice': 'lastPrice',
+                            'bid': 'bid',
+                            'ask': 'ask',
+                            'volume': 'volume',
+                            'openInterest': 'openInterest',
+                            'impliedVolatility': 'impliedVolatility'
+                        }
+                        
+                        for df in [calls_df, puts_df]:
+                            if not df.empty:
+                                # 重命名列（如果存在）
+                                for old_name, new_name in column_mapping.items():
+                                    if old_name in df.columns and old_name != new_name:
+                                        df.rename(columns={old_name: new_name}, inplace=True)
+                                
+                                # 轉換 IV 為百分比形式
+                                if 'impliedVolatility' in df.columns:
+                                    df['impliedVolatility'] = df['impliedVolatility'] * 100
+                        
+                        logger.info(f"* 成功獲取 {ticker} {expiration} 期權鏈 (RapidAPI)")
+                        logger.info(f"  Call期權: {len(calls_df)} 個")
+                        logger.info(f"  Put期權: {len(puts_df)} 個")
+                        self._record_fallback('option_chain', 'RapidAPI')
+                        
+                        return {
+                            'calls': calls_df,
+                            'puts': puts_df,
+                            'expiration': expiration,
+                            'data_source': 'rapidapi'
+                        }
+                    else:
+                        logger.warning("! RapidAPI 返回空期權數據")
+                        self._record_fallback_failure('option_chain', 'RapidAPI', '返回空數據')
+                else:
+                    logger.warning("! RapidAPI 返回無效響應")
+                    self._record_fallback_failure('option_chain', 'RapidAPI', '無效響應')
+            except Exception as e:
+                logger.error(f"x RapidAPI 獲取期權鏈失敗: {e}")
+                self._record_api_failure('RapidAPI', f"get_option_chain: {str(e)}")
+                self._record_fallback_failure('option_chain', 'RapidAPI', str(e))
+        
+        # 方案5: 最後降級 - 返回空數據結構（避免系統崩潰）
+        # 輸出完整嘗試路徑
+        self._log_attempt_path('option_chain')
         logger.warning("! 所有數據源失敗，返回空期權鏈")
         self._record_fallback('option_chain', 'empty')
         return {
@@ -973,11 +2148,15 @@ class DataFetcher:
                 if greeks:
                     logger.info(f"* 成功獲取 Greeks (IBKR)")
                     greeks['source'] = 'IBKR'
-                    self._record_fallback('option_greeks', 'ibkr')
+                    self._record_fallback('option_greeks', 'IBKR')
                     return greeks
+                else:
+                    logger.warning("! IBKR 返回空 Greeks 數據，降級到自主計算")
+                    self._record_fallback_failure('option_greeks', 'IBKR', '返回空數據')
             except Exception as e:
-                logger.warning(f"! IBKR 獲取 Greeks 失敗: {e}，降級到 Yahoo V2")
+                logger.warning(f"! IBKR 獲取 Greeks 失敗: {e}，降級到自主計算")
                 self._record_api_failure('ibkr', f"get_option_greeks: {str(e)}")
+                self._record_fallback_failure('option_greeks', 'IBKR', str(e))
         
         # 方案2: Yahoo Finance 不提供 Greeks 數據，直接跳過
         # 降級到自主計算
@@ -1044,12 +2223,16 @@ class DataFetcher:
                     return greeks_dict
                 else:
                     logger.warning(f"! 自主計算參數不足: stock_price={stock_price}, iv={iv}, rate={risk_free_rate}")
+                    self._record_fallback_failure('option_greeks', 'self_calculated', '參數不足')
                     
             except Exception as e:
                 logger.error(f"x 自主計算 Greeks 失敗: {e}")
                 self._record_api_failure('self_calculated', f"get_option_greeks: {str(e)}")
+                self._record_fallback_failure('option_greeks', 'self_calculated', str(e))
         
         # 方案4: 最後降級 - 返回默認值（避免系統崩潰）
+        # 輸出完整嘗試路徑
+        self._log_attempt_path('option_greeks')
         logger.warning("! 所有方案失敗，使用默認 Greeks 值")
         default_greeks = {
             'delta': 0.5 if option_type.upper() == 'C' else -0.5,
@@ -1583,6 +2766,8 @@ class DataFetcher:
         try:
             if not self.fred_client:
                 logger.warning("! FRED客户端未初始化，無法獲取利率")
+                self._record_fallback_failure('risk_free_rate', 'FRED', '客戶端未初始化')
+                self._log_attempt_path('risk_free_rate')
                 return None
             
             logger.info("開始獲取無風險利率...")
@@ -1590,15 +2775,20 @@ class DataFetcher:
             
             if dgs10 is None or dgs10.empty:
                 logger.warning("! 無法獲取10年期國債收益率")
+                self._record_fallback_failure('risk_free_rate', 'FRED', '無法獲取數據')
+                self._log_attempt_path('risk_free_rate')
                 return None
             
             rate = dgs10.iloc[-1]
             logger.info(f"* 10年期國債收益率: {rate:.2f}%")
+            self._record_fallback('risk_free_rate', 'FRED')
             
             return rate
             
         except Exception as e:
             logger.error(f"x 獲取無風險利率失敗: {e}")
+            self._record_fallback_failure('risk_free_rate', 'FRED', str(e))
+            self._log_attempt_path('risk_free_rate')
             return None
     
     def get_vix(self):
@@ -1619,11 +2809,14 @@ class DataFetcher:
                 if not vix_data.empty:
                     vix_value = float(vix_data['Close'].iloc[-1])
                     logger.info(f"* VIX指數 (Yahoo Finance 實時): {vix_value:.2f}")
+                    self._record_fallback('vix', 'Yahoo Finance')
                     return vix_value
                 else:
                     logger.warning("! Yahoo Finance VIX 數據為空，降級到 FRED")
+                    self._record_fallback_failure('vix', 'Yahoo Finance', '數據為空')
             except Exception as e:
                 logger.warning(f"! Yahoo Finance 獲取 VIX 失敗: {e}，降級到 FRED")
+                self._record_fallback_failure('vix', 'Yahoo Finance', str(e))
             
             # 降級：使用 FRED 獲取 VIX（可能有延遲）
             if self.fred_client:
@@ -1633,16 +2826,21 @@ class DataFetcher:
                     vix_value = vix.iloc[-1]
                     logger.info(f"* VIX指數 (FRED 收盤價): {vix_value:.2f}")
                     logger.warning("  ! 注意：FRED VIX 數據可能有1天延遲")
+                    self._record_fallback('vix', 'FRED')
                     return vix_value
                 else:
                     logger.warning("! FRED 無法獲取VIX")
+                    self._record_fallback_failure('vix', 'FRED', '無法獲取數據')
+                    self._log_attempt_path('vix')
                     return None
             else:
                 logger.warning("! FRED客户端未初始化，無法獲取VIX")
+                self._log_attempt_path('vix')
                 return None
             
         except Exception as e:
             logger.error(f"x 獲取VIX失敗: {e}")
+            self._log_attempt_path('vix')
             return None
     
     # ==================== 歷史IV數據 ====================
@@ -1785,12 +2983,15 @@ class DataFetcher:
                         return result
                 
                 logger.warning(f"! Finnhub 無 {ticker} 近期業績安排，嘗試降級到 yfinance")
+                self._record_fallback_failure('earnings_calendar', 'Finnhub', '無近期業績安排')
                 
             except Exception as e:
                 logger.warning(f"! Finnhub 獲取業績日期失敗: {e}，降級到 yfinance")
                 self._record_api_failure('Finnhub', f"get_earnings_calendar: {e}")
+                self._record_fallback_failure('earnings_calendar', 'Finnhub', str(e))
         else:
             logger.info("  Finnhub 客戶端未初始化，跳過")
+            self._record_fallback_failure('earnings_calendar', 'Finnhub', '客戶端未初始化')
         
         # 方案2: 降級到 yfinance calendar
         try:
@@ -1832,10 +3033,12 @@ class DataFetcher:
                         return result
             
             logger.warning(f"! yfinance 無 {ticker} 業績日期，嘗試歷史推測")
+            self._record_fallback_failure('earnings_calendar', 'yfinance', '無業績日期')
             
         except Exception as e:
             logger.warning(f"! yfinance 獲取業績日期失敗: {e}，嘗試歷史推測")
             self._record_api_failure('yfinance', f"get_earnings_calendar: {e}")
+            self._record_fallback_failure('earnings_calendar', 'yfinance', str(e))
         
         # 方案3: 最後降級 - 使用歷史業績日期推測
         try:
@@ -1851,8 +3054,10 @@ class DataFetcher:
         except Exception as e:
             logger.error(f"x 歷史推測失敗: {e}")
             self._record_api_failure('earnings_estimation', str(e))
+            self._record_fallback_failure('earnings_calendar', 'estimated', str(e))
         
-        # 所有方案都失敗
+        # 所有方案都失敗，輸出完整嘗試路徑
+        self._log_attempt_path('earnings_calendar')
         logger.error(f"x 所有方案都無法獲取 {ticker} 業績日期")
         return None
     
@@ -1891,7 +3096,7 @@ class DataFetcher:
                 'volume', 'dividend_yield', 'beta', 'atr', 'rsi',
                 'company_name', 'sector', 'industry', 'target_price',
                 'profit_margin', 'operating_margin', 'roe', 'roa', 'debt_eq',
-                'insider_own', 'inst_own', 'short_float', 'avg_volume'
+                'insider_own', 'inst_own', 'short_float', 'avg_volume', 'eps_next_y'
             ]
             
             # 檢查缺失字段
@@ -2119,7 +3324,11 @@ class DataFetcher:
             
             if result['ex_dividend_date']:
                 logger.info(f"* {ticker} 除息日: {result['ex_dividend_date']}")
+                self._record_fallback('dividend_calendar', 'yfinance')
                 return result
+            else:
+                logger.warning(f"! yfinance 無 {ticker} 除息日期，嘗試 Finnhub")
+                self._record_fallback_failure('dividend_calendar', 'yfinance', '無除息日期')
             
             # 方法2: 使用finnhub (備用)
             if self.finnhub_client:
@@ -2147,15 +3356,25 @@ class DataFetcher:
                         result['dividend_amount'] = latest.get('amount', 0.0)
                         
                         logger.info(f"* {ticker} 除息日(Finnhub): {result['ex_dividend_date']}")
+                        self._record_fallback('dividend_calendar', 'Finnhub')
                         return result
+                    else:
+                        logger.warning(f"! Finnhub 無 {ticker} 派息數據")
+                        self._record_fallback_failure('dividend_calendar', 'Finnhub', '無派息數據')
                 except Exception as e:
                     logger.warning(f"  Finnhub派息數據獲取失敗: {e}")
+                    self._record_fallback_failure('dividend_calendar', 'Finnhub', str(e))
+            else:
+                self._record_fallback_failure('dividend_calendar', 'Finnhub', '客戶端未初始化')
             
+            # 所有方案都失敗，輸出完整嘗試路徑
+            self._log_attempt_path('dividend_calendar')
             logger.warning(f"! {ticker} 無派息信息")
             return None
             
         except Exception as e:
             logger.error(f"x 獲取 {ticker} 派息信息失敗: {e}")
+            self._log_attempt_path('dividend_calendar')
             return None
     
     # ==================== 完整數據包 ====================
@@ -2327,22 +3546,22 @@ class DataFetcher:
                 'timestamp': datetime.now(),
                 'analysis_date': today_dt.strftime('%Y-%m-%d'),
                 
-                # 股票數據
+                # 股票數據（使用 .get() 確保有默認值）
                 'current_price': current_price,
-                'stock_open': stock_info['open'],
-                'stock_high': stock_info['high'],
-                'stock_low': stock_info['low'],
-                'volume': stock_info['volume'],
-                'market_cap': stock_info['market_cap'],
-                'pe_ratio': stock_info['pe_ratio'],
+                'stock_open': stock_info.get('open', 0),
+                'stock_high': stock_info.get('high', 0),
+                'stock_low': stock_info.get('low', 0),
+                'volume': stock_info.get('volume', 0),
+                'market_cap': stock_info.get('market_cap', 0),
+                'pe_ratio': stock_info.get('pe_ratio', 0),
                 'eps': eps,
-                'company_name': stock_info['company_name'],
-                'sector': stock_info['sector'],
-                'industry': stock_info['industry'],
+                'company_name': stock_info.get('company_name', ticker),
+                'sector': stock_info.get('sector', 'Unknown'),
+                'industry': stock_info.get('industry', 'Unknown'),
                 
                 # 派息數據
                 'annual_dividend': dividends.get('annual_dividend', 0) if dividends else 0,
-                'dividend_rate': stock_info['dividend_rate'],
+                'dividend_rate': stock_info.get('dividend_rate', 0),
                 
                 # ✅ Finviz 額外數據（所有權結構）
                 'insider_own': stock_info.get('insider_own'),

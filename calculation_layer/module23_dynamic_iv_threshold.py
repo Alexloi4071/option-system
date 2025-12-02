@@ -201,13 +201,13 @@ class DynamicIVThresholdCalculator:
         low_threshold = max(5.0, vix - self.STATIC_THRESHOLD_OFFSET)  # 最低5%
         median_iv = vix
         
-        # 判斷當前IV狀態
+        # 判斷當前IV狀態（即使數據不足也要給出狀態）
         if current_iv > high_threshold:
-            status = "高於歷史水平"
+            status = "HIGH (高於VIX基準)"
         elif current_iv < low_threshold:
-            status = "低於歷史水平"
+            status = "LOW (低於VIX基準)"
         else:
-            status = "正常範圍"
+            status = "NORMAL (VIX基準範圍內)"
         
         result = IVThresholdResult(
             current_iv=current_iv,
@@ -225,9 +225,11 @@ class DynamicIVThresholdCalculator:
         )
         
         logger.info(f"* 靜態IV閾值計算完成 (基於VIX {vix:.2f}%)")
+        logger.info(f"  當前IV: {current_iv:.2f}%")
         logger.info(f"  高閾值: {high_threshold:.2f}% (VIX + 10%)")
         logger.info(f"  低閾值: {low_threshold:.2f}% (VIX - 10%)")
         logger.info(f"  狀態: {status}")
+        logger.info(f"  注意: 使用VIX靜態閾值（歷史IV數據不足）")
         
         return result
     

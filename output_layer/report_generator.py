@@ -826,13 +826,20 @@ class ReportGenerator:
         if 'hv_results' in results:
             report += "│ 📊 歷史波動率 (HV):\n"
             for window, data in sorted(results['hv_results'].items()):
-                hv = data.get('hv', 0) if isinstance(data, dict) else data.get('historical_volatility', 0)
-                report += f"│   {window}天窗口: {hv*100:6.2f}%\n"
+                # 優先使用百分比形式，否則使用小數形式並轉換
+                if isinstance(data, dict):
+                    hv_percent = data.get('historical_volatility_percent', 0)
+                    if hv_percent == 0:
+                        hv = data.get('historical_volatility', 0)
+                        hv_percent = hv * 100 if hv else 0
+                else:
+                    hv_percent = 0
+                report += f"│   {window}天窗口: {hv_percent:6.2f}%\n"
             report += "│\n"
         
         if 'iv_hv_comparison' in results:
             comp = results['iv_hv_comparison']
-            ratio = comp.get('ratio', 0)
+            ratio = comp.get('iv_hv_ratio', comp.get('ratio', 0))
             assessment = comp.get('assessment', 'N/A')
             recommendation = comp.get('recommendation', 'N/A')
             
@@ -1456,7 +1463,8 @@ class ReportGenerator:
         current_iv = results.get('current_iv', 0)
         high_threshold = results.get('high_threshold', 0)
         low_threshold = results.get('low_threshold', 0)
-        iv_status = results.get('iv_status', 'N/A')
+        # 兼容兩種字段名: 'status' (IVThresholdResult) 和 'iv_status' (舊版)
+        iv_status = results.get('status', results.get('iv_status', 'N/A'))
         data_quality = results.get('data_quality', 'N/A')
         
         report += f"│ 📊 當前IV狀態:\n"
@@ -1479,15 +1487,23 @@ class ReportGenerator:
             report += f"│ {low_threshold:.1f}%         {current_iv:.1f}%         {high_threshold:.1f}%\n"
             report += "│\n"
         
-        # 狀態解讀
-        status_emoji = {
-            'high': '🔴',
-            'normal': '🟢',
-            'low': '🔵'
-        }
-        emoji = status_emoji.get(iv_status.lower() if isinstance(iv_status, str) else 'normal', '⚪')
+        # 狀態解讀 - 改進邏輯
+        status_lower = iv_status.lower() if isinstance(iv_status, str) else ''
         
-        report += f"│ {emoji} IV狀態: {iv_status}\n"
+        if 'high' in status_lower or current_iv > high_threshold:
+            emoji = '🔴'
+            display_status = 'HIGH (IV偏高)'
+        elif 'low' in status_lower or current_iv < low_threshold:
+            emoji = '🔵'
+            display_status = 'LOW (IV偏低)'
+        elif 'normal' in status_lower or (low_threshold <= current_iv <= high_threshold):
+            emoji = '🟢'
+            display_status = 'NORMAL (IV合理)'
+        else:
+            emoji = '⚪'
+            display_status = iv_status
+        
+        report += f"│ {emoji} IV狀態: {display_status}\n"
         
         # 交易建議
         if 'trading_suggestion' in results:
@@ -1498,11 +1514,29 @@ class ReportGenerator:
                     report += f"│    理由: {suggestion.get('reason', 'N/A')}\n"
             else:
                 report += f"│ 💡 交易建議: {suggestion}\n"
+        else:
+            # 如果沒有交易建議，根據狀態生成
+            if current_iv > high_threshold:
+                report += f"│ 💡 交易建議: Short\n"
+                report += f"│    理由: 當前IV {current_iv:.1f}% 高於閾值 {high_threshold:.1f}%\n"
+            elif current_iv < low_threshold:
+                report += f"│ 💡 交易建議: Long\n"
+                report += f"│    理由: 當前IV {current_iv:.1f}% 低於閾值 {low_threshold:.1f}%\n"
+            else:
+                report += f"│ 💡 交易建議: 觀望\n"
+                report += f"│    理由: 當前IV {current_iv:.1f}% 在合理範圍內\n"
         
         report += "│\n"
         
-        # 數據質量
-        report += f"│ 📌 數據質量: {data_quality}\n"
+        # 數據質量 - 更清楚的說明
+        if data_quality == 'insufficient':
+            report += f"│ 📌 數據質量: {data_quality}\n"
+            report += f"│    說明: 歷史IV數據不足，使用VIX靜態閾值\n"
+            report += f"│    閾值計算: VIX ± 10%\n"
+        else:
+            report += f"│ 📌 數據質量: {data_quality}\n"
+            if 'historical_days' in results:
+                report += f"│    歷史數據: {results.get('historical_days', 0)} 天\n"
         
         report += "│\n"
         report += "│ 📖 解讀:\n"

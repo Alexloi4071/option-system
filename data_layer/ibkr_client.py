@@ -94,7 +94,13 @@ class IBKRClient:
             if self.ib.isConnected():
                 self.connected = True
                 self.connection_attempts = 0
+                
+                # 設置市場數據類型
+                # Market data type: 1=Live, 2=Frozen, 3=Delayed, 4=Delayed Frozen
+                # 使用實時數據（需要訂閱 OPRA）
+                self.ib.reqMarketDataType(1)  # 使用實時數據
                 logger.info(f"* IBKR 連接成功 ({self.mode} mode)")
+                logger.info("  已設置為實時市場數據模式 (Live)")
                 return True
             else:
                 logger.error("x IBKR 連接失敗：未連接狀態")
@@ -166,57 +172,173 @@ class IBKRClient:
                 return None
             
             # 找到匹配的到期日
-            target_exp = datetime.strptime(expiration, '%Y-%m-%d').date()
+            # IBKR 返回的 expirations 是字符串格式 'YYYYMMDD'
+            target_exp_str = expiration.replace('-', '')  # 轉換為 'YYYYMMDD' 格式
             matching_chain = None
+            available_expirations = []
             
             for chain in chains:
                 for exp_date in chain.expirations:
-                    if exp_date == target_exp:
+                    # exp_date 可能是字符串 'YYYYMMDD' 或 date 對象
+                    if isinstance(exp_date, str):
+                        exp_str = exp_date
+                    else:
+                        exp_str = exp_date.strftime('%Y%m%d')
+                    
+                    available_expirations.append(exp_str)
+                    
+                    if exp_str == target_exp_str:
                         matching_chain = chain
                         break
                 if matching_chain:
                     break
             
             if not matching_chain:
+                # 顯示可用的到期日以便調試
                 logger.warning(f"! 未找到 {ticker} {expiration} 的期權鏈")
+                logger.info(f"  目標到期日: {target_exp_str}")
+                logger.info(f"  可用到期日 (前10個): {sorted(set(available_expirations))[:10]}")
                 return None
             
             # 構建期權合約列表
             calls = []
             puts = []
             
-            for strike in matching_chain.strikes:
-                # Call 期權
-                call_contract = Option(
-                    ticker,
-                    expiration,
-                    strike,
-                    'C',
-                    'SMART'
-                )
-                self.ib.qualifyContracts(call_contract)
-                
-                if call_contract:
-                    call_data = self._get_option_data(call_contract)
-                    if call_data:
-                        calls.append(call_data)
-                
-                # Put 期權
-                put_contract = Option(
-                    ticker,
-                    expiration,
-                    strike,
-                    'P',
-                    'SMART'
-                )
-                self.ib.qualifyContracts(put_contract)
-                
-                if put_contract:
-                    put_data = self._get_option_data(put_contract)
-                    if put_data:
-                        puts.append(put_data)
+            # 轉換日期格式: YYYY-MM-DD -> YYYYMMDD
+            exp_formatted = expiration.replace('-', '')
             
-            logger.info(f"* 獲取 {ticker} 期權鏈成功: {len(calls)} calls, {len(puts)} puts")
+            # 限制處理的行使價數量，避免超過 IBKR 市場數據限制
+            # 只選擇接近當前股價的行使價（需要先獲取股價）
+            try:
+                stock_ticker = self.ib.reqMktData(stock, '', False, False)
+                time.sleep(1)
+                current_price = stock_ticker.last or stock_ticker.close or 0
+                self.ib.cancelMktData(stock)
+            except:
+                current_price = 0
+            
+            # 過濾行使價：只保留接近當前股價的（±30%範圍內）
+            if current_price > 0:
+                min_strike = current_price * 0.7
+                max_strike = current_price * 1.3
+                filtered_strikes = [s for s in matching_chain.strikes if min_strike <= s <= max_strike]
+                logger.info(f"  過濾行使價: {len(matching_chain.strikes)} -> {len(filtered_strikes)} (股價 ${current_price:.2f})")
+            else:
+                # 如果無法獲取股價，只取中間的 50 個行使價
+                all_strikes = sorted(matching_chain.strikes)
+                mid = len(all_strikes) // 2
+                filtered_strikes = all_strikes[max(0, mid-25):mid+25]
+                logger.info(f"  限制行使價數量: {len(matching_chain.strikes)} -> {len(filtered_strikes)}")
+            
+            # 使用 reqContractDetails 獲取實際存在的期權合約
+            # 這比逐個嘗試行使價更可靠
+            logger.info(f"  使用 reqContractDetails 獲取實際存在的期權合約...")
+            
+            # 創建一個通用的期權合約查詢（不指定行使價）
+            option_filter = Option(
+                symbol=ticker,
+                lastTradeDateOrContractMonth=exp_formatted,
+                exchange='SMART',
+                currency='USD'
+            )
+            
+            try:
+                # 獲取所有匹配的期權合約
+                contract_details_list = self.ib.reqContractDetails(option_filter)
+                
+                if contract_details_list:
+                    logger.info(f"  找到 {len(contract_details_list)} 個期權合約")
+                    
+                    # 過濾行使價範圍
+                    for cd in contract_details_list:
+                        contract = cd.contract
+                        strike = contract.strike
+                        
+                        # 只處理在價格範圍內的行使價
+                        if current_price > 0:
+                            if strike < current_price * 0.7 or strike > current_price * 1.3:
+                                continue
+                        
+                        # 獲取市場數據
+                        option_data = self._get_option_data(contract)
+                        if option_data:
+                            if contract.right == 'C':
+                                calls.append(option_data)
+                            else:
+                                puts.append(option_data)
+                        
+                        # 限制數量，避免請求過多
+                        if len(calls) >= 25 and len(puts) >= 25:
+                            break
+                    
+                    logger.info(f"* 獲取 {ticker} 期權鏈完成: {len(calls)} calls, {len(puts)} puts")
+                    
+                    return {
+                        'calls': calls,
+                        'puts': puts,
+                        'expiration': expiration,
+                        'data_source': 'ibkr'
+                    }
+                else:
+                    logger.warning(f"! reqContractDetails 未返回任何合約，嘗試逐個行使價...")
+            except Exception as e:
+                logger.warning(f"! reqContractDetails 失敗: {e}，嘗試逐個行使價...")
+            
+            # 備用方案：逐個嘗試行使價（原有邏輯）
+            error_count = 0
+            max_errors = 10  # 如果連續錯誤超過這個數量，停止嘗試
+            success_count = 0  # 追蹤成功數量
+            
+            for strike in filtered_strikes:
+                if error_count >= max_errors:
+                    logger.warning(f"! 連續錯誤過多 ({error_count})，停止獲取更多行使價")
+                    break
+                
+                try:
+                    # Call 期權
+                    call_contract = Option(
+                        ticker,
+                        exp_formatted,
+                        strike,
+                        'C',
+                        'SMART'
+                    )
+                    qualified = self.ib.qualifyContracts(call_contract)
+                    
+                    if qualified and call_contract.conId:
+                        call_data = self._get_option_data(call_contract)
+                        if call_data:
+                            calls.append(call_data)
+                            error_count = 0  # 重置錯誤計數
+                    else:
+                        error_count += 1
+                except Exception as e:
+                    logger.debug(f"  跳過 Call {strike}: {e}")
+                    error_count += 1
+                
+                try:
+                    # Put 期權
+                    put_contract = Option(
+                        ticker,
+                        exp_formatted,
+                        strike,
+                        'P',
+                        'SMART'
+                    )
+                    qualified = self.ib.qualifyContracts(put_contract)
+                    
+                    if qualified and put_contract.conId:
+                        put_data = self._get_option_data(put_contract)
+                        if put_data:
+                            puts.append(put_data)
+                            error_count = 0
+                    else:
+                        error_count += 1
+                except Exception as e:
+                    logger.debug(f"  跳過 Put {strike}: {e}")
+                    error_count += 1
+            
+            logger.info(f"* 獲取 {ticker} 期權鏈完成: {len(calls)} calls, {len(puts)} puts")
             
             return {
                 'calls': calls,
@@ -252,42 +374,195 @@ class IBKRClient:
         try:
             logger.info(f"開始獲取 {ticker} {strike} {option_type} Greeks (IBKR)...")
             
+            # 轉換日期格式: YYYY-MM-DD -> YYYYMMDD
+            exp_formatted = expiration.replace('-', '')
+            
             # 創建期權合約
-            option = Option(ticker, expiration, strike, option_type, 'SMART')
-            self.ib.qualifyContracts(option)
+            option = Option(
+                symbol=ticker,
+                lastTradeDateOrContractMonth=exp_formatted,
+                strike=strike,
+                right=option_type,
+                exchange='SMART',
+                currency='USD'
+            )
+            qualified = self.ib.qualifyContracts(option)
             
-            # 訂閱市場數據
-            self.ib.reqMktData(option, '', False, False)
-            time.sleep(1)  # 等待數據更新
+            if not qualified:
+                logger.warning(f"! 無法驗證期權合約: {ticker} {strike} {option_type}")
+                return None
             
-            # 獲取 Greeks
-            ticker_data = self.ib.ticker(option)
+            logger.info(f"  期權合約已驗證: {option.localSymbol}, conId={option.conId}")
+            
+            # 請求期權市場數據 - 使用流式數據
+            # genericTickList: 106=Option Implied Volatility
+            self.ib.reqMktData(option, '106', False, False)  # snapshot=False
+            
+            # 等待數據更新
+            ticker_data = None
+            for _ in range(5):  # 最多等待 5 秒
+                time.sleep(1)
+                ticker_data = self.ib.ticker(option)
+                # 檢查是否有有效的報價數據（不是 NaN）
+                if ticker_data:
+                    has_bid = ticker_data.bid is not None and not (isinstance(ticker_data.bid, float) and ticker_data.bid != ticker_data.bid)
+                    has_ask = ticker_data.ask is not None and not (isinstance(ticker_data.ask, float) and ticker_data.ask != ticker_data.ask)
+                    has_last = ticker_data.last is not None and not (isinstance(ticker_data.last, float) and ticker_data.last != ticker_data.last)
+                    if has_bid or has_ask or has_last:
+                        break
             
             if not ticker_data:
                 logger.warning(f"! 無法獲取 {ticker} {strike} 的市場數據")
                 return None
             
-            greeks = {
-                'delta': ticker_data.modelGreeks.delta if ticker_data.modelGreeks else None,
-                'gamma': ticker_data.modelGreeks.gamma if ticker_data.modelGreeks else None,
-                'theta': ticker_data.modelGreeks.theta if ticker_data.modelGreeks else None,
-                'vega': ticker_data.modelGreeks.vega if ticker_data.modelGreeks else None,
-                'rho': ticker_data.modelGreeks.rho if ticker_data.modelGreeks else None
-            }
+            # 收集所有可用數據
+            result = {}
+            
+            # 1. 優先使用 IBKR 的 modelGreeks（如果可用）
+            if ticker_data.modelGreeks:
+                logger.info("  使用 IBKR modelGreeks")
+                result = {
+                    'delta': ticker_data.modelGreeks.delta,
+                    'gamma': ticker_data.modelGreeks.gamma,
+                    'theta': ticker_data.modelGreeks.theta,
+                    'vega': ticker_data.modelGreeks.vega,
+                    'rho': ticker_data.modelGreeks.rho,
+                    'impliedVol': ticker_data.modelGreeks.impliedVol,
+                    'source': 'ibkr_model'
+                }
+            
+            # 2. 獲取期權報價數據（OPRA 數據）
+            try:
+                if ticker_data.bid is not None and not (isinstance(ticker_data.bid, float) and ticker_data.bid != ticker_data.bid):
+                    result['bid'] = float(ticker_data.bid)
+                if ticker_data.ask is not None and not (isinstance(ticker_data.ask, float) and ticker_data.ask != ticker_data.ask):
+                    result['ask'] = float(ticker_data.ask)
+                if ticker_data.last is not None and not (isinstance(ticker_data.last, float) and ticker_data.last != ticker_data.last):
+                    result['last'] = float(ticker_data.last)
+                if ticker_data.volume is not None and ticker_data.volume > 0:
+                    result['volume'] = int(ticker_data.volume)
+            except (ValueError, TypeError) as e:
+                logger.debug(f"  處理報價數據時出錯: {e}")
+            
+            # 3. 嘗試獲取 IV（從不同來源）
+            if ticker_data.impliedVolatility and ticker_data.impliedVolatility > 0:
+                result['impliedVol'] = float(ticker_data.impliedVolatility)
+                result['iv_source'] = 'ibkr_tick'
             
             # 過濾 None 值
-            greeks = {k: v for k, v in greeks.items() if v is not None}
+            result = {k: v for k, v in result.items() if v is not None}
             
-            if greeks:
-                logger.info(f"* 獲取 Greeks 成功: {greeks}")
-                return greeks
+            # 取消市場數據訂閱
+            try:
+                self.ib.cancelMktData(option)
+            except:
+                pass
+            
+            if result:
+                logger.info(f"* 獲取期權數據成功: {result}")
+                return result
             else:
-                logger.warning(f"! 無法獲取完整的 Greeks 數據")
+                logger.warning(f"! 無法獲取期權數據")
                 return None
                 
         except Exception as e:
             self.last_error = str(e)
             logger.error(f"x 獲取 Greeks 失敗: {e}")
+            return None
+    
+    def get_option_quote(self, ticker: str, strike: float, 
+                         expiration: str, option_type: str = 'C') -> Optional[Dict[str, Any]]:
+        """
+        獲取期權報價數據（使用 OPRA 數據）
+        
+        這個方法專門獲取期權的基本報價數據，不依賴 modelGreeks。
+        適用於只有 OPRA 訂閱的情況。
+        
+        參數:
+            ticker: 股票代碼
+            strike: 行使價
+            expiration: 到期日期 (YYYY-MM-DD)
+            option_type: 'C' (Call) 或 'P' (Put)
+        
+        返回:
+            dict: {'bid': float, 'ask': float, 'last': float, 'volume': int, 'iv': float}
+        """
+        if not self.is_connected():
+            if not self.connect():
+                logger.warning("! IBKR 未連接，無法獲取期權報價")
+                return None
+        
+        try:
+            logger.info(f"開始獲取 {ticker} {strike} {option_type} 期權報價 (IBKR OPRA)...")
+            
+            # 轉換日期格式
+            exp_formatted = expiration.replace('-', '')
+            
+            # 創建期權合約
+            option = Option(
+                symbol=ticker,
+                lastTradeDateOrContractMonth=exp_formatted,
+                strike=strike,
+                right=option_type,
+                exchange='SMART',
+                currency='USD'
+            )
+            qualified = self.ib.qualifyContracts(option)
+            
+            if not qualified:
+                logger.warning(f"! 無法驗證期權合約: {ticker} {strike} {option_type}")
+                return None
+            
+            # 請求期權報價 - 使用流式數據（不是快照）
+            self.ib.reqMktData(option, '', False, False)  # snapshot=False
+            
+            # 等待數據
+            ticker_data = None
+            for _ in range(5):
+                time.sleep(1)
+                ticker_data = self.ib.ticker(option)
+                # 檢查是否有有效的報價數據（不是 NaN）
+                if ticker_data:
+                    has_bid = ticker_data.bid is not None and not (isinstance(ticker_data.bid, float) and ticker_data.bid != ticker_data.bid)
+                    has_ask = ticker_data.ask is not None and not (isinstance(ticker_data.ask, float) and ticker_data.ask != ticker_data.ask)
+                    if has_bid or has_ask:
+                        break
+            
+            if not ticker_data:
+                return None
+            
+            result = {
+                'strike': strike,
+                'expiration': expiration,
+                'option_type': option_type,
+                'data_source': 'ibkr_opra'
+            }
+            
+            # 收集報價數據 - 處理 NaN 值
+            try:
+                if ticker_data.bid is not None and not (isinstance(ticker_data.bid, float) and ticker_data.bid != ticker_data.bid):
+                    result['bid'] = float(ticker_data.bid)
+                if ticker_data.ask is not None and not (isinstance(ticker_data.ask, float) and ticker_data.ask != ticker_data.ask):
+                    result['ask'] = float(ticker_data.ask)
+                if ticker_data.last is not None and not (isinstance(ticker_data.last, float) and ticker_data.last != ticker_data.last):
+                    result['last'] = float(ticker_data.last)
+                if ticker_data.volume is not None and ticker_data.volume > 0:
+                    result['volume'] = int(ticker_data.volume)
+            except (ValueError, TypeError) as e:
+                logger.debug(f"  處理報價數據時出錯: {e}")
+            
+            # 計算中間價
+            if 'bid' in result and 'ask' in result:
+                result['mid'] = (result['bid'] + result['ask']) / 2
+            
+            # 取消市場數據訂閱
+            self.ib.cancelMktData(option)
+            
+            logger.info(f"* 獲取期權報價成功: {result}")
+            return result
+            
+        except Exception as e:
+            logger.error(f"x 獲取期權報價失敗: {e}")
             return None
     
     def get_bid_ask_spread(self, ticker: str, strike: float, 
@@ -309,7 +584,10 @@ class IBKRClient:
                 return None
         
         try:
-            option = Option(ticker, expiration, strike, option_type, 'SMART')
+            # 轉換日期格式: YYYY-MM-DD -> YYYYMMDD
+            exp_formatted = expiration.replace('-', '')
+            
+            option = Option(ticker, exp_formatted, strike, option_type, 'SMART')
             self.ib.qualifyContracts(option)
             self.ib.reqMktData(option, '', False, False)
             time.sleep(1)

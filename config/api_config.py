@@ -1,6 +1,48 @@
 # config/api_config.py
 """
 API配置
+
+本模塊定義了系統支持的所有 API 數據源的配置信息，包括：
+- API 名稱和類型
+- 速率限制
+- 認證要求
+- 提供的數據類型
+- 數據優先級
+
+配置說明:
+-----------
+所有 API Keys 和敏感配置應存儲在 .env 文件中，而非此文件。
+此文件僅定義 API 的元數據和行為配置。
+
+環境變量配置 (.env):
+-------------------
+# RapidAPI 配置
+RAPIDAPI_ENABLED=True           # 是否啟用 RapidAPI
+RAPIDAPI_KEY=your_api_key       # API 密鑰
+RAPIDAPI_HOST=yahoo-finance127.p.rapidapi.com  # API 主機
+RAPIDAPI_MONTHLY_LIMIT=500      # 每月請求限制
+
+# 緩存配置
+CACHE_DURATION_STOCK_INFO=300   # 股票信息緩存時長（秒）
+CACHE_DURATION_OPTION_CHAIN=60  # 期權鏈緩存時長（秒）
+CACHE_DURATION_HISTORICAL=3600  # 歷史數據緩存時長（秒）
+CACHE_DURATION_EARNINGS=3600    # 業績日曆緩存時長（秒）
+CACHE_DURATION_VIX=60           # VIX 緩存時長（秒）
+
+# 錯誤處理配置
+MAX_API_FAILURE_RECORDS=100     # 每個 API 最多保留的故障記錄數
+API_FAILURE_RETENTION_HOURS=24  # 故障記錄保留時間（小時）
+
+# 功能開關
+ENABLE_ENHANCED_FINVIZ=True     # 啟用增強版 Finviz 錯誤處理
+
+使用示例:
+--------
+>>> from config.api_config import api_config
+>>> print(api_config.RAPIDAPI['rate_limit'])
+500
+>>> print(api_config.DATA_PRIORITY['stock_price'])
+['ibkr', 'finviz', 'alpha_vantage', 'yfinance', 'yahoo_v2', 'finnhub', 'rapidapi']
 """
 
 
@@ -123,6 +165,12 @@ class APIConfig:
     
     # 數據優先級（按順序嘗試，第一個失敗時自動嘗試下一個）
     # IBKR 是最高優先級，其他都是降級備選
+    # 
+    # 降級策略說明:
+    # - 每個數據類型都有預定義的降級順序
+    # - 當主要數據源失敗時，系統會自動嘗試下一個數據源
+    # - 所有降級操作都會被記錄，可通過 get_api_status_report() 查看
+    # - 如果所有數據源都失敗，返回 None（不拋出異常）
     DATA_PRIORITY = {
         'stock_price': ['ibkr', 'finviz', 'alpha_vantage', 'yfinance', 'yahoo_v2', 'finnhub', 'rapidapi'],
         'option_chain': ['ibkr', 'yfinance', 'yahoo_v2'],
@@ -134,8 +182,10 @@ class APIConfig:
         'pe_ratio': ['finviz', 'alpha_vantage', 'yfinance', 'yahoo_v2'],
         'dividends': ['yfinance', 'alpha_vantage', 'yahoo_v2', 'finnhub'],
         'vix': ['FRED', 'yfinance'],
-        'earnings_date': ['finnhub'],           # 业绩日期（岗位10）
-        'dividend_date': ['yfinance', 'alpha_vantage', 'finnhub'], # 派息日期（岗位9）
+        # 業績日曆降級鏈: Finnhub → yfinance → 歷史推測
+        'earnings_date': ['finnhub', 'yfinance', 'estimated'],
+        # 派息日期降級鏈
+        'dividend_date': ['yfinance', 'alpha_vantage', 'finnhub'],
         'historical_data': ['ibkr', 'alpha_vantage', 'yfinance', 'yahoo_v2', 'rapidapi'],
         'real_time_quote': ['ibkr', 'alpha_vantage', 'yahoo_v2', 'finnhub', 'rapidapi'],
         'company_news': ['finnhub', 'rapidapi'],

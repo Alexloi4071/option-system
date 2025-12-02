@@ -28,11 +28,14 @@ class Settings:
     IBKR_PORT_PAPER = int(os.getenv("IBKR_PORT_PAPER", "7497"))
     IBKR_PORT_LIVE = int(os.getenv("IBKR_PORT_LIVE", "7496"))
     IBKR_CLIENT_ID = int(os.getenv("IBKR_CLIENT_ID", "100"))
+    IBKR_USE_PAPER = os.getenv("IBKR_USE_PAPER", "True").lower() == "true"  # 使用 Paper Trading
     IBKR_ACCOUNT_ID = os.getenv("IBKR_ACCOUNT_ID", "")
     
     # RapidAPI設置
+    RAPIDAPI_ENABLED = os.getenv("RAPIDAPI_ENABLED", "True").lower() == "true"
     RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY", "")
     RAPIDAPI_HOST = os.getenv("RAPIDAPI_HOST", "yahoo-finance127.p.rapidapi.com")
+    RAPIDAPI_MONTHLY_LIMIT = int(os.getenv("RAPIDAPI_MONTHLY_LIMIT", "500"))
     
     # Alpha Vantage 設置
     ALPHA_VANTAGE_API_KEY = os.getenv("ALPHA_VANTAGE_API_KEY", "")
@@ -56,8 +59,26 @@ class Settings:
     
     # 緩存設置
     ENABLE_CACHE = True
-    CACHE_TTL = 3600  # 秒
+    CACHE_TTL = 3600  # 秒（默認緩存時長）
     CACHE_DIR = "cache/"
+    
+    # 不同數據類型的緩存時長（秒）
+    # 這些設置允許根據數據的時效性需求設置不同的緩存時長
+    CACHE_DURATION_STOCK_INFO = int(os.getenv("CACHE_DURATION_STOCK_INFO", "300"))  # 股票信息: 5分鐘
+    CACHE_DURATION_OPTION_CHAIN = int(os.getenv("CACHE_DURATION_OPTION_CHAIN", "60"))  # 期權鏈: 1分鐘
+    CACHE_DURATION_HISTORICAL = int(os.getenv("CACHE_DURATION_HISTORICAL", "3600"))  # 歷史數據: 1小時
+    CACHE_DURATION_EARNINGS = int(os.getenv("CACHE_DURATION_EARNINGS", "3600"))  # 業績日曆: 1小時
+    CACHE_DURATION_DIVIDEND = int(os.getenv("CACHE_DURATION_DIVIDEND", "3600"))  # 派息日曆: 1小時
+    CACHE_DURATION_VIX = int(os.getenv("CACHE_DURATION_VIX", "60"))  # VIX: 1分鐘
+    CACHE_DURATION_RISK_FREE_RATE = int(os.getenv("CACHE_DURATION_RISK_FREE_RATE", "3600"))  # 無風險利率: 1小時
+    CACHE_DURATION_FUNDAMENTALS = int(os.getenv("CACHE_DURATION_FUNDAMENTALS", "1800"))  # 基本面數據: 30分鐘
+    
+    # 錯誤處理設置
+    MAX_API_FAILURE_RECORDS = int(os.getenv("MAX_API_FAILURE_RECORDS", "100"))  # 每個 API 最多保留的故障記錄數
+    API_FAILURE_RETENTION_HOURS = int(os.getenv("API_FAILURE_RETENTION_HOURS", "24"))  # 故障記錄保留時間（小時）
+    
+    # 功能開關設置
+    ENABLE_ENHANCED_FINVIZ = os.getenv("ENABLE_ENHANCED_FINVIZ", "True").lower() == "true"  # 啟用增強版 Finviz 錯誤處理
     
     # 時間設置
     MARKET_OPEN_TIME = "09:30"
@@ -85,15 +106,23 @@ class Settings:
     def validate(cls):
         """驗證配置"""
         warnings = []
+        errors = []
         
+        # API Keys 驗證
         if not cls.FRED_API_KEY:
             warnings.append("FRED_API_KEY未設置，無風險利率和VIX功能不可用")
         
         if not cls.FINNHUB_API_KEY:
             warnings.append("FINNHUB_API_KEY未設置，業績和派息監察功能不可用")
         
-        if not cls.RAPIDAPI_KEY:
-            warnings.append("RAPIDAPI_KEY未設置，備用數據源不可用")
+        # RapidAPI 配置驗證
+        if cls.RAPIDAPI_ENABLED:
+            if not cls.RAPIDAPI_KEY:
+                warnings.append("RAPIDAPI_KEY未設置，RapidAPI備用數據源不可用")
+            if not cls.RAPIDAPI_HOST:
+                warnings.append("RAPIDAPI_HOST未設置，RapidAPI備用數據源不可用")
+            if cls.RAPIDAPI_MONTHLY_LIMIT <= 0:
+                errors.append("RAPIDAPI_MONTHLY_LIMIT必須大於0")
         
         if not cls.ALPHA_VANTAGE_API_KEY:
             warnings.append("ALPHA_VANTAGE_API_KEY未設置，Alpha Vantage功能不可用")
@@ -109,6 +138,42 @@ class Settings:
                 warnings.append("IBKR_CLIENT_ID 未配置，已啟用 IBKR 但缺少 Client ID")
             # IBKR 未配置時不報錯，僅記錄信息（將使用降級方案）
         # 注意：IBKR 未啟用時不顯示警告，因為這是正常的降級情況
+        
+        # 緩存設置驗證
+        cache_settings = [
+            ('CACHE_DURATION_STOCK_INFO', cls.CACHE_DURATION_STOCK_INFO),
+            ('CACHE_DURATION_OPTION_CHAIN', cls.CACHE_DURATION_OPTION_CHAIN),
+            ('CACHE_DURATION_HISTORICAL', cls.CACHE_DURATION_HISTORICAL),
+            ('CACHE_DURATION_EARNINGS', cls.CACHE_DURATION_EARNINGS),
+            ('CACHE_DURATION_DIVIDEND', cls.CACHE_DURATION_DIVIDEND),
+            ('CACHE_DURATION_VIX', cls.CACHE_DURATION_VIX),
+            ('CACHE_DURATION_RISK_FREE_RATE', cls.CACHE_DURATION_RISK_FREE_RATE),
+            ('CACHE_DURATION_FUNDAMENTALS', cls.CACHE_DURATION_FUNDAMENTALS),
+        ]
+        for name, value in cache_settings:
+            if value < 0:
+                errors.append(f"{name}必須大於或等於0")
+        
+        # 錯誤處理設置驗證
+        if cls.MAX_API_FAILURE_RECORDS <= 0:
+            errors.append("MAX_API_FAILURE_RECORDS必須大於0")
+        if cls.API_FAILURE_RETENTION_HOURS <= 0:
+            errors.append("API_FAILURE_RETENTION_HOURS必須大於0")
+        
+        # API 請求控制驗證
+        if cls.REQUEST_DELAY < 0:
+            errors.append("REQUEST_DELAY必須大於或等於0")
+        if cls.MAX_RETRIES < 0:
+            errors.append("MAX_RETRIES必須大於或等於0")
+        if cls.RETRY_DELAY < 0:
+            errors.append("RETRY_DELAY必須大於或等於0")
+        
+        # 輸出驗證結果
+        if errors:
+            print("[ERROR] 配置錯誤:")
+            for i, error in enumerate(errors, 1):
+                print(f"  {i}. {error}")
+            return False
         
         if warnings:
             print("[WARN] 配置警告:")

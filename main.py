@@ -120,8 +120,24 @@ class OptionsAnalysisSystem:
             # 清空上一輪結果
             self.analysis_results = {}
             
-            # 初始化 DataFetcher（如果指定了 use_ibkr）
+            # 檢查是否需要重新初始化 DataFetcher
+            # 只有當 use_ibkr 設置與現有 fetcher 不同時才重新初始化
+            need_reinit = False
             if use_ibkr is not None:
+                current_use_ibkr = getattr(self.fetcher, 'use_ibkr', None)
+                if current_use_ibkr != use_ibkr:
+                    need_reinit = True
+            
+            if need_reinit:
+                # 先斷開舊的 IBKR 連接，避免 Client ID 衝突
+                if hasattr(self, 'fetcher') and self.fetcher and hasattr(self.fetcher, 'ibkr_client'):
+                    if self.fetcher.ibkr_client:
+                        try:
+                            self.fetcher.ibkr_client.disconnect()
+                            logger.info("已斷開舊的 IBKR 連接")
+                        except Exception as e:
+                            logger.warning(f"斷開舊 IBKR 連接時出錯: {e}")
+                
                 self.fetcher = DataFetcher(use_ibkr=use_ibkr)
                 logger.info(f"數據源設置: IBKR={'啟用' if use_ibkr else '禁用'}")
             
@@ -1448,6 +1464,573 @@ class OptionsAnalysisSystem:
                 'status': 'error',
                 'message': str(e)
             }
+    
+    def run_manual_analysis(self, ticker: str, manual_data: dict, confidence: float = 1.0):
+        """
+        手動輸入模式分析 - 繞過 API，使用用戶提供的數據
+        
+        參數:
+            ticker: 股票代碼
+            manual_data: 手動輸入的數據字典，包含:
+                - stock_price: 當前股價 (必填)
+                - strike: 行使價 (必填)
+                - expiration: 到期日 YYYY-MM-DD (必填)
+                - premium: 期權價格
+                - option_type: 'C' 或 'P'
+                - iv: 隱含波動率 (%)
+                - bid/ask: 買賣價
+                - delta/gamma/theta: Greeks
+                - open_interest/volume: 持倉量/成交量
+            confidence: IV 信心度 Z 值
+        
+        返回:
+            dict: 分析結果
+        """
+        try:
+            logger.info(f"\n開始手動模式分析 {ticker}")
+            self.analysis_results = {}
+            
+            # 提取手動數據
+            stock_price = manual_data['stock_price']
+            strike = manual_data['strike']
+            expiration = manual_data['expiration']
+            premium = manual_data.get('premium', 0)
+            option_type = manual_data.get('option_type', 'C')
+            iv = manual_data.get('iv', 30.0)  # 默認 30%
+            bid = manual_data.get('bid', 0)
+            ask = manual_data.get('ask', 0)
+            delta = manual_data.get('delta')
+            gamma = manual_data.get('gamma')
+            theta = manual_data.get('theta')
+            open_interest = manual_data.get('open_interest', 0)
+            volume = manual_data.get('volume', 0)
+            
+            # 計算到期天數
+            from datetime import datetime
+            exp_date = datetime.strptime(expiration, '%Y-%m-%d')
+            days_to_expiration = max(1, (exp_date - datetime.now()).days)
+            
+            # 使用交易日計算器（如果可用）
+            if hasattr(self.fetcher, 'trading_days_calc') and self.fetcher.trading_days_calc:
+                days_to_expiration = self.fetcher.trading_days_calc.calculate_trading_days(
+                    datetime.now(), exp_date
+                )
+            
+            logger.info(f"  股價: ${stock_price:.2f}")
+            logger.info(f"  行使價: ${strike:.2f}")
+            logger.info(f"  到期日: {expiration} ({days_to_expiration} 天)")
+            logger.info(f"  期權類型: {'Call' if option_type == 'C' else 'Put'}")
+            logger.info(f"  期權價格: ${premium:.2f}")
+            logger.info(f"  IV: {iv:.1f}%")
+            
+            # 模塊1: 支持/阻力位 (IV法)
+            sr_calc = SupportResistanceCalculator()
+            sr_results_multi = sr_calc.calculate_multi_confidence(
+                stock_price=stock_price,
+                implied_volatility=iv,
+                days_to_expiration=int(days_to_expiration),
+                confidence_levels=['68%', '80%', '90%', '95%', '99%']
+            )
+            self.analysis_results['module1_support_resistance_multi'] = sr_results_multi
+            logger.info("* 模塊1完成: 支持/阻力位")
+            
+            # 模塊2: 公允值
+            analysis_date_str = datetime.now().strftime('%Y-%m-%d')
+            fv_calc = FairValueCalculator()
+            fv_result = fv_calc.calculate(
+                stock_price=stock_price,
+                risk_free_rate=4.5,  # 默認無風險利率
+                expiration_date=expiration,
+                expected_dividend=0,
+                calculation_date=analysis_date_str,
+                days_to_expiration=days_to_expiration
+            )
+            self.analysis_results['module2_fair_value'] = fv_result.to_dict()
+            logger.info("* 模塊2完成: 公允值")
+            
+            # 模塊7-10: 單腿策略損益
+            price_scenarios = [
+                round(stock_price * 0.9, 2),
+                round(stock_price, 2),
+                round(stock_price * 1.1, 2)
+            ]
+            
+            if option_type == 'C':
+                # Long Call
+                long_call_calc = LongCallCalculator()
+                long_call_results = [
+                    long_call_calc.calculate(
+                        strike_price=strike,
+                        option_premium=premium,
+                        stock_price_at_expiry=price,
+                        calculation_date=analysis_date_str
+                    ).to_dict()
+                    for price in price_scenarios
+                ]
+                self.analysis_results['module7_long_call'] = long_call_results
+                logger.info("* 模塊7完成: Long Call 損益")
+                
+                # Short Call
+                short_call_calc = ShortCallCalculator()
+                short_call_results = [
+                    short_call_calc.calculate(
+                        strike_price=strike,
+                        option_premium=premium,
+                        stock_price_at_expiry=price,
+                        calculation_date=analysis_date_str
+                    ).to_dict()
+                    for price in price_scenarios
+                ]
+                self.analysis_results['module9_short_call'] = short_call_results
+                logger.info("* 模塊9完成: Short Call 損益")
+            else:
+                # Long Put
+                long_put_calc = LongPutCalculator()
+                long_put_results = [
+                    long_put_calc.calculate(
+                        strike_price=strike,
+                        option_premium=premium,
+                        stock_price_at_expiry=price,
+                        calculation_date=analysis_date_str
+                    ).to_dict()
+                    for price in price_scenarios
+                ]
+                self.analysis_results['module8_long_put'] = long_put_results
+                logger.info("* 模塊8完成: Long Put 損益")
+                
+                # Short Put
+                short_put_calc = ShortPutCalculator()
+                short_put_results = [
+                    short_put_calc.calculate(
+                        strike_price=strike,
+                        option_premium=premium,
+                        stock_price_at_expiry=price,
+                        calculation_date=analysis_date_str
+                    ).to_dict()
+                    for price in price_scenarios
+                ]
+                self.analysis_results['module10_short_put'] = short_put_results
+                logger.info("* 模塊10完成: Short Put 損益")
+            
+            # 模塊15: Black-Scholes 理論價
+            bs_calc = BlackScholesCalculator()
+            time_to_expiry = days_to_expiration / 365.0
+            bs_result = bs_calc.calculate(
+                stock_price=stock_price,
+                strike_price=strike,
+                time_to_expiry=time_to_expiry,
+                risk_free_rate=0.045,
+                volatility=iv / 100.0,
+                option_type=option_type
+            )
+            self.analysis_results['module15_black_scholes'] = bs_result.to_dict()
+            logger.info("* 模塊15完成: Black-Scholes 理論價")
+            
+            # 模塊16: Greeks（如果用戶沒提供，使用計算值）
+            greeks_calc = GreeksCalculator()
+            greeks_result = greeks_calc.calculate(
+                stock_price=stock_price,
+                strike_price=strike,
+                time_to_expiry=time_to_expiry,
+                risk_free_rate=0.045,
+                volatility=iv / 100.0,
+                option_type=option_type
+            )
+            
+            # 如果用戶提供了 Greeks，使用用戶的值
+            greeks_dict = greeks_result.to_dict()
+            if delta is not None:
+                greeks_dict['delta'] = delta
+                greeks_dict['delta_source'] = 'manual'
+            if gamma is not None:
+                greeks_dict['gamma'] = gamma
+                greeks_dict['gamma_source'] = 'manual'
+            if theta is not None:
+                greeks_dict['theta'] = theta
+                greeks_dict['theta_source'] = 'manual'
+            
+            self.analysis_results['module16_greeks'] = greeks_dict
+            logger.info("* 模塊16完成: Greeks")
+            
+            # 記錄手動輸入的數據
+            self.analysis_results['manual_input'] = {
+                'stock_price': stock_price,
+                'strike': strike,
+                'expiration': expiration,
+                'days_to_expiration': days_to_expiration,
+                'premium': premium,
+                'option_type': option_type,
+                'iv': iv,
+                'bid': bid,
+                'ask': ask,
+                'bid_ask_spread': ask - bid if bid and ask else None,
+                'delta': delta,
+                'gamma': gamma,
+                'theta': theta,
+                'open_interest': open_interest,
+                'volume': volume
+            }
+            
+            # 生成報告
+            logger.info("\n→ 生成分析報告...")
+            
+            # 構建簡化的 analysis_data 用於報告
+            analysis_data = {
+                'ticker': ticker,
+                'current_price': stock_price,
+                'implied_volatility': iv,
+                'expiration_date': expiration,
+                'days_to_expiration': days_to_expiration,
+                'analysis_date': analysis_date_str,
+                'atm_option': {
+                    'strike': strike,
+                    'call' if option_type == 'C' else 'put': {
+                        'bid': bid,
+                        'ask': ask,
+                        'lastPrice': premium,
+                        'volume': volume,
+                        'openInterest': open_interest,
+                        'delta': delta,
+                        'gamma': gamma,
+                        'theta': theta
+                    }
+                },
+                'data_source': 'manual_input'
+            }
+            
+            report = self.report_generator.generate_complete_report(
+                ticker=ticker,
+                analysis_data=analysis_data,
+                calculation_results=self.analysis_results
+            )
+            
+            logger.info("=" * 70)
+            logger.info("手動模式分析完成！")
+            logger.info("=" * 70)
+            
+            return {
+                'status': 'success',
+                'ticker': ticker,
+                'timestamp': datetime.now(),
+                'raw_data': analysis_data,
+                'calculations': self.analysis_results,
+                'report': report,
+                'mode': 'manual'
+            }
+            
+        except Exception as e:
+            logger.error(f"\nx 手動模式分析失敗: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
+                'status': 'error',
+                'message': str(e)
+            }
+    
+    def run_hybrid_analysis(self, ticker: str, expiration: str, 
+                           user_overrides: dict, confidence: float = 1.0):
+        """
+        混合模式分析 - 從 API 獲取股票數據，用戶補充期權數據
+        
+        參數:
+            ticker: 股票代碼
+            expiration: 到期日 YYYY-MM-DD
+            user_overrides: 用戶覆蓋的數據，可包含:
+                - strike: 行使價 (必填)
+                - premium: 期權價格
+                - option_type: 'C' 或 'P'
+                - iv: 隱含波動率 (%)
+                - bid/ask: 買賣價
+                - delta/gamma/theta/vega/rho: Greeks
+                - open_interest/volume: 持倉量/成交量
+                - stock_price: 覆蓋 API 股價
+                - eps/pe/dividend: 覆蓋基本面數據
+            confidence: IV 信心度 Z 值
+        
+        返回:
+            dict: 分析結果
+        """
+        try:
+            logger.info(f"\n開始混合模式分析 {ticker}")
+            self.analysis_results = {}
+            
+            # 第1步: 從 API 獲取股票基本數據
+            logger.info("→ 從 API 獲取股票基本數據...")
+            
+            stock_info = self.fetcher.get_stock_info(ticker)
+            if not stock_info:
+                logger.warning("! API 無法獲取股票數據，使用用戶提供的數據")
+                stock_info = {}
+            
+            # 獲取無風險利率
+            risk_free_rate = user_overrides.get('risk_free_rate')
+            if not risk_free_rate:
+                try:
+                    risk_free_rate = self.fetcher.get_risk_free_rate()
+                except:
+                    risk_free_rate = 4.5
+            
+            # 合併數據：API 數據 + 用戶覆蓋
+            stock_price = user_overrides.get('stock_price') or stock_info.get('current_price') or stock_info.get('price')
+            if not stock_price:
+                raise ValueError("無法獲取股價，請使用 --stock-price 參數提供")
+            
+            strike = user_overrides.get('strike')
+            if not strike:
+                raise ValueError("請使用 --strike 參數提供行使價")
+            
+            option_type = user_overrides.get('option_type', 'C')
+            premium = user_overrides.get('premium', 0)
+            iv = user_overrides.get('iv', 30.0)  # 默認 30%
+            bid = user_overrides.get('bid', 0)
+            ask = user_overrides.get('ask', 0)
+            delta = user_overrides.get('delta')
+            gamma = user_overrides.get('gamma')
+            theta = user_overrides.get('theta')
+            vega = user_overrides.get('vega')
+            rho = user_overrides.get('rho')
+            open_interest = user_overrides.get('open_interest', 0)
+            volume = user_overrides.get('volume', 0)
+            
+            # 基本面數據
+            eps = user_overrides.get('eps') or stock_info.get('eps') or stock_info.get('eps_ttm')
+            pe = user_overrides.get('pe') or stock_info.get('pe_ratio') or stock_info.get('pe')
+            dividend = user_overrides.get('dividend') or stock_info.get('annual_dividend', 0)
+            
+            # 計算到期天數
+            from datetime import datetime
+            exp_date = datetime.strptime(expiration, '%Y-%m-%d')
+            days_to_expiration = max(1, (exp_date - datetime.now()).days)
+            
+            if hasattr(self.fetcher, 'trading_days_calc') and self.fetcher.trading_days_calc:
+                days_to_expiration = self.fetcher.trading_days_calc.calculate_trading_days(
+                    datetime.now(), exp_date
+                )
+            
+            logger.info(f"\n=== 數據來源摘要 ===")
+            logger.info(f"  股價: ${stock_price:.2f} {'(API)' if not user_overrides.get('stock_price') else '(手動)'}")
+            logger.info(f"  行使價: ${strike:.2f} (手動)")
+            logger.info(f"  到期日: {expiration} ({days_to_expiration} 天)")
+            logger.info(f"  期權類型: {'Call' if option_type == 'C' else 'Put'}")
+            logger.info(f"  期權價格: ${premium:.2f} (手動)")
+            logger.info(f"  IV: {iv:.1f}% (手動)")
+            logger.info(f"  無風險利率: {risk_free_rate:.2f}%")
+            if eps:
+                logger.info(f"  EPS: ${eps:.2f} {'(API)' if not user_overrides.get('eps') else '(手動)'}")
+            if pe:
+                logger.info(f"  P/E: {pe:.2f} {'(API)' if not user_overrides.get('pe') else '(手動)'}")
+            
+            # 構建 analysis_data
+            analysis_date_str = datetime.now().strftime('%Y-%m-%d')
+            analysis_data = {
+                'ticker': ticker,
+                'current_price': stock_price,
+                'implied_volatility': iv,
+                'expiration_date': expiration,
+                'days_to_expiration': days_to_expiration,
+                'analysis_date': analysis_date_str,
+                'risk_free_rate': risk_free_rate,
+                'eps': eps,
+                'pe_ratio': pe,
+                'annual_dividend': dividend,
+                'atm_option': {
+                    'strike': strike,
+                    'call' if option_type == 'C' else 'put': {
+                        'bid': bid,
+                        'ask': ask,
+                        'lastPrice': premium,
+                        'volume': volume,
+                        'openInterest': open_interest,
+                        'delta': delta,
+                        'gamma': gamma,
+                        'theta': theta
+                    }
+                },
+                'data_source': 'hybrid (API + manual)'
+            }
+            
+            # 運行計算模塊
+            logger.info("\n→ 運行計算模塊...")
+            
+            # 模塊1: 支持/阻力位
+            sr_calc = SupportResistanceCalculator()
+            sr_results_multi = sr_calc.calculate_multi_confidence(
+                stock_price=stock_price,
+                implied_volatility=iv,
+                days_to_expiration=int(days_to_expiration),
+                confidence_levels=['68%', '80%', '90%', '95%', '99%']
+            )
+            self.analysis_results['module1_support_resistance_multi'] = sr_results_multi
+            logger.info("* 模塊1完成: 支持/阻力位")
+            
+            # 模塊2: 公允值
+            fv_calc = FairValueCalculator()
+            fv_result = fv_calc.calculate(
+                stock_price=stock_price,
+                risk_free_rate=risk_free_rate,
+                expiration_date=expiration,
+                expected_dividend=dividend or 0,
+                calculation_date=analysis_date_str,
+                days_to_expiration=days_to_expiration
+            )
+            self.analysis_results['module2_fair_value'] = fv_result.to_dict()
+            logger.info("* 模塊2完成: 公允值")
+            
+            # 模塊4: PE估值（如果有數據）
+            if eps and pe and eps > 0 and pe > 0:
+                pe_calc = PEValuationCalculator()
+                pe_result = pe_calc.calculate(
+                    eps=eps,
+                    pe_multiple=pe,
+                    current_price=stock_price,
+                    calculation_date=analysis_date_str
+                )
+                self.analysis_results['module4_pe_valuation'] = pe_result.to_dict()
+                logger.info("* 模塊4完成: PE估值")
+            
+            # 模塊7-10: 單腿策略損益
+            price_scenarios = [
+                round(stock_price * 0.9, 2),
+                round(stock_price, 2),
+                round(stock_price * 1.1, 2)
+            ]
+            
+            if option_type == 'C':
+                long_call_calc = LongCallCalculator()
+                long_call_results = [
+                    long_call_calc.calculate(
+                        strike_price=strike,
+                        option_premium=premium,
+                        stock_price_at_expiry=price,
+                        calculation_date=analysis_date_str
+                    ).to_dict()
+                    for price in price_scenarios
+                ]
+                self.analysis_results['module7_long_call'] = long_call_results
+                logger.info("* 模塊7完成: Long Call 損益")
+                
+                short_call_calc = ShortCallCalculator()
+                short_call_results = [
+                    short_call_calc.calculate(
+                        strike_price=strike,
+                        option_premium=premium,
+                        stock_price_at_expiry=price,
+                        calculation_date=analysis_date_str
+                    ).to_dict()
+                    for price in price_scenarios
+                ]
+                self.analysis_results['module9_short_call'] = short_call_results
+                logger.info("* 模塊9完成: Short Call 損益")
+            else:
+                long_put_calc = LongPutCalculator()
+                long_put_results = [
+                    long_put_calc.calculate(
+                        strike_price=strike,
+                        option_premium=premium,
+                        stock_price_at_expiry=price,
+                        calculation_date=analysis_date_str
+                    ).to_dict()
+                    for price in price_scenarios
+                ]
+                self.analysis_results['module8_long_put'] = long_put_results
+                logger.info("* 模塊8完成: Long Put 損益")
+                
+                short_put_calc = ShortPutCalculator()
+                short_put_results = [
+                    short_put_calc.calculate(
+                        strike_price=strike,
+                        option_premium=premium,
+                        stock_price_at_expiry=price,
+                        calculation_date=analysis_date_str
+                    ).to_dict()
+                    for price in price_scenarios
+                ]
+                self.analysis_results['module10_short_put'] = short_put_results
+                logger.info("* 模塊10完成: Short Put 損益")
+            
+            # 模塊15: Black-Scholes 理論價
+            bs_calc = BlackScholesCalculator()
+            time_to_expiry = days_to_expiration / 365.0
+            bs_result = bs_calc.calculate(
+                stock_price=stock_price,
+                strike_price=strike,
+                time_to_expiry=time_to_expiry,
+                risk_free_rate=risk_free_rate / 100.0,
+                volatility=iv / 100.0,
+                option_type=option_type
+            )
+            self.analysis_results['module15_black_scholes'] = bs_result.to_dict()
+            logger.info("* 模塊15完成: Black-Scholes 理論價")
+            
+            # 模塊16: Greeks
+            greeks_calc = GreeksCalculator()
+            greeks_result = greeks_calc.calculate(
+                stock_price=stock_price,
+                strike_price=strike,
+                time_to_expiry=time_to_expiry,
+                risk_free_rate=risk_free_rate / 100.0,
+                volatility=iv / 100.0,
+                option_type=option_type
+            )
+            
+            greeks_dict = greeks_result.to_dict()
+            # 用戶提供的 Greeks 覆蓋計算值
+            if delta is not None:
+                greeks_dict['delta'] = delta
+                greeks_dict['delta_source'] = 'manual (IBKR)'
+            if gamma is not None:
+                greeks_dict['gamma'] = gamma
+                greeks_dict['gamma_source'] = 'manual (IBKR)'
+            if theta is not None:
+                greeks_dict['theta'] = theta
+                greeks_dict['theta_source'] = 'manual (IBKR)'
+            if vega is not None:
+                greeks_dict['vega'] = vega
+                greeks_dict['vega_source'] = 'manual (IBKR)'
+            if rho is not None:
+                greeks_dict['rho'] = rho
+                greeks_dict['rho_source'] = 'manual (IBKR)'
+            
+            self.analysis_results['module16_greeks'] = greeks_dict
+            logger.info("* 模塊16完成: Greeks")
+            
+            # 記錄數據來源
+            self.analysis_results['data_sources'] = {
+                'mode': 'hybrid',
+                'api_data': ['stock_price', 'eps', 'pe', 'risk_free_rate'] if not user_overrides.get('stock_price') else [],
+                'manual_data': list(user_overrides.keys())
+            }
+            
+            # 生成報告
+            logger.info("\n→ 生成分析報告...")
+            report = self.report_generator.generate_complete_report(
+                ticker=ticker,
+                analysis_data=analysis_data,
+                calculation_results=self.analysis_results
+            )
+            
+            logger.info("=" * 70)
+            logger.info("混合模式分析完成！")
+            logger.info("=" * 70)
+            
+            return {
+                'status': 'success',
+                'ticker': ticker,
+                'timestamp': datetime.now(),
+                'raw_data': analysis_data,
+                'calculations': self.analysis_results,
+                'report': report,
+                'mode': 'hybrid'
+            }
+            
+        except Exception as e:
+            logger.error(f"\nx 混合模式分析失敗: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
+                'status': 'error',
+                'message': str(e)
+            }
 
 
 def main():
@@ -1471,19 +2054,158 @@ def main():
     parser.add_argument('--use-ibkr', action='store_true', default=None,
                        help='使用 IBKR 數據源 (需要 TWS/Gateway 運行)')
     
+    # 手動輸入模式參數（繞過 API）
+    parser.add_argument('--manual', action='store_true', default=False,
+                       help='完全手動模式，繞過所有 API')
+    parser.add_argument('--hybrid', action='store_true', default=False,
+                       help='混合模式：API 獲取股票數據 + 手動輸入期權數據')
+    
+    # 可手動覆蓋的參數（混合模式或手動模式使用）
+    parser.add_argument('--stock-price', type=float, default=None,
+                       help='當前股價 (手動模式必填，混合模式可選)')
+    parser.add_argument('--iv', type=float, default=None,
+                       help='隱含波動率 %% (例: 68.6 表示 68.6%%)')
+    parser.add_argument('--bid', type=float, default=None,
+                       help='期權買價 Bid')
+    parser.add_argument('--ask', type=float, default=None,
+                       help='期權賣價 Ask')
+    parser.add_argument('--delta', type=float, default=None,
+                       help='Delta 值')
+    parser.add_argument('--gamma', type=float, default=None,
+                       help='Gamma 值')
+    parser.add_argument('--theta', type=float, default=None,
+                       help='Theta 值')
+    parser.add_argument('--vega', type=float, default=None,
+                       help='Vega 值')
+    parser.add_argument('--rho', type=float, default=None,
+                       help='Rho 值')
+    parser.add_argument('--open-interest', type=int, default=None,
+                       help='未平倉合約數')
+    parser.add_argument('--volume', type=int, default=None,
+                       help='成交量')
+    
+    # 額外的股票/基本面參數
+    parser.add_argument('--eps', type=float, default=None,
+                       help='每股盈利 EPS')
+    parser.add_argument('--pe', type=float, default=None,
+                       help='市盈率 P/E')
+    parser.add_argument('--dividend', type=float, default=None,
+                       help='年度股息')
+    parser.add_argument('--risk-free-rate', type=float, default=None,
+                       help='無風險利率 %% (默認 4.5)')
+    
     args = parser.parse_args()
     
-    # 啟動系統
-    system = OptionsAnalysisSystem()
-    results = system.run_complete_analysis(
-        ticker=args.ticker,
-        expiration=args.expiration,
-        confidence=args.confidence,
-        use_ibkr=args.use_ibkr,
-        strike=args.strike,
-        premium=args.premium,
-        option_type=args.type
-    )
+    # 構建用戶覆蓋數據（適用於所有模式）
+    user_overrides = {
+        'stock_price': args.stock_price,
+        'strike': args.strike,
+        'expiration': args.expiration,
+        'premium': args.premium,
+        'option_type': (args.type or 'C').upper() if args.type else None,
+        'iv': args.iv,
+        'bid': args.bid,
+        'ask': args.ask,
+        'delta': args.delta,
+        'gamma': args.gamma,
+        'theta': args.theta,
+        'vega': args.vega,
+        'rho': args.rho,
+        'open_interest': args.open_interest,
+        'volume': args.volume,
+        'eps': args.eps,
+        'pe': args.pe,
+        'dividend': args.dividend,
+        'risk_free_rate': args.risk_free_rate
+    }
+    # 移除 None 值
+    user_overrides = {k: v for k, v in user_overrides.items() if v is not None}
+    
+    # 完全手動模式
+    if args.manual:
+        # 驗證必填參數
+        if not args.stock_price:
+            print("錯誤: 手動模式需要 --stock-price 參數")
+            return
+        if not args.strike:
+            print("錯誤: 手動模式需要 --strike 參數")
+            return
+        if not args.expiration:
+            print("錯誤: 手動模式需要 --expiration 參數")
+            return
+        
+        # 構建手動數據
+        manual_data = {
+            'stock_price': args.stock_price,
+            'strike': args.strike,
+            'expiration': args.expiration,
+            'premium': args.premium or ((args.bid + args.ask) / 2 if args.bid and args.ask else 0),
+            'option_type': (args.type or 'C').upper(),
+            'iv': args.iv,
+            'bid': args.bid,
+            'ask': args.ask,
+            'delta': args.delta,
+            'gamma': args.gamma,
+            'theta': args.theta,
+            'vega': args.vega,
+            'rho': args.rho,
+            'open_interest': args.open_interest,
+            'volume': args.volume,
+            'eps': args.eps,
+            'pe': args.pe,
+            'dividend': args.dividend,
+            'risk_free_rate': args.risk_free_rate or 4.5
+        }
+        
+        print("\n" + "=" * 70)
+        print("完全手動模式 - 期權分析")
+        print("=" * 70)
+        
+        # 啟動系統（手動模式）
+        system = OptionsAnalysisSystem(use_ibkr=False)
+        results = system.run_manual_analysis(
+            ticker=args.ticker,
+            manual_data=manual_data,
+            confidence=args.confidence
+        )
+    
+    # 混合模式：API 獲取股票數據 + 手動輸入期權數據
+    elif args.hybrid:
+        if not args.strike:
+            print("錯誤: 混合模式需要 --strike 參數")
+            return
+        if not args.expiration:
+            print("錯誤: 混合模式需要 --expiration 參數")
+            return
+        
+        print("\n" + "=" * 70)
+        print("混合模式 - API + 手動輸入")
+        print("=" * 70)
+        print("從 API 獲取: 股價、EPS、PE、無風險利率等")
+        print("手動輸入: 期權價格、IV、Greeks 等")
+        print("=" * 70)
+        
+        # 啟動系統（混合模式）
+        system = OptionsAnalysisSystem(use_ibkr=args.use_ibkr)
+        results = system.run_hybrid_analysis(
+            ticker=args.ticker,
+            expiration=args.expiration,
+            user_overrides=user_overrides,
+            confidence=args.confidence
+        )
+    
+    else:
+        # 正常模式：從 API 獲取數據（但仍可使用 user_overrides 覆蓋）
+        system = OptionsAnalysisSystem()
+        results = system.run_complete_analysis(
+            ticker=args.ticker,
+            expiration=args.expiration,
+            confidence=args.confidence,
+            use_ibkr=args.use_ibkr,
+            strike=args.strike,
+            premium=args.premium,
+            option_type=args.type
+        )
     
     # 輸出結果
     if results['status'] == 'success':
