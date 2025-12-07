@@ -611,6 +611,261 @@ class TestYahooFinanceIntegration(unittest.TestCase):
             logger.warning(f"  ⚠ 測試遇到異常: {e}")
 
 
+class TestUnifiedErrorHandling(unittest.TestCase):
+    """測試統一錯誤處理機制"""
+    
+    def setUp(self):
+        """測試初始化"""
+        logger.info("=" * 70)
+        logger.info("TestUnifiedErrorHandling 測試開始")
+        
+        with patch('data_layer.data_fetcher.IBKR_AVAILABLE', False):
+            self.fetcher = DataFetcher(use_ibkr=False)
+    
+    def test_record_api_failure_basic(self):
+        """
+        測試基本的 API 故障記錄
+        
+        驗證:
+        - 故障記錄被正確添加
+        - 包含時間戳和錯誤消息
+        """
+        logger.info("✓ 測試: 基本 API 故障記錄")
+        
+        # 清空現有記錄
+        self.fetcher.api_failures = {}
+        
+        # 記錄一個故障
+        self.fetcher._record_api_failure('TestAPI', 'Test error message')
+        
+        # 驗證記錄
+        self.assertIn('TestAPI', self.fetcher.api_failures)
+        self.assertEqual(len(self.fetcher.api_failures['TestAPI']), 1)
+        
+        record = self.fetcher.api_failures['TestAPI'][0]
+        self.assertIn('timestamp', record)
+        self.assertIn('error', record)
+        self.assertEqual(record['error'], 'Test error message')
+        
+        logger.info("  ✓ 基本故障記錄測試通過")
+    
+    def test_record_api_failure_with_context(self):
+        """
+        測試帶上下文信息的 API 故障記錄
+        
+        驗證:
+        - 包含操作名稱
+        - 包含請求 URL（已清理敏感信息）
+        - 包含請求參數（已清理敏感信息）
+        - 包含響應狀態碼
+        - 包含堆棧信息
+        """
+        logger.info("✓ 測試: 帶上下文的 API 故障記錄")
+        
+        # 清空現有記錄
+        self.fetcher.api_failures = {}
+        
+        # 記錄帶上下文的故障
+        self.fetcher._record_api_failure(
+            api_name='TestAPI',
+            error_message='Connection timeout',
+            operation='get_stock_info',
+            request_url='https://api.example.com/quote?api_key=secret123&symbol=AAPL',
+            request_params={'api_key': 'secret123', 'symbol': 'AAPL'},
+            response_status=500,
+            stack_trace='Traceback (most recent call last):\n  File "test.py", line 1\n    raise Exception("test")'
+        )
+        
+        # 驗證記錄
+        self.assertIn('TestAPI', self.fetcher.api_failures)
+        record = self.fetcher.api_failures['TestAPI'][0]
+        
+        # 驗證上下文字段
+        self.assertEqual(record['operation'], 'get_stock_info')
+        self.assertEqual(record['response_status'], 500)
+        self.assertIn('stack_trace', record)
+        
+        # 驗證敏感信息已清理
+        self.assertNotIn('secret123', record['request_url'])
+        self.assertIn('***', record['request_url'])
+        self.assertEqual(record['request_params']['api_key'], '***')
+        self.assertEqual(record['request_params']['symbol'], 'AAPL')  # 非敏感信息保留
+        
+        logger.info("  ✓ 帶上下文的故障記錄測試通過")
+    
+    def test_handle_api_failure(self):
+        """
+        測試統一的 API 失敗處理方法
+        
+        驗證:
+        - 自動提取錯誤類型和消息
+        - 自動生成堆棧信息
+        - 正確調用 _record_api_failure
+        """
+        logger.info("✓ 測試: 統一 API 失敗處理")
+        
+        # 清空現有記錄
+        self.fetcher.api_failures = {}
+        
+        # 創建一個測試異常
+        try:
+            raise ValueError("Test value error")
+        except Exception as e:
+            self.fetcher._handle_api_failure(
+                api_name='TestAPI',
+                operation='test_operation',
+                error=e,
+                request_url='https://api.example.com/test',
+                response_status=400
+            )
+        
+        # 驗證記錄
+        self.assertIn('TestAPI', self.fetcher.api_failures)
+        record = self.fetcher.api_failures['TestAPI'][0]
+        
+        # 驗證錯誤消息包含類型和消息
+        self.assertIn('ValueError', record['error'])
+        self.assertIn('Test value error', record['error'])
+        self.assertIn('test_operation', record['error'])
+        
+        # 驗證堆棧信息
+        self.assertIn('stack_trace', record)
+        self.assertIn('ValueError', record['stack_trace'])
+        
+        logger.info("  ✓ 統一 API 失敗處理測試通過")
+    
+    def test_api_failure_cleanup_max_records(self):
+        """
+        測試 API 故障記錄清理 - 最大記錄數限制
+        
+        驗證:
+        - 超過最大記錄數時自動清理
+        - 保留最近的記錄
+        """
+        logger.info("✓ 測試: API 故障記錄清理 - 最大記錄數")
+        
+        # 清空現有記錄
+        self.fetcher.api_failures = {}
+        
+        # 添加超過限制的記錄（假設限制是 100）
+        for i in range(150):
+            self.fetcher._record_api_failure('TestAPI', f'Error {i}')
+        
+        # 驗證記錄數不超過限制
+        max_records = getattr(self.fetcher, 'MAX_API_FAILURE_RECORDS', 100)
+        # 使用 settings 中的值
+        from config.settings import settings
+        max_records = settings.MAX_API_FAILURE_RECORDS
+        
+        self.assertLessEqual(
+            len(self.fetcher.api_failures['TestAPI']), 
+            max_records,
+            f"記錄數應該不超過 {max_records}"
+        )
+        
+        # 驗證保留的是最近的記錄
+        last_record = self.fetcher.api_failures['TestAPI'][-1]
+        self.assertIn('Error 149', last_record['error'])
+        
+        logger.info(f"  ✓ 記錄數限制測試通過 (當前: {len(self.fetcher.api_failures['TestAPI'])})")
+    
+    def test_api_failure_summary(self):
+        """
+        測試 API 故障摘要
+        
+        驗證:
+        - 正確統計各操作的故障次數
+        - 正確統計各狀態碼的次數
+        - 包含最近的錯誤信息
+        """
+        logger.info("✓ 測試: API 故障摘要")
+        
+        # 清空現有記錄
+        self.fetcher.api_failures = {}
+        
+        # 添加不同類型的故障
+        self.fetcher._record_api_failure(
+            'TestAPI', 'Error 1', operation='get_quote', response_status=500
+        )
+        self.fetcher._record_api_failure(
+            'TestAPI', 'Error 2', operation='get_quote', response_status=500
+        )
+        self.fetcher._record_api_failure(
+            'TestAPI', 'Error 3', operation='get_historical', response_status=429
+        )
+        
+        # 獲取摘要
+        summary = self.fetcher.get_api_failure_summary()
+        
+        # 驗證摘要
+        self.assertIn('TestAPI', summary)
+        api_summary = summary['TestAPI']
+        
+        self.assertEqual(api_summary['total_failures'], 3)
+        self.assertEqual(api_summary['operation_counts']['get_quote'], 2)
+        self.assertEqual(api_summary['operation_counts']['get_historical'], 1)
+        self.assertEqual(api_summary['status_counts'][500], 2)
+        self.assertEqual(api_summary['status_counts'][429], 1)
+        
+        logger.info("  ✓ API 故障摘要測試通過")
+    
+    def test_sanitize_url(self):
+        """
+        測試 URL 敏感信息清理
+        
+        驗證:
+        - API Key 被替換為 ***
+        - 其他參數保留
+        """
+        logger.info("✓ 測試: URL 敏感信息清理")
+        
+        # 測試各種 URL 格式
+        test_cases = [
+            ('https://api.example.com?api_key=secret123', 'secret123'),
+            ('https://api.example.com?apikey=secret456', 'secret456'),
+            ('https://api.example.com?token=secret789', 'secret789'),
+            ('https://api.example.com?key=secretabc', 'secretabc'),
+        ]
+        
+        for url, secret in test_cases:
+            sanitized = self.fetcher._sanitize_url(url)
+            self.assertNotIn(secret, sanitized, f"URL 應該不包含 {secret}")
+            self.assertIn('***', sanitized, "URL 應該包含 ***")
+        
+        logger.info("  ✓ URL 敏感信息清理測試通過")
+    
+    def test_sanitize_params(self):
+        """
+        測試參數敏感信息清理
+        
+        驗證:
+        - 敏感參數被替換為 ***
+        - 非敏感參數保留
+        """
+        logger.info("✓ 測試: 參數敏感信息清理")
+        
+        params = {
+            'api_key': 'secret123',
+            'apikey': 'secret456',
+            'token': 'secret789',
+            'symbol': 'AAPL',
+            'period': '1mo'
+        }
+        
+        sanitized = self.fetcher._sanitize_params(params)
+        
+        # 驗證敏感參數被清理
+        self.assertEqual(sanitized['api_key'], '***')
+        self.assertEqual(sanitized['apikey'], '***')
+        self.assertEqual(sanitized['token'], '***')
+        
+        # 驗證非敏感參數保留
+        self.assertEqual(sanitized['symbol'], 'AAPL')
+        self.assertEqual(sanitized['period'], '1mo')
+        
+        logger.info("  ✓ 參數敏感信息清理測試通過")
+
+
 if __name__ == '__main__':
     # 運行測試
     unittest.main(verbosity=2)

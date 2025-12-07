@@ -662,6 +662,8 @@ class ReportGenerator:
                     f.write(self._format_strike_selection(module_data))
                 elif module_name in ['module7_long_call', 'module8_long_put', 'module9_short_call', 'module10_short_put']:
                     f.write(self._format_strategy_results(module_name, module_data))
+                elif module_name == 'strategy_recommendations':
+                    f.write(self._format_strategy_recommendations(module_data))
                 else:
                     # 通用格式
                     f.write(f"\n{module_name}:\n")
@@ -1755,6 +1757,57 @@ class ReportGenerator:
         report += "│   - 場景 2: 股價維持不變\n"
         report += "│   - 場景 3: 股價上漲 10%\n"
         report += "└────────────────────────────────────────────────┘\n"
+        return report
+    
+    def _format_strategy_recommendations(self, recommendations: list) -> str:
+        """格式化策略推薦結果（含信心度）"""
+        report = "\n" + "=" * 70 + "\n"
+        report += "策略推薦分析 (含信心度)\n"
+        report += "=" * 70 + "\n"
+        
+        if not recommendations:
+            report += "\n  無明確策略推薦\n"
+            return report
+        
+        for i, rec in enumerate(recommendations, 1):
+            # 處理字典或對象
+            if isinstance(rec, dict):
+                strategy_name = rec.get('strategy_name', 'N/A')
+                direction = rec.get('direction', 'N/A')
+                confidence = rec.get('confidence', 'N/A')
+                reasoning = rec.get('reasoning', [])
+                suggested_strike = rec.get('suggested_strike')
+                key_levels = rec.get('key_levels', {})
+            else:
+                strategy_name = getattr(rec, 'strategy_name', 'N/A')
+                direction = getattr(rec, 'direction', 'N/A')
+                confidence = getattr(rec, 'confidence', 'N/A')
+                reasoning = getattr(rec, 'reasoning', [])
+                suggested_strike = getattr(rec, 'suggested_strike', None)
+                key_levels = getattr(rec, 'key_levels', {})
+            
+            # 信心度 emoji
+            confidence_emoji = {
+                'High': '🟢',
+                'Medium': '🟡',
+                'Low': '🔴'
+            }.get(confidence, '⚪')
+            
+            report += f"\n┌─ 推薦 {i}: {strategy_name} ─────────────────────┐\n"
+            report += f"│\n"
+            report += f"│  方向: {direction}\n"
+            report += f"│  信心度: {confidence_emoji} {confidence}\n"
+            report += f"│\n"
+            report += f"│  推薦理由:\n"
+            for reason in reasoning:
+                report += f"│    - {reason}\n"
+            report += f"│\n"
+            if suggested_strike:
+                report += f"│  建議行使價: ${suggested_strike:.2f}\n"
+            if key_levels:
+                report += f"│  關鍵價位: {key_levels}\n"
+            report += f"└{'─' * 50}┘\n"
+        
         return report
     
     # ========== Web/Telegram 集成方法 ==========

@@ -63,6 +63,173 @@ logging.basicConfig(
 )
 
 
+class IVNormalizer:
+    """
+    IV（隱含波動率）數據標準化工具
+    
+    解決問題：
+    - Yahoo Finance 返回的 IV 是小數格式（如 0.6 表示 60%）
+    - 系統內部使用百分比格式（如 60 表示 60%）
+    - 避免在多個位置重複轉換導致錯誤
+    
+    使用示例:
+        >>> result = IVNormalizer.normalize_iv(0.65, source='yahoo_finance')
+        >>> print(result['normalized_iv'])  # 65.0
+        >>> print(result['was_decimal'])    # True
+    """
+    
+    # IV 閾值常量
+    DECIMAL_THRESHOLD = 1.0  # 小於此值視為小數格式
+    MIN_VALID_IV = 0.01      # 最小有效 IV（1%）
+    MAX_VALID_IV = 500.0     # 最大有效 IV（500%）
+    ABNORMAL_HIGH_IV = 200.0 # 異常高 IV 閾值
+    ABNORMAL_LOW_IV = 5.0    # 異常低 IV 閾值
+    
+    @staticmethod
+    def is_decimal_format(iv_value: float) -> bool:
+        """
+        判斷 IV 是否為小數格式 (0-1)
+        
+        參數:
+            iv_value: IV 值
+        
+        返回:
+            bool: True 表示小數格式，False 表示百分比格式
+        """
+        if iv_value is None:
+            return False
+        
+        # 小於 1 的正數視為小數格式
+        # 注意：某些極低 IV 股票可能有 0.5% 的 IV，但這種情況很罕見
+        return 0 < iv_value < IVNormalizer.DECIMAL_THRESHOLD
+    
+    @staticmethod
+    def normalize_iv(iv_value: float, source: str = 'unknown') -> Dict[str, Any]:
+        """
+        將 IV 標準化為百分比格式
+        
+        參數:
+            iv_value: 原始 IV 值
+            source: 數據來源標識（用於日誌）
+        
+        返回:
+            dict: {
+                'normalized_iv': float,  # 百分比格式 (0-500+)
+                'original_iv': float,    # 原始值
+                'was_decimal': bool,     # 是否從小數轉換
+                'source': str,           # 數據來源
+                'is_valid': bool,        # 是否為有效值
+                'is_abnormal': bool,     # 是否為異常值
+                'abnormal_reason': str   # 異常原因（如果有）
+            }
+        """
+        result = {
+            'normalized_iv': None,
+            'original_iv': iv_value,
+            'was_decimal': False,
+            'source': source,
+            'is_valid': False,
+            'is_abnormal': False,
+            'abnormal_reason': None
+        }
+        
+        # 處理無效輸入
+        if iv_value is None:
+            result['abnormal_reason'] = 'IV value is None'
+            logger.warning(f"IV 標準化: 輸入值為 None (來源: {source})")
+            return result
+        
+        try:
+            iv_float = float(iv_value)
+        except (ValueError, TypeError):
+            result['abnormal_reason'] = f'Cannot convert to float: {iv_value}'
+            logger.warning(f"IV 標準化: 無法轉換為數字 '{iv_value}' (來源: {source})")
+            return result
+        
+        # 處理負數和 NaN
+        if iv_float < 0 or np.isnan(iv_float):
+            result['abnormal_reason'] = f'Invalid IV value: {iv_float}'
+            logger.warning(f"IV 標準化: 無效值 {iv_float} (來源: {source})")
+            return result
+        
+        # 判斷格式並轉換
+        was_decimal = IVNormalizer.is_decimal_format(iv_float)
+        
+        if was_decimal:
+            normalized_iv = iv_float * 100
+            logger.debug(f"IV 標準化: {iv_float} -> {normalized_iv}% (小數轉百分比, 來源: {source})")
+        else:
+            normalized_iv = iv_float
+            logger.debug(f"IV 標準化: {iv_float}% (已是百分比格式, 來源: {source})")
+        
+        result['normalized_iv'] = normalized_iv
+        result['was_decimal'] = was_decimal
+        result['is_valid'] = True
+        
+        # 檢查異常值
+        if normalized_iv > IVNormalizer.ABNORMAL_HIGH_IV:
+            result['is_abnormal'] = True
+            result['abnormal_reason'] = f'IV 異常高: {normalized_iv:.2f}% > {IVNormalizer.ABNORMAL_HIGH_IV}%'
+            logger.warning(f"IV 標準化警告: {result['abnormal_reason']} (來源: {source})")
+        elif normalized_iv < IVNormalizer.ABNORMAL_LOW_IV:
+            result['is_abnormal'] = True
+            result['abnormal_reason'] = f'IV 異常低: {normalized_iv:.2f}% < {IVNormalizer.ABNORMAL_LOW_IV}%'
+            logger.warning(f"IV 標準化警告: {result['abnormal_reason']} (來源: {source})")
+        
+        return result
+    
+    @staticmethod
+    def validate_iv_consistency(api_iv: float, calculated_iv: float, 
+                                 tolerance_percent: float = 5.0) -> Dict[str, Any]:
+        """
+        驗證 API IV 和計算 IV 的一致性
+        
+        參數:
+            api_iv: API 提供的 IV（百分比格式）
+            calculated_iv: 計算得出的 IV（百分比格式）
+            tolerance_percent: 允許的差異百分比
+        
+        返回:
+            dict: {
+                'is_consistent': bool,
+                'difference': float,
+                'difference_percent': float,
+                'recommended_iv': float,
+                'recommendation_reason': str
+            }
+        """
+        if api_iv is None or calculated_iv is None:
+            return {
+                'is_consistent': False,
+                'difference': None,
+                'difference_percent': None,
+                'recommended_iv': api_iv or calculated_iv,
+                'recommendation_reason': 'One or both IV values are None'
+            }
+        
+        difference = abs(api_iv - calculated_iv)
+        difference_percent = (difference / api_iv * 100) if api_iv > 0 else 0
+        is_consistent = difference_percent <= tolerance_percent
+        
+        if is_consistent:
+            # 一致時使用平均值
+            recommended_iv = (api_iv + calculated_iv) / 2
+            reason = f'IV 一致 (差異 {difference_percent:.1f}% <= {tolerance_percent}%)，使用平均值'
+        else:
+            # 不一致時優先使用 API 值（通常更可靠）
+            recommended_iv = api_iv
+            reason = f'IV 不一致 (差異 {difference_percent:.1f}% > {tolerance_percent}%)，使用 API 值'
+            logger.warning(f"IV 驗證警告: API IV={api_iv:.2f}%, 計算 IV={calculated_iv:.2f}%, 差異={difference_percent:.1f}%")
+        
+        return {
+            'is_consistent': is_consistent,
+            'difference': difference,
+            'difference_percent': difference_percent,
+            'recommended_iv': recommended_iv,
+            'recommendation_reason': reason
+        }
+
+
 class DataFetcher:
     """完整數據獲取類（支持多数据源降级）"""
     
@@ -151,14 +318,18 @@ class DataFetcher:
             else:
                 logger.info("i IBKR 未启用，将使用其他数据源")
             
-            # Yahoo Finance 客户端（简化版，无需 OAuth）
+            # Yahoo Finance 客户端（優化版，支持 UA 輪換和智能重試）
             if YAHOO_V2_AVAILABLE:
                 try:
+                    # 使用較長的延遲（12秒）避免 429 錯誤
+                    # Yahoo Finance 對連續請求非常敏感，特別是期權鏈和歷史數據
+                    # 2025-12-07: 從 8 秒增加到 12 秒，因為仍然遇到 429 錯誤
+                    yahoo_delay = max(self.request_delay, 12.0)
                     self.yahoo_v2_client = YahooFinanceV2Client(
-                        request_delay=self.request_delay,
-                        max_retries=3
+                        request_delay=yahoo_delay,
+                        max_retries=5  # 增加重試次數
                     )
-                    logger.info("* Yahoo Finance 客户端已初始化（简化版，无需 OAuth）")
+                    logger.info(f"* Yahoo Finance 客户端已初始化（優化版，延遲: {yahoo_delay}s）")
                 except Exception as e:
                     logger.warning(f"! Yahoo Finance 初始化失败: {e}")
                     self._record_api_failure('yahoo_v2', str(e))
@@ -1673,7 +1844,26 @@ class DataFetcher:
                 self._record_api_failure('IBKR', f"get_historical_data: {e}")
                 self._record_fallback_failure('historical_data', 'IBKR', str(e))
         
-        # 方案0.5: Yahoo Finance V2（第二優先級 - 更穩定）
+        # 方案0.5: yfinance（第二優先級 - 使用 curl_cffi，更不容易被限流）
+        # 2025-12-07: 將 yfinance 提升到 Yahoo Finance V2 之前，因為 yfinance 0.2.66 有更好的 429 處理
+        try:
+            logger.info(f"  使用 yfinance 獲取歷史數據...")
+            stock = yf.Ticker(ticker)
+            hist = stock.history(period=period, interval=interval)
+            
+            if hist is not None and not hist.empty:
+                logger.info(f"* 成功獲取 {ticker} 的 {len(hist)} 條歷史記錄 (yfinance)")
+                self._record_fallback('historical_data', 'yfinance')
+                return hist
+            else:
+                logger.warning(f"! yfinance 未獲得 {ticker} 的歷史數據，降級到 Yahoo Finance V2")
+                self._record_fallback_failure('historical_data', 'yfinance', '未獲得數據')
+        except Exception as e:
+            logger.warning(f"! yfinance 獲取失敗: {e}，降級到 Yahoo Finance V2")
+            self._record_api_failure('yfinance', f"get_historical_data: {e}")
+            self._record_fallback_failure('historical_data', 'yfinance', str(e))
+        
+        # 方案0.6: Yahoo Finance V2（第三優先級 - 備用）
         if self.yahoo_v2_client:
             try:
                 logger.info(f"  使用 Yahoo Finance V2 獲取歷史數據...")
@@ -1713,7 +1903,7 @@ class DataFetcher:
                 self._record_api_failure('Yahoo Finance V2', f"get_historical_data: {e}")
                 self._record_fallback_failure('historical_data', 'Yahoo Finance V2', str(e))
         
-        # 方案0.6: Alpha Vantage（第三優先級）
+        # 方案0.7: Alpha Vantage（第四優先級）
         if hasattr(self, 'alpha_vantage_client') and self.alpha_vantage_client:
             try:
                 logger.info(f"  使用 Alpha Vantage 獲取歷史數據...")
@@ -1736,44 +1926,9 @@ class DataFetcher:
                 self._record_api_failure('Alpha Vantage', f"get_historical_data: {e}")
                 self._record_fallback_failure('historical_data', 'Alpha Vantage', str(e))
         
-        # 方案1: 嘗試使用 yfinance
-        for attempt in range(max_retries + 1):
-            try:
-                self._rate_limit_delay(retry_count=attempt)
-                
-                if attempt > 0:
-                    logger.info(f"  重試獲取 {ticker} 歷史數據 (嘗試 {attempt + 1}/{max_retries + 1})...")
-                
-                stock = yf.Ticker(ticker)
-                hist = stock.history(period=period, interval=interval)
-                
-                if not hist.empty:
-                    logger.info(f"* 成功獲取 {ticker} 的 {len(hist)} 條歷史記錄 (yfinance)")
-                    self._record_fallback('historical_data', 'yfinance')
-                    return hist
-                else:
-                    logger.warning(f"! yfinance 未獲得 {ticker} 的歷史數據")
-                    self._record_fallback_failure('historical_data', 'yfinance', '未獲得數據')
-                    break  # 跳出重試，嘗試降級
-                
-            except Exception as e:
-                error_msg = str(e).lower()
-                
-                if 'rate limit' in error_msg or '429' in error_msg or 'too many requests' in error_msg:
-                    if attempt < max_retries:
-                        logger.warning(f"! API 速率限制，將使用指數退避重試 (嘗試 {attempt + 1}/{max_retries + 1})")
-                        continue
-                    else:
-                        logger.warning(f"! yfinance 速率限制，降級到 Massive API")
-                        self._record_api_failure('yfinance', f"Rate limit exceeded: {e}")
-                        self._record_fallback_failure('historical_data', 'yfinance', '速率限制')
-                        break
-                else:
-                    if attempt >= max_retries:
-                        logger.warning(f"! yfinance 獲取失敗，降級到 Massive API: {e}")
-                        self._record_api_failure('yfinance', f"get_historical_data: {e}")
-                        self._record_fallback_failure('historical_data', 'yfinance', str(e))
-                        break
+        # 方案1: yfinance 已在上面嘗試過，這裡跳過
+        # 2025-12-07: yfinance 已提升到第二優先級，不需要在這裡重複嘗試
+        logger.info("  yfinance 已在上面嘗試過，降級到 Massive API...")
         
         # 方案2: 降級到 Massive API
         if hasattr(self, 'massive_api_client') and self.massive_api_client:
@@ -1945,10 +2100,8 @@ class DataFetcher:
             try:
                 logger.info("  使用 Yahoo Finance API...")
                 
-                # 先獲取可用的到期日列表
-                available_expirations = self.yahoo_v2_client.get_available_expirations(ticker)
-                
-                # 將用戶指定的到期日轉換為 timestamp 進行比較
+                # 直接將用戶指定的到期日轉換為 timestamp
+                # 跳過 get_available_expirations 調用以減少請求次數，避免 429 錯誤
                 from datetime import datetime
                 import calendar
                 try:
@@ -1958,20 +2111,10 @@ class DataFetcher:
                 except:
                     exp_timestamp = None
                 
-                # 找到最接近的可用到期日
                 actual_expiration = expiration
                 actual_timestamp = exp_timestamp
-                if available_expirations and exp_timestamp:
-                    # 找到最接近的到期日
-                    closest_exp = min(available_expirations, key=lambda x: abs(x - exp_timestamp))
-                    closest_date = datetime.utcfromtimestamp(closest_exp).strftime('%Y-%m-%d')
-                    
-                    if closest_exp != exp_timestamp:
-                        logger.warning(f"! 指定到期日 {expiration} 不可用，使用最接近的: {closest_date}")
-                        actual_expiration = closest_date
-                        actual_timestamp = closest_exp
                 
-                # 使用 timestamp 而不是日期字符串
+                # 直接使用用戶指定的到期日，如果不存在 Yahoo Finance 會返回最近的
                 response = self.yahoo_v2_client.get_option_chain(ticker, actual_timestamp if actual_timestamp else actual_expiration)
                 chain_data = YahooDataParser.parse_option_chain(response)
                 
@@ -1980,11 +2123,26 @@ class DataFetcher:
                     calls_df = pd.DataFrame(chain_data['calls'])
                     puts_df = pd.DataFrame(chain_data['puts'])
                     
-                    # 轉換 IV 為百分比形式（如果存在）
+                    # 使用 IVNormalizer 標準化 IV（避免重複轉換）
                     if 'impliedVolatility' in calls_df.columns:
-                        calls_df['impliedVolatility'] = calls_df['impliedVolatility'] * 100
+                        # 記錄原始值用於調試
+                        if not calls_df.empty:
+                            sample_raw = calls_df['impliedVolatility'].iloc[0]
+                            logger.debug(f"  Yahoo Finance Call IV 原始值樣本: {sample_raw}")
+                        
+                        # 使用 IVNormalizer 進行標準化
+                        calls_df['impliedVolatility'] = calls_df['impliedVolatility'].apply(
+                            lambda x: IVNormalizer.normalize_iv(x, 'yahoo_finance')['normalized_iv'] if pd.notna(x) else None
+                        )
+                        
+                        if not calls_df.empty:
+                            sample_norm = calls_df['impliedVolatility'].iloc[0]
+                            logger.debug(f"  Yahoo Finance Call IV 標準化後樣本: {sample_norm}%")
+                    
                     if 'impliedVolatility' in puts_df.columns:
-                        puts_df['impliedVolatility'] = puts_df['impliedVolatility'] * 100
+                        puts_df['impliedVolatility'] = puts_df['impliedVolatility'].apply(
+                            lambda x: IVNormalizer.normalize_iv(x, 'yahoo_finance')['normalized_iv'] if pd.notna(x) else None
+                        )
                     
                     logger.info(f"* 成功獲取 {ticker} {actual_expiration} 期權鏈 (Yahoo Finance)")
                     logger.info(f"  Call期權: {len(calls_df)} 個")
@@ -2015,16 +2173,22 @@ class DataFetcher:
             calls = option_chain.calls.copy()
             puts = option_chain.puts.copy()
             
-            # 調試：檢查轉換前的IV值
+            # 使用 IVNormalizer 標準化 IV（避免重複轉換）
             if 'impliedVolatility' in calls.columns and not calls.empty:
                 sample_iv_before = calls['impliedVolatility'].iloc[0]
-                logger.debug(f"  轉換前 IV 樣本: {sample_iv_before}")
-                calls['impliedVolatility'] = calls['impliedVolatility'] * 100
+                logger.debug(f"  yfinance Call IV 原始值樣本: {sample_iv_before}")
+                
+                calls['impliedVolatility'] = calls['impliedVolatility'].apply(
+                    lambda x: IVNormalizer.normalize_iv(x, 'yfinance')['normalized_iv'] if pd.notna(x) else None
+                )
+                
                 sample_iv_after = calls['impliedVolatility'].iloc[0]
-                logger.debug(f"  轉換後 IV 樣本: {sample_iv_after}")
+                logger.debug(f"  yfinance Call IV 標準化後樣本: {sample_iv_after}%")
             
             if 'impliedVolatility' in puts.columns:
-                puts['impliedVolatility'] = puts['impliedVolatility'] * 100
+                puts['impliedVolatility'] = puts['impliedVolatility'].apply(
+                    lambda x: IVNormalizer.normalize_iv(x, 'yfinance')['normalized_iv'] if pd.notna(x) else None
+                )
             
             logger.info(f"* 成功獲取 {ticker} {expiration} 期權鏈 (yfinance)")
             logger.info(f"  Call期權: {len(calls)} 個")
@@ -2260,8 +2424,12 @@ class DataFetcher:
             'call_atm': Series,
             'put_atm': Series,
             'atm_strike': float,
-            'current_price': float
+            'current_price': float,
+            'strike_price_diff': float,
+            'strike_price_diff_percent': float
         }
+        
+        Requirements: 1.2 - ATM 期權選擇邏輯增強日誌
         """
         try:
             logger.info(f"開始獲取 {ticker} ATM期權...")
@@ -2282,19 +2450,51 @@ class DataFetcher:
             
             # 找最接近的行使價
             strikes = calls['strike'].values
+            logger.debug(f"  可用行使價數量: {len(strikes)}")
+            logger.debug(f"  行使價範圍: ${min(strikes):.2f} - ${max(strikes):.2f}")
+            
             atm_strike = min(strikes, key=lambda x: abs(x - current_price))
+            
+            # 計算價差
+            strike_diff = abs(atm_strike - current_price)
+            strike_diff_percent = (strike_diff / current_price * 100) if current_price > 0 else 0
             
             call_atm = calls[calls['strike'] == atm_strike].iloc[0]
             put_atm = puts[puts['strike'] == atm_strike].iloc[0]
             
-            logger.info(f"* {ticker} ATM行使價: ${atm_strike:.2f}")
+            # 增強日誌：記錄選擇的行使價和對應的 IV
+            logger.info(f"* {ticker} ATM期權選擇結果:")
             logger.info(f"  當前股價: ${current_price:.2f}")
+            logger.info(f"  選擇行使價: ${atm_strike:.2f}")
+            logger.info(f"  價差: ${strike_diff:.2f} ({strike_diff_percent:.2f}%)")
+            
+            # 記錄 IV 值（已經過 IVNormalizer 標準化）
+            call_iv = call_atm.get('impliedVolatility')
+            put_iv = put_atm.get('impliedVolatility')
+            
+            if call_iv is not None:
+                logger.info(f"  ATM Call IV: {call_iv:.2f}%")
+            else:
+                logger.warning(f"  ATM Call IV: N/A")
+            
+            if put_iv is not None:
+                logger.info(f"  ATM Put IV: {put_iv:.2f}%")
+            else:
+                logger.warning(f"  ATM Put IV: N/A")
+            
+            # 如果 Call 和 Put IV 差異過大，記錄警告
+            if call_iv is not None and put_iv is not None:
+                iv_diff = abs(call_iv - put_iv)
+                if iv_diff > 5:  # 差異超過 5%
+                    logger.warning(f"  ! Call/Put IV 差異較大: {iv_diff:.2f}%")
             
             return {
                 'call_atm': call_atm,
                 'put_atm': put_atm,
                 'atm_strike': atm_strike,
-                'current_price': current_price
+                'current_price': current_price,
+                'strike_price_diff': strike_diff,
+                'strike_price_diff_percent': strike_diff_percent
             }
             
         except Exception as e:
@@ -3489,16 +3689,33 @@ class DataFetcher:
             call_atm = atm_data['call_atm']
             put_atm = atm_data['put_atm']
             atm_strike = atm_data['atm_strike']
-            iv = float(call_atm['impliedVolatility'])
             
-            # 調試：檢查IV值
-            logger.debug(f"  原始 IV 值: {iv}")
+            # 獲取 IV 值（已在 get_option_chain 中通過 IVNormalizer 標準化）
+            raw_iv = call_atm['impliedVolatility']
             
-            # 如果IV看起來是小數格式（0-1），轉換為百分比
-            if 0 < iv < 1:
-                logger.warning(f"  ! IV 是小數格式 ({iv})，轉換為百分比")
-                iv = iv * 100
-                logger.info(f"  * IV 已轉換: {iv:.2f}%")
+            # 使用 IVNormalizer 驗證 IV 值（不再重複轉換）
+            iv_result = IVNormalizer.normalize_iv(raw_iv, source='atm_option')
+            
+            if iv_result['is_valid']:
+                iv = iv_result['normalized_iv']
+                logger.info(f"  * ATM Call IV: {iv:.2f}% (行使價: ${atm_strike:.2f})")
+                
+                # 檢查是否為異常值
+                if iv_result['is_abnormal']:
+                    logger.warning(f"  ! IV 異常警告: {iv_result['abnormal_reason']}")
+                    # 嘗試使用 Put IV 作為備選
+                    put_iv_raw = put_atm['impliedVolatility']
+                    put_iv_result = IVNormalizer.normalize_iv(put_iv_raw, source='atm_put_option')
+                    if put_iv_result['is_valid'] and not put_iv_result['is_abnormal']:
+                        logger.info(f"  * 使用 Put IV 作為備選: {put_iv_result['normalized_iv']:.2f}%")
+                        # 使用 Call 和 Put IV 的平均值
+                        iv = (iv + put_iv_result['normalized_iv']) / 2
+                        logger.info(f"  * 使用 Call/Put IV 平均值: {iv:.2f}%")
+            else:
+                logger.error(f"  x IV 值無效: {iv_result['abnormal_reason']}")
+                # 使用默認 IV
+                iv = 30.0
+                logger.warning(f"  ! 使用默認 IV: {iv}%")
             
             # 5. 基本面數據
             logger.info("\n[步驟5/6] 獲取基本面數據...")

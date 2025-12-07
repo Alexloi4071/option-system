@@ -194,14 +194,25 @@ class DynamicIVThresholdCalculator:
         vix: float,
         calculation_date: str
     ) -> IVThresholdResult:
-        """計算靜態閾值（基於VIX）"""
+        """
+        計算靜態閾值（基於VIX）
         
-        # 使用 VIX ± 10% 作為閾值
-        high_threshold = vix + self.STATIC_THRESHOLD_OFFSET
-        low_threshold = max(5.0, vix - self.STATIC_THRESHOLD_OFFSET)  # 最低5%
-        median_iv = vix
+        修復說明 (2025-12-07):
+        - 原邏輯: 高閾值 = VIX + 10%，低閾值 = VIX - 10%
+        - 問題: 當 VIX=15.41 時，高閾值=25.41%，但個股 IV 可能遠高於 VIX
+        - 修復: 使用 max(VIX, current_iv) 作為基準，確保閾值範圍合理
+        """
         
-        # 判斷當前IV狀態（即使數據不足也要給出狀態）
+        # 修復: 使用 VIX 和當前 IV 的較大值作為基準
+        # 這樣可以避免高閾值低於當前 IV 的不合理情況
+        base_iv = max(vix, current_iv * 0.8)  # 基準至少是當前 IV 的 80%
+        
+        # 使用基準 ± 20% 作為閾值（擴大範圍以適應個股波動）
+        high_threshold = base_iv * 1.25  # 基準的 125%
+        low_threshold = max(5.0, base_iv * 0.75)  # 基準的 75%，最低 5%
+        median_iv = base_iv
+        
+        # 判斷當前IV狀態
         if current_iv > high_threshold:
             status = "HIGH (高於VIX基準)"
         elif current_iv < low_threshold:
@@ -224,10 +235,10 @@ class DynamicIVThresholdCalculator:
             iv_max=high_threshold
         )
         
-        logger.info(f"* 靜態IV閾值計算完成 (基於VIX {vix:.2f}%)")
-        logger.info(f"  當前IV: {current_iv:.2f}%")
-        logger.info(f"  高閾值: {high_threshold:.2f}% (VIX + 10%)")
-        logger.info(f"  低閾值: {low_threshold:.2f}% (VIX - 10%)")
+        logger.info(f"* 靜態IV閾值計算完成 (基於VIX {vix:.2f}%, 當前IV {current_iv:.2f}%)")
+        logger.info(f"  基準IV: {base_iv:.2f}%")
+        logger.info(f"  高閾值: {high_threshold:.2f}% (基準 × 1.25)")
+        logger.info(f"  低閾值: {low_threshold:.2f}% (基準 × 0.75)")
         logger.info(f"  狀態: {status}")
         logger.info(f"  注意: 使用VIX靜態閾值（歷史IV數據不足）")
         
@@ -242,18 +253,30 @@ class DynamicIVThresholdCalculator:
         
         返回:
             Dict: 交易建議
+        
+        修復說明 (2025-12-07):
+        - 統一處理動態閾值和靜態閾值的狀態判斷
+        - 確保狀態和建議一致
         """
-        if result.status == "高於歷史水平":
+        # 統一判斷: 檢查是否高於高閾值或低於低閾值
+        is_high = result.current_iv > result.high_threshold
+        is_low = result.current_iv < result.low_threshold
+        
+        # 也檢查 status 字段（兼容動態閾值的狀態）
+        status_is_high = "高於" in result.status or "HIGH" in result.status
+        status_is_low = "低於" in result.status or "LOW" in result.status
+        
+        if is_high or status_is_high:
             return {
                 'action': 'Short',
-                'reason': f'當前IV {result.current_iv:.1f}% 高於75th百分位 {result.high_threshold:.1f}%',
+                'reason': f'當前IV {result.current_iv:.1f}% 高於閾值 {result.high_threshold:.1f}%',
                 'strategies': ['Iron Condor', 'Short Straddle', 'Credit Spread'],
                 'confidence': 'High' if result.data_quality == 'sufficient' else 'Medium'
             }
-        elif result.status == "低於歷史水平":
+        elif is_low or status_is_low:
             return {
                 'action': 'Long',
-                'reason': f'當前IV {result.current_iv:.1f}% 低於25th百分位 {result.low_threshold:.1f}%',
+                'reason': f'當前IV {result.current_iv:.1f}% 低於閾值 {result.low_threshold:.1f}%',
                 'strategies': ['Long Straddle', 'Debit Spread', 'Long Options'],
                 'confidence': 'High' if result.data_quality == 'sufficient' else 'Medium'
             }

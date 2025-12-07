@@ -323,9 +323,66 @@ class OptionsAnalysisSystem:
                     # 添加 PEG 和行業分析（美國市場標準）
                     result_dict = rate_pe_result.to_dict()
                     peg_ratio = analysis_data.get('peg_ratio')
-                    sector = analysis_data.get('sector', 'Unknown')
+                    sector_raw = analysis_data.get('sector', 'Unknown')
                     
-                    # 美國市場行業 PE 範圍
+                    # 行業映射表：將 Finviz/Finnhub 返回的行業名稱映射到標準 GICS 分類
+                    # 這樣可以處理不同 API 返回的不同行業名稱
+                    sector_mapping = {
+                        # Finviz 返回的行業 -> 標準分類
+                        'Media': 'Communication Services',
+                        'Internet Content & Information': 'Communication Services',
+                        'Interactive Media & Services': 'Communication Services',
+                        'Entertainment': 'Communication Services',
+                        'Telecom Services': 'Communication Services',
+                        'Software': 'Technology',
+                        'Software - Infrastructure': 'Technology',
+                        'Software - Application': 'Technology',
+                        'Semiconductors': 'Technology',
+                        'Semiconductor Equipment & Materials': 'Technology',
+                        'Computer Hardware': 'Technology',
+                        'Electronic Components': 'Technology',
+                        'Information Technology Services': 'Technology',
+                        'Consumer Electronics': 'Technology',
+                        'Banks': 'Financials',
+                        'Banks - Regional': 'Financials',
+                        'Insurance': 'Financials',
+                        'Asset Management': 'Financials',
+                        'Financial Services': 'Financials',
+                        'Credit Services': 'Financials',
+                        'Capital Markets': 'Financials',
+                        'Biotechnology': 'Healthcare',
+                        'Drug Manufacturers': 'Healthcare',
+                        'Medical Devices': 'Healthcare',
+                        'Healthcare Plans': 'Healthcare',
+                        'Retail - Cyclical': 'Consumer Discretionary',
+                        'Auto Manufacturers': 'Consumer Discretionary',
+                        'Restaurants': 'Consumer Discretionary',
+                        'Apparel Retail': 'Consumer Discretionary',
+                        'Consumer Cyclical': 'Consumer Discretionary',
+                        'Beverages': 'Consumer Staples',
+                        'Food Products': 'Consumer Staples',
+                        'Household Products': 'Consumer Staples',
+                        'Tobacco': 'Consumer Staples',
+                        'Oil & Gas': 'Energy',
+                        'Oil & Gas E&P': 'Energy',
+                        'Oil & Gas Integrated': 'Energy',
+                        'Aerospace & Defense': 'Industrials',
+                        'Airlines': 'Industrials',
+                        'Railroads': 'Industrials',
+                        'Trucking': 'Industrials',
+                        'REITs': 'Real Estate',
+                        'Real Estate Services': 'Real Estate',
+                        'Utilities - Regulated': 'Utilities',
+                        'Utilities - Diversified': 'Utilities',
+                        'Chemicals': 'Materials',
+                        'Steel': 'Materials',
+                        'Gold': 'Materials',
+                    }
+                    
+                    # 嘗試映射行業，如果沒有映射則使用原始值
+                    sector = sector_mapping.get(sector_raw, sector_raw)
+                    
+                    # 美國市場行業 PE 範圍（基於 GICS 標準分類）
                     sector_pe_ranges = {
                         'Technology': (25, 40),
                         'Communication Services': (15, 25),
@@ -337,13 +394,17 @@ class OptionsAnalysisSystem:
                         'Energy': (10, 20),
                         'Utilities': (15, 20),
                         'Real Estate': (20, 30),
-                        'Materials': (12, 18)
+                        'Materials': (12, 18),
                     }
                     
                     # 行業 PE 分析
                     if sector and sector in sector_pe_ranges:
                         pe_min, pe_max = sector_pe_ranges[sector]
-                        result_dict['行業'] = sector
+                        # 顯示原始行業和映射後的標準分類
+                        if sector_raw != sector:
+                            result_dict['行業'] = f"{sector_raw} → {sector}"
+                        else:
+                            result_dict['行業'] = sector
                         result_dict['行業PE範圍'] = f"{pe_min}-{pe_max}"
                         
                         if current_pe < pe_min:
@@ -353,8 +414,11 @@ class OptionsAnalysisSystem:
                         else:
                             result_dict['行業比較'] = f"* PE {current_pe:.1f} 在行業範圍內（{pe_min}-{pe_max}）"
                     else:
-                        result_dict['行業'] = sector or 'Unknown'
-                        result_dict['行業比較'] = "無行業數據"
+                        result_dict['行業'] = sector_raw or 'Unknown'
+                        result_dict['行業比較'] = f"無行業數據（{sector_raw} 未在映射表中）"
+                        # 記錄未知行業，方便以後添加到映射表
+                        if sector_raw and sector_raw != 'Unknown':
+                            logger.warning(f"! 未知行業分類: '{sector_raw}'，請考慮添加到 sector_mapping")
                     
                     # PEG 分析（美國市場標準）
                     if peg_ratio:
@@ -581,8 +645,11 @@ class OptionsAnalysisSystem:
                         else:
                             result_dict['short_note'] = "✓ 做空比例低（<5%）"
                     
-                    if avg_volume and call_volume:
-                        volume_ratio = call_volume / avg_volume
+                    # 修復 (2025-12-07): 使用股票成交量與平均成交量比較
+                    # 原問題: call_volume 是期權成交量，avg_volume 是股票平均成交量，不應直接比較
+                    stock_volume = analysis_data.get('volume')  # 當日股票成交量
+                    if avg_volume and stock_volume and avg_volume > 0:
+                        volume_ratio = stock_volume / avg_volume
                         result_dict['volume_vs_avg'] = round(volume_ratio, 2)
                         if volume_ratio > 2.0:
                             result_dict['volume_note'] = "⚠️ 成交量異常放大（>2倍平均）"
@@ -592,6 +659,11 @@ class OptionsAnalysisSystem:
                             result_dict['volume_note'] = "⚠️ 成交量萎縮（<0.5倍平均）"
                         else:
                             result_dict['volume_note'] = "✓ 成交量正常"
+                    elif call_volume and call_open_interest and call_open_interest > 0:
+                        # 降級: 如果沒有股票成交量，使用期權成交量/未平倉量比率
+                        vol_oi_ratio = call_volume / call_open_interest
+                        result_dict['volume_vs_avg'] = round(vol_oi_ratio, 2)
+                        result_dict['volume_note'] = f"期權成交量/未平倉量比: {vol_oi_ratio:.2f}x"
                     
                     self.analysis_results['module13_position_analysis'] = result_dict
                     logger.info("✓ 模塊13完成: 倉位分析（含所有權結構）")
@@ -953,6 +1025,8 @@ class OptionsAnalysisSystem:
                                     result_dict['iv_percentile'] = iv_percentile
                                     result_dict['iv_recommendation'] = iv_recommendation
                                     result_dict['note'] = '基於252個交易日(52週)的歷史IV數據'
+                                    # 修復 (2025-12-07): 保存 historical_iv 供 Module 23 使用
+                                    result_dict['historical_iv'] = historical_iv
                                     
                                     logger.info(f"  IV Rank: {iv_rank:.2f}%, IV Percentile: {iv_percentile:.2f}%")
                                     logger.info(f"  建議: {iv_recommendation['action']} - {iv_recommendation['reason']}")

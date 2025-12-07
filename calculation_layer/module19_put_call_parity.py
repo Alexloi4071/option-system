@@ -217,9 +217,16 @@ class PutCallParityValidator:
             # Deviation = Actual_Diff - Theoretical_Diff
             deviation = actual_difference - theoretical_difference
             
-            # 計算偏離百分比（相對於理論差異）
-            if abs(theoretical_difference) > 0.01:
-                deviation_percentage = (deviation / abs(theoretical_difference)) * 100
+            # 計算偏離百分比
+            # 修復 (2025-12-07): 使用相對於期權價格的百分比，而非相對於理論差異
+            # 原因: 當理論差異很小時（ATM期權），原計算方式會放大百分比，造成誤解
+            # 新方式: 偏離 / 期權平均價格 × 100，更直觀反映實際偏離程度
+            avg_option_price = (call_price + put_price) / 2
+            if avg_option_price > 0.01:
+                deviation_percentage = (abs(deviation) / avg_option_price) * 100
+            elif abs(theoretical_difference) > 0.01:
+                # 降級: 如果期權價格太小，使用理論差異
+                deviation_percentage = (abs(deviation) / abs(theoretical_difference)) * 100
             else:
                 deviation_percentage = 0.0
             
