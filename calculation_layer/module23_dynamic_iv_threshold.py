@@ -34,7 +34,7 @@ class IVThresholdResult:
     low_threshold: float
     median_iv: float
     status: str  # '高於歷史水平', '低於歷史水平', '正常範圍'
-    data_quality: str  # 'sufficient', 'insufficient'
+    data_quality: str  # 'sufficient', 'limited', 'insufficient'
     historical_days: int
     calculation_date: str
     
@@ -44,8 +44,12 @@ class IVThresholdResult:
     iv_min: float = 0.0
     iv_max: float = 0.0
     
+    # 新增: 可靠性標記和警告 (Requirements 5.1, 5.4)
+    reliability: str = 'unknown'  # 'reliable', 'moderate', 'unreliable'
+    warning: Optional[str] = None  # 數據不足警告
+    
     def to_dict(self) -> Dict:
-        return {
+        result = {
             'current_iv': round(self.current_iv, 2),
             'high_threshold': round(self.high_threshold, 2),
             'low_threshold': round(self.low_threshold, 2),
@@ -57,8 +61,12 @@ class IVThresholdResult:
             'percentile_75': round(self.percentile_75, 2),
             'percentile_25': round(self.percentile_25, 2),
             'iv_min': round(self.iv_min, 2),
-            'iv_max': round(self.iv_max, 2)
+            'iv_max': round(self.iv_max, 2),
+            'reliability': self.reliability
         }
+        if self.warning:
+            result['warning'] = self.warning
+        return result
 
 
 class DynamicIVThresholdCalculator:
@@ -75,17 +83,56 @@ class DynamicIVThresholdCalculator:
     
     最低數據要求: 200個交易日（約10個月）
     推薦數據量: 252個交易日（1年）
+    
+    數據質量評估 (Requirements 5.1, 5.4):
+    - sufficient: >= 252 天 (1年完整數據)
+    - limited: 60-251 天 (部分數據)
+    - insufficient: < 60 天 (數據不足)
+    
+    可靠性標記:
+    - reliable: 數據充足，結果可靠
+    - moderate: 數據有限，結果需謹慎參考
+    - unreliable: 數據不足，建議謹慎使用
     """
     
     # 最低數據要求
     MIN_DATA_POINTS = 200
     RECOMMENDED_DATA_POINTS = 252
     
+    # 數據質量閾值 (Requirements 5.1, 5.4)
+    SUFFICIENT_DATA_DAYS = 252  # 1年完整數據
+    LIMITED_DATA_DAYS = 60      # 最低可用數據
+    
     # 靜態閾值偏移量
     STATIC_THRESHOLD_OFFSET = 10.0  # VIX ± 10%
     
     def __init__(self):
         logger.info("* 動態IV閾值計算器已初始化")
+    
+    def _assess_data_quality(self, data_days: int) -> tuple:
+        """
+        評估歷史數據質量 (Requirements 5.1, 5.4)
+        
+        參數:
+            data_days: 歷史數據天數
+        
+        返回:
+            tuple: (data_quality, reliability, warning)
+            - data_quality: 'sufficient', 'limited', 'insufficient'
+            - reliability: 'reliable', 'moderate', 'unreliable'
+            - warning: 警告信息或 None
+        """
+        if data_days >= self.SUFFICIENT_DATA_DAYS:
+            # 數據充足 (>= 252 天)
+            return ('sufficient', 'reliable', None)
+        elif data_days >= self.LIMITED_DATA_DAYS:
+            # 數據有限 (60-251 天)
+            warning = f"歷史數據僅 {data_days} 天（建議 252 天），IV Rank 結果需謹慎參考"
+            return ('limited', 'moderate', warning)
+        else:
+            # 數據不足 (< 60 天)
+            warning = f"歷史數據僅 {data_days} 天（少於 60 天），IV Rank 標記為「不可靠」，建議謹慎使用"
+            return ('insufficient', 'unreliable', warning)
     
     def calculate_thresholds(
         self,
@@ -117,9 +164,9 @@ class DynamicIVThresholdCalculator:
             
             calculation_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             
-            # 檢查歷史數據是否足夠
-            if historical_iv is None or len(historical_iv) < self.MIN_DATA_POINTS:
-                logger.info(f"  歷史數據不足 ({len(historical_iv) if historical_iv is not None else 0} < {self.MIN_DATA_POINTS})，使用靜態閾值")
+            # 檢查歷史數據是否存在
+            if historical_iv is None or len(historical_iv) == 0:
+                logger.info(f"  無歷史數據，使用靜態閾值")
                 return self._calculate_static_thresholds(current_iv, vix, calculation_date)
             
             # 轉換為 numpy array
@@ -130,9 +177,10 @@ class DynamicIVThresholdCalculator:
             else:
                 iv_data = historical_iv[~np.isnan(historical_iv)]
             
-            # 再次檢查有效數據量
-            if len(iv_data) < self.MIN_DATA_POINTS:
-                logger.info(f"  有效數據不足 ({len(iv_data)} < {self.MIN_DATA_POINTS})，使用靜態閾值")
+            # 檢查有效數據量 (Requirements 5.1, 5.4)
+            # 少於 60 天使用靜態閾值，60-251 天使用動態閾值但標記為 limited
+            if len(iv_data) < self.LIMITED_DATA_DAYS:
+                logger.info(f"  有效數據不足 ({len(iv_data)} < {self.LIMITED_DATA_DAYS})，使用靜態閾值")
                 return self._calculate_static_thresholds(current_iv, vix, calculation_date)
             
             # 計算動態閾值
@@ -182,25 +230,34 @@ class DynamicIVThresholdCalculator:
             status = "正常範圍"
             logger.info(f"  狀態: {status} (IV {current_iv:.2f}% 在 {low_threshold:.2f}%-{high_threshold:.2f}% 範圍內)")
         
+        # 評估數據質量 (Requirements 5.1, 5.4)
+        data_days = len(iv_data)
+        data_quality, reliability, warning = self._assess_data_quality(data_days)
+        
         result = IVThresholdResult(
             current_iv=current_iv,
             high_threshold=high_threshold,
             low_threshold=low_threshold,
             median_iv=median_iv,
             status=status,
-            data_quality='sufficient',
-            historical_days=len(iv_data),
+            data_quality=data_quality,
+            historical_days=data_days,
             calculation_date=calculation_date,
             percentile_75=percentile_75,
             percentile_25=percentile_25,
             iv_min=iv_min,
-            iv_max=iv_max
+            iv_max=iv_max,
+            reliability=reliability,
+            warning=warning
         )
         
         logger.info(f"* 動態IV閾值計算完成")
         logger.info(f"  高閾值 (75th): {high_threshold:.2f}%")
         logger.info(f"  低閾值 (25th): {low_threshold:.2f}%")
-        logger.info(f"  歷史數據: {len(iv_data)} 天")
+        logger.info(f"  歷史數據: {data_days} 天")
+        logger.info(f"  數據質量: {data_quality}, 可靠性: {reliability}")
+        if warning:
+            logger.warning(f"  ⚠️ {warning}")
         
         return result
     
@@ -236,6 +293,9 @@ class DynamicIVThresholdCalculator:
         else:
             status = "NORMAL (VIX基準範圍內)"
         
+        # 靜態閾值時，數據質量為 insufficient，可靠性為 unreliable (Requirements 5.4)
+        warning = "歷史數據不足，使用 VIX 靜態閾值，IV Rank 標記為「不可靠」，建議謹慎使用"
+        
         result = IVThresholdResult(
             current_iv=current_iv,
             high_threshold=high_threshold,
@@ -248,7 +308,9 @@ class DynamicIVThresholdCalculator:
             percentile_75=high_threshold,
             percentile_25=low_threshold,
             iv_min=low_threshold,
-            iv_max=high_threshold
+            iv_max=high_threshold,
+            reliability='unreliable',
+            warning=warning
         )
         
         logger.info(f"* 靜態IV閾值計算完成 (基於VIX {vix:.2f}%, 當前IV {current_iv:.2f}%)")
@@ -256,7 +318,8 @@ class DynamicIVThresholdCalculator:
         logger.info(f"  高閾值: {high_threshold:.2f}% (基準 × 1.25)")
         logger.info(f"  低閾值: {low_threshold:.2f}% (基準 × 0.75)")
         logger.info(f"  狀態: {status}")
-        logger.info(f"  注意: 使用VIX靜態閾值（歷史IV數據不足）")
+        logger.info(f"  數據質量: insufficient, 可靠性: unreliable")
+        logger.warning(f"  ⚠️ {warning}")
         
         return result
     

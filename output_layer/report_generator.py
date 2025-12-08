@@ -766,7 +766,7 @@ class ReportGenerator:
             report += f"│ 📈 Call Greeks:\n"
             report += f"│   Delta:  {call.get('delta', 0):8.4f}  (股價變動敏感度)\n"
             report += f"│   Gamma:  {call.get('gamma', 0):8.6f}  (Delta 變化率)\n"
-            report += f"│   Theta:  {call.get('theta', 0):8.4f}  (時間衰減/天)\n"
+            report += f"│   Theta:  {call.get('theta', 0):8.4f}  ($/天 時間衰減)\n"
             report += f"│   Vega:   {call.get('vega', 0):8.4f}  (波動率敏感度)\n"
             report += f"│   Rho:    {call.get('rho', 0):8.4f}  (利率敏感度)\n"
             report += "│\n"
@@ -776,7 +776,7 @@ class ReportGenerator:
             report += f"│ 📉 Put Greeks:\n"
             report += f"│   Delta:  {put.get('delta', 0):8.4f}\n"
             report += f"│   Gamma:  {put.get('gamma', 0):8.6f}\n"
-            report += f"│   Theta:  {put.get('theta', 0):8.4f}\n"
+            report += f"│   Theta:  {put.get('theta', 0):8.4f}  ($/天)\n"
             report += f"│   Vega:   {put.get('vega', 0):8.4f}\n"
             report += f"│   Rho:    {put.get('rho', 0):8.4f}\n"
         
@@ -784,7 +784,7 @@ class ReportGenerator:
         report += "│ 💡 解讀:\n"
         report += "│   Delta: 股價每變動$1，期權價格變動\n"
         report += "│   Gamma: Delta 的變化速度\n"
-        report += "│   Theta: 每天時間衰減的價值\n"
+        report += "│   Theta: 每天時間衰減的價值 ($/天)\n"
         report += "│   Vega: 波動率每變動1%，期權價格變動\n"
         report += "│   Rho: 利率每變動1%，期權價格變動\n"
         report += "└────────────────────────────────────────────┘\n"
@@ -983,6 +983,31 @@ class ReportGenerator:
         if note:
             report += f"│   說明: {note}\n"
         report += "│\n"
+        
+        # IV 來源和值顯示（Requirements 4.3）
+        iv_used = results.get('iv_used')
+        iv_used_percent = results.get('iv_used_percent')
+        iv_source = results.get('iv_source')
+        iv_warning = results.get('iv_warning')
+        
+        if iv_used is not None or iv_source is not None:
+            report += f"│ 📈 波動率 (IV) 信息:\n"
+            if iv_used_percent is not None:
+                report += f"│   使用的 IV: {iv_used_percent:.2f}%\n"
+            elif iv_used is not None:
+                report += f"│   使用的 IV: {iv_used*100:.2f}%\n"
+            if iv_source:
+                report += f"│   IV 來源: {iv_source}\n"
+            report += "│\n"
+        
+        # IV 不一致警告顯示（Requirements 4.4）
+        if iv_warning:
+            report += f"│ ⚠️ IV 警告:\n"
+            # 處理多個警告（用分號分隔）
+            warnings = iv_warning.split("; ")
+            for warning in warnings:
+                report += f"│   {warning}\n"
+            report += "│\n"
         
         # 套利機會評估
         if abs(spread_pct) > 5:
@@ -1577,15 +1602,43 @@ class ReportGenerator:
         
         report += "│\n"
         
-        # 數據質量 - 更清楚的說明
+        # 數據質量和可靠性 (Requirements 5.2, 5.3)
+        historical_days = results.get('historical_days', 0)
+        reliability = results.get('reliability', 'unknown')
+        warning = results.get('warning', None)
+        
+        # 可靠性圖標
+        reliability_emoji = {
+            'reliable': '✅',
+            'moderate': '⚠️',
+            'unreliable': '❌',
+            'unknown': '❓'
+        }.get(reliability, '❓')
+        
+        # 數據質量圖標
+        quality_emoji = {
+            'sufficient': '✅',
+            'limited': '⚠️',
+            'insufficient': '❌'
+        }.get(data_quality, '❓')
+        
+        report += f"│ 📌 數據質量: {quality_emoji} {data_quality}\n"
+        report += f"│    歷史數據: {historical_days} 天\n"
+        report += f"│    可靠性: {reliability_emoji} {reliability}\n"
+        
+        # 顯示警告 (Requirements 5.2, 5.3)
+        if warning:
+            report += f"│\n"
+            report += f"│ ⚠️ 警告: {warning}\n"
+        elif historical_days < 252 and historical_days > 0:
+            report += f"│\n"
+            report += f"│ ⚠️ 警告: 歷史數據少於 252 天，建議謹慎參考\n"
+        
+        # 數據質量說明
         if data_quality == 'insufficient':
-            report += f"│ 📌 數據質量: {data_quality}\n"
             report += f"│    說明: 歷史IV數據不足，使用VIX靜態閾值\n"
-            report += f"│    閾值計算: VIX ± 10%\n"
-        else:
-            report += f"│ 📌 數據質量: {data_quality}\n"
-            if 'historical_days' in results:
-                report += f"│    歷史數據: {results.get('historical_days', 0)} 天\n"
+        elif data_quality == 'limited':
+            report += f"│    說明: 歷史數據有限，結果需謹慎參考\n"
         
         report += "│\n"
         report += "│ 📖 解讀:\n"

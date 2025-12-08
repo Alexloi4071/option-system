@@ -83,14 +83,14 @@ class WebFormatter:
             'call': {
                 'delta': f"{data['call']['delta']:.4f}",
                 'gamma': f"{data['call']['gamma']:.6f}",
-                'theta': f"{data['call']['theta']:.4f}",
+                'theta': f"{data['call']['theta']:.4f} ($/天)",
                 'vega': f"{data['call']['vega']:.4f}",
                 'rho': f"{data['call']['rho']:.4f}"
             } if data.get('call') else None,
             'put': {
                 'delta': f"{data['put']['delta']:.4f}",
                 'gamma': f"{data['put']['gamma']:.6f}",
-                'theta': f"{data['put']['theta']:.4f}",
+                'theta': f"{data['put']['theta']:.4f} ($/天)",
                 'vega': f"{data['put']['vega']:.4f}",
                 'rho': f"{data['put']['rho']:.4f}"
             } if data.get('put') else None
@@ -225,7 +225,7 @@ class TelegramFormatter:
             msg += "*Call Greeks:*\n"
             msg += f"  Delta: `{call.get('delta', 0):.4f}`\n"
             msg += f"  Gamma: `{call.get('gamma', 0):.6f}`\n"
-            msg += f"  Theta: `{call.get('theta', 0):.4f}`\n"
+            msg += f"  Theta: `{call.get('theta', 0):.4f}` ($/天)\n"
             msg += f"  Vega: `{call.get('vega', 0):.4f}`\n"
             msg += f"  Rho: `{call.get('rho', 0):.4f}`\n\n"
         
@@ -234,7 +234,7 @@ class TelegramFormatter:
             msg += "*Put Greeks:*\n"
             msg += f"  Delta: `{put.get('delta', 0):.4f}`\n"
             msg += f"  Gamma: `{put.get('gamma', 0):.6f}`\n"
-            msg += f"  Theta: `{put.get('theta', 0):.4f}`\n"
+            msg += f"  Theta: `{put.get('theta', 0):.4f}` ($/天)\n"
             msg += f"  Vega: `{put.get('vega', 0):.4f}`\n"
             msg += f"  Rho: `{put.get('rho', 0):.4f}`\n\n"
         

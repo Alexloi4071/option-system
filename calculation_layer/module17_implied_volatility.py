@@ -38,7 +38,7 @@ Newton-Raphson 迭代法:
 import logging
 import math
 from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 from datetime import datetime
 
 # 導入依賴模塊
@@ -72,6 +72,27 @@ class IVResult:
             'price_difference': round(self.price_difference, 6),
             'initial_guess': round(self.initial_guess, 4),
             'calculation_date': self.calculation_date
+        }
+
+
+@dataclass
+class ATMIVResult:
+    """ATM 隱含波動率提取結果"""
+    atm_iv: float  # ATM IV（小數形式，如 0.30 表示 30%）
+    strike_price: float  # 使用的行使價
+    option_type: str  # 使用的期權類型 ('call' 或 'put')
+    distance_from_atm: float  # 與 ATM 的距離百分比
+    source: str  # 數據來源描述
+    
+    def to_dict(self) -> Dict:
+        """轉換為字典"""
+        return {
+            'atm_iv': round(self.atm_iv, 6),
+            'atm_iv_percent': round(self.atm_iv * 100, 2),
+            'strike_price': round(self.strike_price, 2),
+            'option_type': self.option_type,
+            'distance_from_atm_percent': round(self.distance_from_atm * 100, 2),
+            'source': self.source
         }
 
 
@@ -405,6 +426,167 @@ class ImpliedVolatilityCalculator:
         
         logger.info("* 輸入參數驗證通過")
         return True
+
+    def extract_atm_iv_from_chain(
+        self,
+        option_chain: Dict,
+        current_price: float,
+        option_type: str = 'call'
+    ) -> Optional[ATMIVResult]:
+        """
+        從期權鏈中提取 ATM（平價）隱含波動率
+        
+        此方法從期權鏈數據中找到最接近當前股價的行使價，
+        並提取該期權的隱含波動率作為 ATM IV。
+        
+        參數:
+            option_chain: 期權鏈數據，格式為 {'calls': [...], 'puts': [...]}
+                         每個期權包含 'strike' 和 'impliedVolatility' 字段
+            current_price: 當前股價（美元）
+            option_type: 優先使用的期權類型 ('call' 或 'put')，默認 'call'
+        
+        返回:
+            ATMIVResult: 包含 ATM IV 和相關信息的結果對象
+            None: 如果無法提取 ATM IV
+        
+        ATM IV 選擇邏輯:
+            1. 優先使用指定類型（call 或 put）的期權
+            2. 找到行使價最接近當前股價的期權
+            3. 如果指定類型無數據，嘗試使用另一類型
+            4. 返回小數形式的 IV（如 0.30 表示 30%）
+        
+        示例:
+            >>> calc = ImpliedVolatilityCalculator()
+            >>> option_chain = {
+            ...     'calls': [
+            ...         {'strike': 195, 'impliedVolatility': 0.28},
+            ...         {'strike': 200, 'impliedVolatility': 0.25},
+            ...         {'strike': 205, 'impliedVolatility': 0.27}
+            ...     ],
+            ...     'puts': [...]
+            ... }
+            >>> result = calc.extract_atm_iv_from_chain(option_chain, 200.0)
+            >>> print(f"ATM IV: {result.atm_iv*100:.2f}%")
+            ATM IV: 25.00%
+        """
+        try:
+            logger.info(f"開始提取 ATM IV...")
+            logger.info(f"  當前股價: ${current_price:.2f}")
+            logger.info(f"  優先期權類型: {option_type}")
+            
+            # 驗證輸入
+            if not option_chain:
+                logger.warning("! 期權鏈數據為空")
+                return None
+            
+            if current_price <= 0:
+                logger.error(f"x 股價必須大於0: {current_price}")
+                return None
+            
+            # 獲取期權列表
+            calls = option_chain.get('calls', [])
+            puts = option_chain.get('puts', [])
+            
+            if not calls and not puts:
+                logger.warning("! 期權鏈中沒有 calls 或 puts 數據")
+                return None
+            
+            # 根據優先類型選擇期權列表
+            if option_type.lower() == 'call':
+                primary_options = calls
+                secondary_options = puts
+                primary_type = 'call'
+                secondary_type = 'put'
+            else:
+                primary_options = puts
+                secondary_options = calls
+                primary_type = 'put'
+                secondary_type = 'call'
+            
+            # 嘗試從主要類型提取 ATM IV
+            result = self._find_atm_option(primary_options, current_price, primary_type)
+            
+            # 如果主要類型失敗，嘗試次要類型
+            if result is None and secondary_options:
+                logger.info(f"  主要類型 ({primary_type}) 無數據，嘗試 {secondary_type}")
+                result = self._find_atm_option(secondary_options, current_price, secondary_type)
+            
+            if result:
+                logger.info(f"* ATM IV 提取成功")
+                logger.info(f"  ATM IV: {result.atm_iv*100:.2f}%")
+                logger.info(f"  使用行使價: ${result.strike_price:.2f}")
+                logger.info(f"  距離 ATM: {result.distance_from_atm*100:.2f}%")
+            else:
+                logger.warning("! 無法提取 ATM IV")
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"x ATM IV 提取失敗: {e}")
+            return None
+    
+    def _find_atm_option(
+        self,
+        options: list,
+        current_price: float,
+        option_type: str
+    ) -> Optional[ATMIVResult]:
+        """
+        從期權列表中找到最接近 ATM 的期權並提取 IV
+        
+        參數:
+            options: 期權列表
+            current_price: 當前股價
+            option_type: 期權類型
+        
+        返回:
+            ATMIVResult: ATM IV 結果
+            None: 如果無法找到有效期權
+        """
+        if not options:
+            return None
+        
+        best_option = None
+        min_distance = float('inf')
+        
+        for option in options:
+            strike = option.get('strike')
+            iv = option.get('impliedVolatility')
+            
+            # 跳過無效數據
+            if strike is None or iv is None:
+                continue
+            
+            # 確保 IV 是有效的正數
+            if not isinstance(iv, (int, float)) or iv <= 0:
+                continue
+            
+            # 計算與 ATM 的距離
+            distance = abs(strike - current_price) / current_price
+            
+            if distance < min_distance:
+                min_distance = distance
+                best_option = option
+        
+        if best_option is None:
+            return None
+        
+        strike = best_option.get('strike')
+        iv = best_option.get('impliedVolatility')
+        
+        # 確保 IV 是小數形式（如果是百分比形式則轉換）
+        # 通常 IV > 5 表示是百分比形式（如 25 表示 25%）
+        if iv > 5:
+            iv = iv / 100.0
+            logger.debug(f"  IV 從百分比轉換為小數: {iv*100:.2f}%")
+        
+        return ATMIVResult(
+            atm_iv=iv,
+            strike_price=strike,
+            option_type=option_type,
+            distance_from_atm=min_distance,
+            source=f"Option Chain ATM {option_type.upper()}"
+        )
 
 
 # 使用示例和測試

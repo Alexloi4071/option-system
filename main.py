@@ -964,6 +964,55 @@ class OptionsAnalysisSystem:
                     
                     if call_iv_result.converged:
                         logger.info(f"* 模塊17完成: 隱含波動率計算 (Call IV={call_iv_result.implied_volatility*100:.2f}%, {call_iv_result.iterations}次迭代)")
+                        
+                        # ========== ATM IV 集成: 更新 Module 15 使用 ATM IV ==========
+                        # Requirements 3.1, 3.2, 3.3: 使用 ATM IV 優先計算期權理論價格
+                        atm_iv = call_iv_result.implied_volatility  # 從 Module 17 提取 ATM IV
+                        logger.info(f"\n→ ATM IV 集成: 使用 ATM IV ({atm_iv*100:.2f}%) 更新 Module 15 計算...")
+                        
+                        try:
+                            bs_calc_atm = BlackScholesCalculator()
+                            
+                            # 使用 ATM IV 重新計算 Call 期權理論價格
+                            bs_call_atm = bs_calc_atm.calculate_option_price_with_atm_iv(
+                                stock_price=current_price,
+                                strike_price=strike_price,
+                                risk_free_rate=risk_free_rate,
+                                time_to_expiration=time_to_expiration_years,
+                                market_iv=volatility_estimate,
+                                atm_iv=atm_iv,
+                                option_type='call'
+                            )
+                            
+                            # 使用 ATM IV 重新計算 Put 期權理論價格
+                            bs_put_atm = bs_calc_atm.calculate_option_price_with_atm_iv(
+                                stock_price=current_price,
+                                strike_price=strike_price,
+                                risk_free_rate=risk_free_rate,
+                                time_to_expiration=time_to_expiration_years,
+                                market_iv=volatility_estimate,
+                                atm_iv=atm_iv,
+                                option_type='put'
+                            )
+                            
+                            # 更新 Module 15 結果，添加 ATM IV 信息
+                            if 'module15_black_scholes' in self.analysis_results:
+                                self.analysis_results['module15_black_scholes']['call_atm_iv'] = bs_call_atm.to_dict()
+                                self.analysis_results['module15_black_scholes']['put_atm_iv'] = bs_put_atm.to_dict()
+                                self.analysis_results['module15_black_scholes']['atm_iv_used'] = round(atm_iv, 4)
+                                self.analysis_results['module15_black_scholes']['atm_iv_source'] = 'Module 17 (ATM Call IV)'
+                                
+                                # 更新主要的 call/put 結果為 ATM IV 版本
+                                self.analysis_results['module15_black_scholes']['call'] = bs_call_atm.to_dict()
+                                self.analysis_results['module15_black_scholes']['put'] = bs_put_atm.to_dict()
+                            
+                            logger.info(f"  * ATM IV 更新完成:")
+                            logger.info(f"    Call 理論價: ${bs_call_atm.option_price:.2f} (IV來源: {bs_call_atm.iv_source})")
+                            logger.info(f"    Put 理論價: ${bs_put_atm.option_price:.2f} (IV來源: {bs_put_atm.iv_source})")
+                        except Exception as atm_exc:
+                            logger.warning(f"! ATM IV 更新失敗: {atm_exc}，保留原始 Module 15 結果")
+                        # ========== ATM IV 集成結束 ==========
+                        
                     else:
                         logger.warning(f"! 模塊17: Call IV 未收斂 ({call_iv_result.iterations}次迭代)")
             except Exception as exc:
@@ -1154,58 +1203,116 @@ class OptionsAnalysisSystem:
                     'note': '使用默認中性動量 (0.5)'
                 }
             
-            # ========== 模塊3: 套戥水位 (使用期權理論價 + 動量整合) ==========
-            # 注意: Module 3 必須在 Module 15 (Black-Scholes) 和 Module 21 (動量過濾器) 之後執行
-            # 原因: 需要使用期權理論價而非股票遠期價來計算套戥水位，並整合動量因素
-            logger.info("\n→ 運行 Module 3: 套戥水位計算（使用期權理論價 + 動量整合）...")
+            # ========== 模塊3: 套戥水位 (使用 ATM IV + 動量整合) ==========
+            # 注意: Module 3 必須在 Module 15, Module 17 和 Module 21 之後執行
+            # 原因: 需要使用 ATM IV 計算期權理論價，並整合動量因素
+            # Requirements: 4.1, 4.2, 4.3, 4.4 - 使用 ATM IV 計算套戥水位
+            logger.info("\n→ 運行 Module 3: 套戥水位計算（使用 ATM IV + 動量整合）...")
             try:
-                # ✅ Task 6: 增強無期權理論價處理
-                # 從 Module 15 獲取期權理論價
+                # 從 Module 15 獲取期權理論價和 ATM IV 信息
                 bs_results = self.analysis_results.get('module15_black_scholes')
+                iv17_results = self.analysis_results.get('module17_implied_volatility')
+                
+                # 提取 ATM IV（來自 Module 17）
+                atm_iv_for_arb = None
+                if iv17_results and 'call' in iv17_results:
+                    call_iv_data = iv17_results['call']
+                    if call_iv_data.get('converged', False):
+                        atm_iv_for_arb = call_iv_data.get('implied_volatility')
                 
                 # 詳細檢查前置條件
                 logger.info("  檢查前置條件:")
                 logger.info(f"    市場期權價格: ${call_last_price:.2f}" if call_last_price > 0 else "    x 市場期權價格不可用")
                 logger.info(f"    Module 15 結果: {'* 可用' if bs_results else 'x 不可用'}")
+                logger.info(f"    ATM IV (Module 17): {atm_iv_for_arb*100:.2f}%" if atm_iv_for_arb else "    x ATM IV 不可用")
                 logger.info(f"    動量得分: {momentum_score:.4f}")
                 
                 if call_last_price > 0 and bs_results:
-                    # 獲取 Call 期權理論價
+                    # 獲取 Call 期權理論價（已使用 ATM IV 計算）
                     call_theoretical_price = bs_results.get('call', {}).get('option_price')
+                    iv_source = bs_results.get('atm_iv_source', 'Market IV')
                     
                     if call_theoretical_price and call_theoretical_price > 0:
-                        logger.info(f"    期權理論價: ${call_theoretical_price:.2f}")
-                        logger.info("  * 所有前置條件滿足，執行套戥水位計算（含動量整合）...")
+                        logger.info(f"    期權理論價: ${call_theoretical_price:.2f} (IV來源: {iv_source})")
+                        logger.info("  * 所有前置條件滿足，執行套戥水位計算（ATM IV + 動量整合）...")
                         
                         arb_calc = ArbitrageSpreadCalculator()
                         
-                        # ✅ 使用動量整合版本
-                        arb_result = arb_calc.calculate_with_momentum(
-                            market_option_price=call_last_price,
-                            fair_value=call_theoretical_price,  # ✅ 使用期權理論價
-                            momentum_score=momentum_score,  # ✅ 整合動量得分
-                            ticker=ticker,
-                            bid_price=call_bid,
-                            ask_price=call_ask,
-                            calculation_date=analysis_date_str
-                        )
+                        # ✅ Requirements 4.1, 4.2: 使用 ATM IV 計算套戥水位
+                        # 如果有 ATM IV，使用 calculate_with_atm_iv 方法
+                        if atm_iv_for_arb and atm_iv_for_arb > 0:
+                            arb_result = arb_calc.calculate_with_atm_iv(
+                                market_option_price=call_last_price,
+                                stock_price=current_price,
+                                strike_price=strike_price,
+                                risk_free_rate=risk_free_rate,
+                                time_to_expiration=time_to_expiration_years,
+                                market_iv=volatility_estimate,
+                                atm_iv=atm_iv_for_arb,
+                                option_type='call',
+                                bid_price=call_bid,
+                                ask_price=call_ask,
+                                calculation_date=analysis_date_str
+                            )
+                            iv_method = 'ATM IV (Module 17)'
+                        else:
+                            # 回退到使用已計算的理論價（可能已使用 ATM IV）
+                            arb_result = arb_calc.calculate(
+                                market_option_price=call_last_price,
+                                fair_value=call_theoretical_price,
+                                bid_price=call_bid,
+                                ask_price=call_ask,
+                                calculation_date=analysis_date_str
+                            )
+                            iv_method = iv_source
                         
-                        # 在結果中添加數據來源標註
+                        # 應用動量調整到建議
+                        original_recommendation = arb_result.recommendation
+                        adjusted_recommendation = original_recommendation
+                        momentum_note = ""
+                        spread_pct = arb_result.spread_percentage
+                        
+                        # 動量調整邏輯（與 calculate_with_momentum 相同）
+                        if spread_pct >= 2.0:  # 高估
+                            if momentum_score >= 0.7:
+                                adjusted_recommendation = f"⚠️ 觀望 - 雖然高估{spread_pct:.1f}%，但動量強勁（{momentum_score:.2f}），不建議逆勢做空"
+                                momentum_note = "強動量警告：避免在上漲趨勢中做空"
+                            elif momentum_score >= 0.4:
+                                adjusted_recommendation = f"⚠️ 謹慎Short - 高估{spread_pct:.1f}%，但動量中等（{momentum_score:.2f}）"
+                                momentum_note = "中等動量：建議等待動量轉弱"
+                            else:
+                                adjusted_recommendation = f"✓ Short - 高估{spread_pct:.1f}%且動量轉弱（{momentum_score:.2f}）"
+                                momentum_note = "弱動量確認：做空時機成熟"
+                        elif spread_pct <= -2.0:  # 低估
+                            if momentum_score >= 0.7:
+                                adjusted_recommendation = f"✓✓ 強烈Long - 低估{abs(spread_pct):.1f}%且動量強勁（{momentum_score:.2f}）"
+                                momentum_note = "強動量+低估：最佳買入機會"
+                            else:
+                                adjusted_recommendation = f"✓ Long - 低估{abs(spread_pct):.1f}%，動量{momentum_score:.2f}"
+                                momentum_note = "低估確認：適合買入"
+                        else:
+                            momentum_note = f"估值合理，動量{momentum_score:.2f}"
+                        
+                        # 在結果中添加數據來源標註（Requirements 4.3）
                         result_dict = arb_result.to_dict()
-                        result_dict['note'] = '使用 Black-Scholes 期權理論價（非股票遠期價）+ 動量過濾器'
-                        result_dict['theoretical_price_source'] = 'Module 15 (Black-Scholes)'
+                        result_dict['note'] = f'使用 {iv_method} 計算期權理論價 + 動量過濾器'
+                        result_dict['theoretical_price_source'] = f'Module 15 (Black-Scholes with {iv_method})'
                         result_dict['momentum_source'] = 'Module 21 (Momentum Filter)'
-                        result_dict['theoretical_price'] = round(call_theoretical_price, 2)
+                        result_dict['theoretical_price'] = round(arb_result.fair_value, 2)
                         result_dict['market_price'] = round(call_last_price, 2)
                         result_dict['momentum_score'] = round(momentum_score, 4)
+                        result_dict['momentum_note'] = momentum_note
+                        result_dict['original_recommendation'] = original_recommendation
+                        result_dict['recommendation'] = adjusted_recommendation
+                        result_dict['momentum_adjusted'] = (adjusted_recommendation != original_recommendation)
                         
                         self.analysis_results['module3_arbitrage_spread'] = result_dict
-                        logger.info(f"* 模塊3完成: 套戥水位（含動量整合）")
+                        logger.info(f"* 模塊3完成: 套戥水位（ATM IV + 動量整合）")
                         logger.info(f"  市場價: ${call_last_price:.2f}")
-                        logger.info(f"  理論價: ${call_theoretical_price:.2f}")
+                        logger.info(f"  理論價: ${arb_result.fair_value:.2f} (IV來源: {iv_method})")
                         logger.info(f"  價差: ${arb_result.arbitrage_spread:.2f} ({arb_result.spread_percentage:.2f}%)")
                         logger.info(f"  動量得分: {momentum_score:.4f}")
-                        logger.info(f"  建議: {arb_result.recommendation}")
+                        logger.info(f"  建議: {adjusted_recommendation}")
                     else:
                         # ✅ Task 6: 詳細記錄無期權理論價的情況
                         logger.warning("! 模塊3跳過: 無法獲取期權理論價")
@@ -1389,6 +1496,10 @@ class OptionsAnalysisSystem:
                 logger.info(f"  狀態: {iv_threshold_result.status}")
                 logger.info(f"  IV環境: {iv_environment}")
                 logger.info(f"  數據質量: {iv_threshold_result.data_quality}")
+                logger.info(f"  歷史數據: {iv_threshold_result.historical_days} 天")
+                logger.info(f"  可靠性: {iv_threshold_result.reliability}")
+                if iv_threshold_result.warning:
+                    logger.warning(f"  ⚠️ {iv_threshold_result.warning}")
             except Exception as exc:
                 logger.warning(f"! 模塊23執行失敗: {exc}")
                 self.analysis_results['module23_dynamic_iv_threshold'] = {

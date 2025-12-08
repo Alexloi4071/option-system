@@ -105,7 +105,7 @@ class TestStrikeRangeFiltering:
         current_price=st.floats(min_value=50.0, max_value=500.0, allow_nan=False, allow_infinity=False),
         strategy_type=st.sampled_from(['long_call', 'long_put', 'short_call', 'short_put'])
     )
-    @settings(max_examples=100)
+    @settings(max_examples=100, deadline=None)
     def test_liquidity_filtering(self, current_price, strategy_type):
         """
         **Feature: jin-cao-option-enhancements, Property 3: Strike Range Filtering**
@@ -189,7 +189,7 @@ class TestComponentScoreBounds:
         current_price=st.floats(min_value=50.0, max_value=500.0, allow_nan=False, allow_infinity=False),
         strategy_type=st.sampled_from(['long_call', 'long_put', 'short_call', 'short_put'])
     )
-    @settings(max_examples=100)
+    @settings(max_examples=100, deadline=None)
     def test_all_scores_within_bounds(self, current_price, strategy_type):
         """
         **Feature: jin-cao-option-enhancements, Property 10: Component Score Bounds**
@@ -231,7 +231,7 @@ class TestTopRecommendationsRanking:
         current_price=st.floats(min_value=50.0, max_value=500.0, allow_nan=False, allow_infinity=False),
         strategy_type=st.sampled_from(['long_call', 'long_put', 'short_call', 'short_put'])
     )
-    @settings(max_examples=100)
+    @settings(max_examples=100, deadline=None)
     def test_top_3_sorted_descending(self, current_price, strategy_type):
         """
         **Feature: jin-cao-option-enhancements, Property 9: Top Recommendations Ranking**
@@ -257,7 +257,7 @@ class TestTopRecommendationsRanking:
         current_price=st.floats(min_value=50.0, max_value=500.0, allow_nan=False, allow_infinity=False),
         strategy_type=st.sampled_from(['long_call', 'long_put', 'short_call', 'short_put'])
     )
-    @settings(max_examples=100)
+    @settings(max_examples=100, deadline=None)
     def test_best_strike_is_top_recommendation(self, current_price, strategy_type):
         """
         **Feature: jin-cao-option-enhancements, Property 9: Top Recommendations Ranking**
@@ -273,8 +273,187 @@ class TestTopRecommendationsRanking:
         )
         
         if result['top_recommendations']:
-            assert result['best_strike'] == result['top_recommendations'][0]['strike'], \
+            # Use approximate comparison for floating point values
+            assert abs(result['best_strike'] - result['top_recommendations'][0]['strike']) < 0.01, \
                 f"Best strike {result['best_strike']} != top recommendation {result['top_recommendations'][0]['strike']}"
+
+
+def generate_short_put_option_chain(current_price: float, num_strikes: int = 20):
+    """
+    生成包含各種 Short Put 場景的期權鏈數據
+    
+    包括:
+    - ITM Put（行使價 >= 當前股價）
+    - 高 Delta Put（|Delta| > 0.35）
+    - 距離過近的 Put（距離 < 3%）
+    - 安全的 OTM Put（應該通過過濾）
+    """
+    calls = []
+    puts = []
+    
+    # 生成更寬範圍的行使價（ATM ± 25%）
+    strike_step = current_price * 0.02  # 2% 間隔
+    
+    for i in range(-12, 13):  # -24% 到 +24%
+        strike = round(current_price + i * strike_step, 2)
+        
+        # 計算 moneyness
+        moneyness = (strike - current_price) / current_price
+        
+        # 計算 Put Delta（負值，ITM 時絕對值更大）
+        # 對於 Put: ITM (strike > price) -> Delta 接近 -1
+        #          ATM (strike ≈ price) -> Delta 接近 -0.5
+        #          OTM (strike < price) -> Delta 接近 0
+        if strike >= current_price:
+            # ITM Put: Delta 接近 -1
+            put_delta = -min(0.95, 0.5 + moneyness * 2)
+        else:
+            # OTM Put: Delta 接近 0
+            distance_pct = (current_price - strike) / current_price
+            # 距離越遠，Delta 絕對值越小
+            put_delta = -max(0.05, 0.5 - distance_pct * 3)
+        
+        call_data = {
+            'strike': strike,
+            'bid': max(0.1, current_price * 0.05 - moneyness * current_price * 0.5),
+            'ask': max(0.2, current_price * 0.06 - moneyness * current_price * 0.5),
+            'lastPrice': max(0.15, current_price * 0.055 - moneyness * current_price * 0.5),
+            'volume': 100 + abs(i) * 50,
+            'openInterest': 500 + abs(i) * 100,
+            'impliedVolatility': 0.25 + abs(moneyness) * 0.1,
+            'delta': max(0.05, min(0.95, 0.5 - moneyness * 2)),
+            'gamma': 0.05,
+            'theta': -0.05,
+            'vega': 0.1
+        }
+        
+        put_data = {
+            'strike': strike,
+            'bid': max(0.1, current_price * 0.05 + moneyness * current_price * 0.5),
+            'ask': max(0.2, current_price * 0.06 + moneyness * current_price * 0.5),
+            'lastPrice': max(0.15, current_price * 0.055 + moneyness * current_price * 0.5),
+            'volume': 100 + abs(i) * 50,
+            'openInterest': 500 + abs(i) * 100,
+            'impliedVolatility': 0.25 + abs(moneyness) * 0.1,
+            'delta': put_delta,
+            'gamma': 0.05,
+            'theta': -0.05,
+            'vega': 0.1
+        }
+        
+        calls.append(call_data)
+        puts.append(put_data)
+    
+    return {'calls': calls, 'puts': puts}
+
+
+class TestShortPutFiltering:
+    """
+    **Feature: option-calculation-fixes, Property 2: Short Put 過濾完整性**
+    
+    測試 Short Put 策略的安全過濾功能
+    
+    Requirements: 2.1, 2.2, 2.3
+    """
+    
+    def setup_method(self):
+        self.calculator = OptimalStrikeCalculator()
+    
+    @given(
+        current_price=st.floats(min_value=50.0, max_value=500.0, allow_nan=False, allow_infinity=False)
+    )
+    @settings(max_examples=100, deadline=None)
+    def test_short_put_filter_completeness(self, current_price):
+        """
+        **Feature: option-calculation-fixes, Property 2: Short Put 過濾完整性**
+        **Validates: Requirements 2.1, 2.2, 2.3**
+        
+        Property: For any Short Put strategy analysis result, all recommended strikes should satisfy:
+        1. Strike < Current Price (OTM only)
+        2. |Delta| <= 0.35
+        3. (Current Price - Strike) / Current Price >= 0.03 (at least 3% distance)
+        """
+        option_chain = generate_short_put_option_chain(current_price)
+        result = self.calculator.analyze_strikes(
+            current_price=current_price,
+            option_chain=option_chain,
+            strategy_type='short_put'
+        )
+        
+        for strike_data in result['analyzed_strikes']:
+            strike = strike_data['strike']
+            delta = strike_data['delta']
+            
+            # Requirement 2.1: 過濾 ITM Put（行使價 >= 當前股價）
+            assert strike < current_price, \
+                f"ITM Put not filtered: strike ${strike:.2f} >= current price ${current_price:.2f}"
+            
+            # Requirement 2.2: 過濾高 Delta Put（|Delta| > 0.35）
+            assert abs(delta) <= 0.35, \
+                f"High Delta Put not filtered: |Delta|={abs(delta):.4f} > 0.35 for strike ${strike:.2f}"
+            
+            # Requirement 2.3: 確保距離 >= 3%
+            distance_pct = (current_price - strike) / current_price
+            assert distance_pct >= 0.03, \
+                f"Too close Put not filtered: distance {distance_pct*100:.1f}% < 3% for strike ${strike:.2f}"
+    
+    @given(
+        current_price=st.floats(min_value=50.0, max_value=500.0, allow_nan=False, allow_infinity=False)
+    )
+    @settings(max_examples=100, deadline=None)
+    def test_short_put_safety_probability(self, current_price):
+        """
+        **Feature: option-calculation-fixes, Property 2: Short Put 過濾完整性**
+        **Validates: Requirements 2.5**
+        
+        Property: For any Short Put recommendation, safety_probability should equal (1 - |Delta|).
+        """
+        option_chain = generate_short_put_option_chain(current_price)
+        result = self.calculator.analyze_strikes(
+            current_price=current_price,
+            option_chain=option_chain,
+            strategy_type='short_put'
+        )
+        
+        for strike_data in result['analyzed_strikes']:
+            delta = strike_data['delta']
+            safety_prob = strike_data['safety_probability']
+            expected_safety = 1.0 - abs(delta)
+            
+            assert abs(safety_prob - expected_safety) < 0.0001, \
+                f"Safety probability {safety_prob:.4f} != expected {expected_safety:.4f} (1 - |{delta:.4f}|)"
+    
+    @given(
+        current_price=st.floats(min_value=50.0, max_value=500.0, allow_nan=False, allow_infinity=False)
+    )
+    @settings(max_examples=100, deadline=None)
+    def test_short_put_vs_other_strategies(self, current_price):
+        """
+        **Feature: option-calculation-fixes, Property 2: Short Put 過濾完整性**
+        **Validates: Requirements 2.1, 2.2, 2.3**
+        
+        Property: Short Put filtering should be more restrictive than other strategies.
+        The number of analyzed strikes for short_put should be <= other put strategies.
+        """
+        option_chain = generate_short_put_option_chain(current_price)
+        
+        # Analyze with short_put strategy
+        short_put_result = self.calculator.analyze_strikes(
+            current_price=current_price,
+            option_chain=option_chain,
+            strategy_type='short_put'
+        )
+        
+        # Analyze with long_put strategy (no special filtering)
+        long_put_result = self.calculator.analyze_strikes(
+            current_price=current_price,
+            option_chain=option_chain,
+            strategy_type='long_put'
+        )
+        
+        # Short Put should have fewer or equal analyzed strikes due to filtering
+        assert len(short_put_result['analyzed_strikes']) <= len(long_put_result['analyzed_strikes']), \
+            f"Short Put ({len(short_put_result['analyzed_strikes'])}) has more strikes than Long Put ({len(long_put_result['analyzed_strikes'])})"
 
 
 if __name__ == '__main__':

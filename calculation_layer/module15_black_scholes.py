@@ -39,7 +39,7 @@ N(x) = 標準正態累積分佈函數
 import logging
 import math
 from dataclasses import dataclass
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 from datetime import datetime
 from scipy.stats import norm
 
@@ -59,6 +59,7 @@ class BSPricingResult:
     d2: float
     option_price: float
     calculation_date: str
+    iv_source: str = 'unknown'  # IV 來源標識（Requirements 3.3）
     
     def to_dict(self) -> Dict:
         """轉換為字典"""
@@ -73,7 +74,8 @@ class BSPricingResult:
             'd2': round(self.d2, 6),
             'option_price': round(self.option_price, 4),
             'calculation_date': self.calculation_date,
-            'model': 'Black-Scholes'
+            'model': 'Black-Scholes',
+            'iv_source': self.iv_source
         }
 
 
@@ -336,6 +338,117 @@ class BlackScholesCalculator:
             
         except Exception as e:
             logger.error(f"✗ Black-Scholes 定價計算失敗: {e}")
+            raise
+    
+    def calculate_option_price_with_atm_iv(
+        self,
+        stock_price: float,
+        strike_price: float,
+        risk_free_rate: float,
+        time_to_expiration: float,
+        market_iv: float,
+        atm_iv: float = None,
+        option_type: str = 'call',
+        calculation_date: str = None
+    ) -> BSPricingResult:
+        """
+        計算期權理論價格，優先使用 ATM IV
+        
+        此方法擴展了標準 Black-Scholes 定價，支持優先使用 ATM IV（來自 Module 17）
+        進行計算，以獲得更接近市場實際定價的理論價格。
+        
+        參數:
+            stock_price: 當前股價（美元）
+            strike_price: 行使價（美元）
+            risk_free_rate: 無風險利率（年化，小數形式，如 0.05 表示 5%）
+            time_to_expiration: 到期時間（年，如 0.5 表示半年）
+            market_iv: 整體市場 IV（回退選項，小數形式）
+            atm_iv: ATM 隱含波動率（來自 Module 17，可選，小數形式）
+            option_type: 期權類型 ('call' 或 'put')
+            calculation_date: 計算日期（YYYY-MM-DD 格式）
+        
+        返回:
+            BSPricingResult: 包含完整計算結果的對象，包括 iv_source 標識
+        
+        IV 選擇邏輯:
+            1. 如果 atm_iv 有效（非 None 且 > 0），使用 ATM IV
+            2. 否則回退使用 market_iv
+            3. 結果中的 iv_source 字段標識使用的 IV 來源
+        
+        向後兼容性:
+            - atm_iv 參數可選（默認 None），確保現有代碼無需修改
+            - 如果不提供 atm_iv，自動回退到 market_iv
+        
+        示例:
+            >>> calc = BlackScholesCalculator()
+            >>> # 使用 ATM IV
+            >>> result = calc.calculate_option_price_with_atm_iv(
+            ...     stock_price=200,
+            ...     strike_price=200,
+            ...     risk_free_rate=0.05,
+            ...     time_to_expiration=0.077,
+            ...     market_iv=0.30,
+            ...     atm_iv=0.25,
+            ...     option_type='call'
+            ... )
+            >>> print(f"期權價格: ${result.option_price:.2f}")
+            >>> print(f"IV 來源: {result.iv_source}")
+            
+            >>> # 不提供 ATM IV（回退到 market_iv）
+            >>> result2 = calc.calculate_option_price_with_atm_iv(
+            ...     stock_price=200,
+            ...     strike_price=200,
+            ...     risk_free_rate=0.05,
+            ...     time_to_expiration=0.077,
+            ...     market_iv=0.30,
+            ...     option_type='call'
+            ... )
+            >>> print(f"IV 來源: {result2.iv_source}")  # 'Market IV (fallback)'
+        
+        Requirements: 3.1, 3.2, 3.3
+        """
+        try:
+            logger.info(f"開始 Black-Scholes 定價計算（支持 ATM IV）...")
+            logger.info(f"  股價: ${stock_price:.2f}, 行使價: ${strike_price:.2f}")
+            logger.info(f"  利率: {risk_free_rate*100:.2f}%, 時間: {time_to_expiration:.4f}年")
+            logger.info(f"  Market IV: {market_iv*100:.2f}%")
+            
+            if atm_iv is not None:
+                logger.info(f"  ATM IV: {atm_iv*100:.2f}%")
+            else:
+                logger.info(f"  ATM IV: 未提供")
+            
+            # 選擇 IV 來源（Requirements 3.1, 3.2）
+            if atm_iv is not None and atm_iv > 0:
+                volatility = atm_iv
+                iv_source = 'ATM IV (Module 17)'
+                logger.info(f"  → 使用 ATM IV: {volatility*100:.2f}%")
+            else:
+                volatility = market_iv
+                iv_source = 'Market IV (fallback)'
+                logger.info(f"  → 回退使用 Market IV: {volatility*100:.2f}%")
+            
+            # 調用標準 calculate_option_price 方法
+            result = self.calculate_option_price(
+                stock_price=stock_price,
+                strike_price=strike_price,
+                risk_free_rate=risk_free_rate,
+                time_to_expiration=time_to_expiration,
+                volatility=volatility,
+                option_type=option_type,
+                calculation_date=calculation_date
+            )
+            
+            # 設置 IV 來源標識（Requirements 3.3）
+            result.iv_source = iv_source
+            
+            logger.info(f"  IV 來源: {iv_source}")
+            logger.info(f"✓ Black-Scholes 定價計算完成（ATM IV 支持）")
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"✗ Black-Scholes 定價計算失敗（ATM IV 支持）: {e}")
             raise
     
     @staticmethod

@@ -136,15 +136,16 @@ class TestDynamicThresholdFallback:
     @given(
         current_iv=st.floats(min_value=10.0, max_value=80.0, allow_nan=False, allow_infinity=False),
         vix=st.floats(min_value=10.0, max_value=50.0, allow_nan=False, allow_infinity=False),
-        data_points=st.integers(min_value=0, max_value=199)
+        data_points=st.integers(min_value=0, max_value=59)
     )
     @settings(max_examples=100)
     def test_insufficient_data_uses_static(self, current_iv, vix, data_points):
         """
         **Feature: jin-cao-option-enhancements, Property 5: Dynamic Threshold Fallback**
-        **Validates: Requirements 13.4**
+        **Validates: Requirements 13.4, 5.4**
         
-        Property: When historical data has fewer than 200 points, use static thresholds.
+        Property: When historical data has fewer than 60 points, use static thresholds.
+        (Updated: threshold changed from 200 to 60 per Requirements 5.4)
         """
         # 生成不足的歷史數據
         if data_points > 0:
@@ -162,9 +163,17 @@ class TestDynamicThresholdFallback:
         assert result.data_quality == 'insufficient', \
             f"Expected 'insufficient' data quality for {data_points} points, got {result.data_quality}"
         
-        # 驗證靜態閾值計算正確
-        expected_high = vix + 10.0
-        expected_low = max(5.0, vix - 10.0)
+        # 驗證可靠性為 unreliable
+        assert result.reliability == 'unreliable', \
+            f"Expected 'unreliable' reliability for {data_points} points, got {result.reliability}"
+        
+        # 驗證靜態閾值計算正確 (使用新的計算邏輯)
+        # 新邏輯: base_iv = max(vix, current_iv * 0.8)
+        # high_threshold = base_iv * 1.25
+        # low_threshold = max(5.0, base_iv * 0.75)
+        base_iv = max(vix, current_iv * 0.8)
+        expected_high = base_iv * 1.25
+        expected_low = max(5.0, base_iv * 0.75)
         
         assert abs(result.high_threshold - expected_high) < 0.01, \
             f"Expected high threshold {expected_high}, got {result.high_threshold}"
@@ -250,6 +259,131 @@ class TestThresholdBounds:
         
         assert result.low_threshold >= 5.0, \
             f"Low threshold {result.low_threshold} < 5%"
+
+
+class TestIVRankDataQualityMarking:
+    """
+    **Feature: option-calculation-fixes, Property 4: IV Rank 數據質量標記**
+    
+    測試 IV Rank 數據質量標記的正確性
+    **Validates: Requirements 5.2, 5.4**
+    """
+    
+    def setup_method(self):
+        self.calculator = DynamicIVThresholdCalculator()
+    
+    @given(
+        current_iv=st.floats(min_value=10.0, max_value=80.0, allow_nan=False, allow_infinity=False),
+        data_days=st.integers(min_value=60, max_value=251)
+    )
+    @settings(max_examples=100)
+    def test_limited_data_has_warning(self, current_iv, data_days):
+        """
+        **Feature: option-calculation-fixes, Property 4: IV Rank 數據質量標記**
+        **Validates: Requirements 5.2, 5.4**
+        
+        Property: When historical data has 60-251 days (less than 252), 
+        result should include a data insufficiency warning.
+        """
+        # 生成指定天數的歷史數據
+        np.random.seed(42)
+        historical_iv = np.random.normal(30, 5, data_days)
+        historical_iv = np.clip(historical_iv, 5, 150)
+        
+        result = self.calculator.calculate_thresholds(
+            current_iv=current_iv,
+            historical_iv=historical_iv
+        )
+        
+        # 驗證數據質量為 'limited'
+        assert result.data_quality == 'limited', \
+            f"Expected 'limited' data quality for {data_days} days, got {result.data_quality}"
+        
+        # 驗證可靠性為 'moderate'
+        assert result.reliability == 'moderate', \
+            f"Expected 'moderate' reliability for {data_days} days, got {result.reliability}"
+        
+        # 驗證包含警告
+        assert result.warning is not None, \
+            f"Expected warning for {data_days} days (< 252), but warning is None"
+        
+        # 驗證警告包含天數信息
+        assert str(data_days) in result.warning, \
+            f"Expected warning to contain '{data_days}', got: {result.warning}"
+    
+    @given(
+        current_iv=st.floats(min_value=10.0, max_value=80.0, allow_nan=False, allow_infinity=False),
+        data_days=st.integers(min_value=252, max_value=500)
+    )
+    @settings(max_examples=100)
+    def test_sufficient_data_no_warning(self, current_iv, data_days):
+        """
+        **Feature: option-calculation-fixes, Property 4: IV Rank 數據質量標記**
+        **Validates: Requirements 5.2, 5.4**
+        
+        Property: When historical data has 252+ days, 
+        result should NOT include a data insufficiency warning.
+        """
+        # 生成指定天數的歷史數據
+        np.random.seed(42)
+        historical_iv = np.random.normal(30, 5, data_days)
+        historical_iv = np.clip(historical_iv, 5, 150)
+        
+        result = self.calculator.calculate_thresholds(
+            current_iv=current_iv,
+            historical_iv=historical_iv
+        )
+        
+        # 驗證數據質量為 'sufficient'
+        assert result.data_quality == 'sufficient', \
+            f"Expected 'sufficient' data quality for {data_days} days, got {result.data_quality}"
+        
+        # 驗證可靠性為 'reliable'
+        assert result.reliability == 'reliable', \
+            f"Expected 'reliable' reliability for {data_days} days, got {result.reliability}"
+        
+        # 驗證沒有警告
+        assert result.warning is None, \
+            f"Expected no warning for {data_days} days (>= 252), but got: {result.warning}"
+    
+    @given(
+        current_iv=st.floats(min_value=10.0, max_value=80.0, allow_nan=False, allow_infinity=False),
+        data_days=st.integers(min_value=0, max_value=59)
+    )
+    @settings(max_examples=100)
+    def test_insufficient_data_unreliable(self, current_iv, data_days):
+        """
+        **Feature: option-calculation-fixes, Property 4: IV Rank 數據質量標記**
+        **Validates: Requirements 5.4**
+        
+        Property: When historical data has fewer than 60 days, 
+        result should be marked as 'unreliable'.
+        """
+        # 生成指定天數的歷史數據
+        if data_days > 0:
+            np.random.seed(42)
+            historical_iv = np.random.normal(30, 5, data_days)
+            historical_iv = np.clip(historical_iv, 5, 150)
+        else:
+            historical_iv = None
+        
+        result = self.calculator.calculate_thresholds(
+            current_iv=current_iv,
+            historical_iv=historical_iv,
+            vix=20.0
+        )
+        
+        # 驗證數據質量為 'insufficient'
+        assert result.data_quality == 'insufficient', \
+            f"Expected 'insufficient' data quality for {data_days} days, got {result.data_quality}"
+        
+        # 驗證可靠性為 'unreliable'
+        assert result.reliability == 'unreliable', \
+            f"Expected 'unreliable' reliability for {data_days} days, got {result.reliability}"
+        
+        # 驗證包含警告
+        assert result.warning is not None, \
+            f"Expected warning for {data_days} days (< 60), but warning is None"
 
 
 if __name__ == '__main__':

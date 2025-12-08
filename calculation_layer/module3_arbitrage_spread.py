@@ -2,11 +2,15 @@
 """
 模塊3: 套戥水位計算 (Arbitrage Spread)
 書籍來源: 《期權制勝2》第一課
+
+修改歷史:
+- 2025-12-08: 添加 ATM IV 支持，使用 Module 15 的 calculate_option_price_with_atm_iv 方法
+              添加 IV 不一致警告檢測（Requirements 4.1, 4.2, 4.3, 4.4）
 """
 
 import logging
-from dataclasses import dataclass
-from typing import Dict
+from dataclasses import dataclass, field
+from typing import Dict, Optional
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -21,10 +25,14 @@ class ArbitrageSpreadResult:
     spread_percentage: float
     recommendation: str
     calculation_date: str
+    # 新增字段：IV 來源和警告（Requirements 4.3, 4.4）
+    iv_used: Optional[float] = None  # 使用的 IV 值
+    iv_source: Optional[str] = None  # IV 來源標識
+    iv_warning: Optional[str] = None  # IV 不一致警告
     
     def to_dict(self) -> Dict:
         """轉換為字典"""
-        return {
+        result = {
             'market_option_price': round(self.market_option_price, 2),
             'fair_value': round(self.fair_value, 2),
             'arbitrage_spread': round(self.arbitrage_spread, 2),
@@ -32,6 +40,15 @@ class ArbitrageSpreadResult:
             'recommendation': self.recommendation,
             'calculation_date': self.calculation_date
         }
+        # 添加 IV 相關信息（Requirements 4.3）
+        if self.iv_used is not None:
+            result['iv_used'] = round(self.iv_used, 4)
+            result['iv_used_percent'] = round(self.iv_used * 100, 2)
+        if self.iv_source is not None:
+            result['iv_source'] = self.iv_source
+        if self.iv_warning is not None:
+            result['iv_warning'] = self.iv_warning
+        return result
 
 
 class ArbitrageSpreadCalculator:
@@ -303,6 +320,239 @@ class ArbitrageSpreadCalculator:
                 ask_price=ask_price,
                 calculation_date=calculation_date
             )
+    
+    def calculate_with_atm_iv(
+        self,
+        market_option_price: float,
+        stock_price: float,
+        strike_price: float,
+        risk_free_rate: float,
+        time_to_expiration: float,
+        market_iv: float,
+        atm_iv: Optional[float] = None,
+        option_type: str = 'call',
+        bid_price: Optional[float] = None,
+        ask_price: Optional[float] = None,
+        calculation_date: Optional[str] = None
+    ) -> ArbitrageSpreadResult:
+        """
+        計算套戥水位，使用 ATM IV 計算理論價格
+        
+        此方法使用 Module 15 的 calculate_option_price_with_atm_iv 方法
+        計算期權理論價格（公允值），優先使用 ATM IV 作為波動率輸入。
+        
+        參數:
+            market_option_price: 市場期權價格（美元）
+            stock_price: 當前股價（美元）
+            strike_price: 行使價（美元）
+            risk_free_rate: 無風險利率（年化，小數形式，如 0.05 表示 5%）
+            time_to_expiration: 到期時間（年，如 0.077 表示約 28 天）
+            market_iv: 整體市場 IV（回退選項，小數形式）
+            atm_iv: ATM 隱含波動率（來自 Module 17，可選，小數形式）
+            option_type: 期權類型 ('call' 或 'put')
+            bid_price: 買入價（可選）
+            ask_price: 賣出價（可選）
+            calculation_date: 計算日期（YYYY-MM-DD 格式）
+        
+        返回:
+            ArbitrageSpreadResult: 包含套戥水位、IV 來源和警告的完整結果
+        
+        IV 選擇邏輯（Requirements 4.1）:
+            1. 如果 atm_iv 有效（非 None 且 > 0），使用 ATM IV
+            2. 否則回退使用 market_iv
+        
+        IV 不一致警告（Requirements 4.2, 4.4）:
+            - 當 ATM IV 與 Market IV 差異超過 30% 時，添加警告
+            - 當套戥價差超過 5% 時，驗證是否因 IV 來源不一致導致
+        
+        示例:
+            >>> calc = ArbitrageSpreadCalculator()
+            >>> result = calc.calculate_with_atm_iv(
+            ...     market_option_price=5.50,
+            ...     stock_price=200.0,
+            ...     strike_price=200.0,
+            ...     risk_free_rate=0.05,
+            ...     time_to_expiration=0.077,
+            ...     market_iv=0.30,
+            ...     atm_iv=0.25,
+            ...     option_type='call'
+            ... )
+            >>> print(f"套戥水位: ${result.arbitrage_spread:.2f}")
+            >>> print(f"IV 來源: {result.iv_source}")
+        
+        Requirements: 4.1, 4.2, 4.3, 4.4
+        """
+        try:
+            logger.info(f"開始計算套戥水位（使用 ATM IV）...")
+            logger.info(f"  市場期權價格: ${market_option_price:.2f}")
+            logger.info(f"  股價: ${stock_price:.2f}, 行使價: ${strike_price:.2f}")
+            logger.info(f"  利率: {risk_free_rate*100:.2f}%, 時間: {time_to_expiration:.4f}年")
+            logger.info(f"  Market IV: {market_iv*100:.2f}%")
+            
+            if atm_iv is not None:
+                logger.info(f"  ATM IV: {atm_iv*100:.2f}%")
+            else:
+                logger.info(f"  ATM IV: 未提供")
+            
+            # 獲取計算日期
+            if calculation_date is None:
+                calculation_date = datetime.now().strftime('%Y-%m-%d')
+            
+            # 導入 Module 15 Black-Scholes 計算器
+            from calculation_layer.module15_black_scholes import BlackScholesCalculator
+            
+            bs_calculator = BlackScholesCalculator()
+            
+            # 使用 ATM IV 計算理論價格（Requirements 4.1）
+            bs_result = bs_calculator.calculate_option_price_with_atm_iv(
+                stock_price=stock_price,
+                strike_price=strike_price,
+                risk_free_rate=risk_free_rate,
+                time_to_expiration=time_to_expiration,
+                market_iv=market_iv,
+                atm_iv=atm_iv,
+                option_type=option_type,
+                calculation_date=calculation_date
+            )
+            
+            fair_value = bs_result.option_price
+            iv_used = bs_result.volatility
+            iv_source = bs_result.iv_source
+            
+            logger.info(f"  理論價格（公允值）: ${fair_value:.4f}")
+            logger.info(f"  使用的 IV: {iv_used*100:.2f}%")
+            logger.info(f"  IV 來源: {iv_source}")
+            
+            # 檢查 IV 不一致警告（Requirements 4.2, 4.4）
+            iv_warning = self._check_iv_inconsistency(
+                atm_iv=atm_iv,
+                market_iv=market_iv,
+                market_option_price=market_option_price,
+                fair_value=fair_value
+            )
+            
+            if iv_warning:
+                logger.warning(f"! IV 不一致警告: {iv_warning}")
+            
+            # 驗證輸入
+            if not self._validate_inputs(market_option_price, fair_value):
+                raise ValueError("輸入參數無效")
+            
+            # 計算套戥水位
+            arbitrage_spread = market_option_price - fair_value
+            
+            # 計算套戥百分比
+            spread_percentage = (arbitrage_spread / fair_value) * 100 if fair_value != 0 else 0
+            
+            # 基於相對閾值判斷
+            recommendation = ""
+            
+            # 如果有 Bid/Ask 數據，進行更精確的判斷
+            if bid_price is not None and ask_price is not None and bid_price > 0 and ask_price > 0:
+                if fair_value < bid_price:
+                    real_profit_pct = ((bid_price - fair_value) / fair_value) * 100
+                    if real_profit_pct > self.THRESHOLDS['overvalued']:
+                        recommendation = f"高估 (Bid > 理論價) - 可直接沽出獲利 (潛在利潤 {real_profit_pct:.1f}%)"
+                    else:
+                        recommendation = "略高估 - 但利潤空間有限 (考慮交易成本)"
+                elif fair_value > ask_price:
+                    real_profit_pct = ((fair_value - ask_price) / ask_price) * 100
+                    if real_profit_pct > abs(self.THRESHOLDS['undervalued']):
+                        recommendation = f"低估 (Ask < 理論價) - 可直接買入獲利 (潛在利潤 {real_profit_pct:.1f}%)"
+                    else:
+                        recommendation = "略低估 - 但利潤空間有限 (考慮交易成本)"
+                else:
+                    recommendation = "合理定價 - 理論價在買賣價差內 (無套利空間)"
+            
+            # Fallback 到中間價判斷
+            if not recommendation:
+                if spread_percentage >= self.THRESHOLDS['strong_overvalued']:
+                    recommendation = "嚴重高估 - 強烈套戥機會 (建議沽出)"
+                elif spread_percentage >= self.THRESHOLDS['overvalued']:
+                    recommendation = "略高估 - 輕微套戥機會 (觀望或輕倉沽出)"
+                elif spread_percentage >= -self.THRESHOLDS['fair']:
+                    recommendation = "合理定價 - 無套戥機會 (公平價格,建議觀望)"
+                elif spread_percentage >= self.THRESHOLDS['strong_undervalued']:
+                    recommendation = "略低估 - 輕微套戥機會 (考慮買入)"
+                else:
+                    recommendation = "嚴重低估 - 強烈套戥機會 (建議買入)"
+            
+            logger.info(f"  計算結果:")
+            logger.info(f"    套戥水位: ${arbitrage_spread:.2f}")
+            logger.info(f"    套戥百分比: {spread_percentage:.4f}%")
+            logger.info(f"    建議: {recommendation}")
+            
+            # 建立結果對象（包含 IV 來源和警告，Requirements 4.3）
+            result = ArbitrageSpreadResult(
+                market_option_price=market_option_price,
+                fair_value=fair_value,
+                arbitrage_spread=arbitrage_spread,
+                spread_percentage=spread_percentage,
+                recommendation=recommendation,
+                calculation_date=calculation_date,
+                iv_used=iv_used,
+                iv_source=iv_source,
+                iv_warning=iv_warning
+            )
+            
+            logger.info(f"* 套戥水位計算完成（使用 ATM IV）")
+            return result
+            
+        except Exception as e:
+            logger.error(f"x 套戥水位計算失敗（ATM IV）: {e}")
+            raise
+    
+    def _check_iv_inconsistency(
+        self,
+        atm_iv: Optional[float],
+        market_iv: float,
+        market_option_price: float,
+        fair_value: float
+    ) -> Optional[str]:
+        """
+        檢查 IV 不一致警告
+        
+        當 ATM IV 與 Market IV 差異較大時，或套戥價差超過 5% 時，
+        生成警告信息。
+        
+        參數:
+            atm_iv: ATM 隱含波動率
+            market_iv: 整體市場 IV
+            market_option_price: 市場期權價格
+            fair_value: 理論價格（公允值）
+        
+        返回:
+            str: 警告信息，如果沒有警告則返回 None
+        
+        Requirements: 4.2, 4.4
+        """
+        warnings = []
+        
+        # 檢查 ATM IV 與 Market IV 差異（Requirements 4.4）
+        if atm_iv is not None and atm_iv > 0 and market_iv > 0:
+            iv_diff_pct = abs(atm_iv - market_iv) / market_iv * 100
+            if iv_diff_pct > 30:  # 30% 差異閾值
+                warnings.append(
+                    f"ATM IV ({atm_iv*100:.1f}%) 與 Market IV ({market_iv*100:.1f}%) "
+                    f"差異 {iv_diff_pct:.1f}%，可能影響定價準確性"
+                )
+        
+        # 檢查套戥價差是否超過 5%（Requirements 4.2）
+        if fair_value > 0:
+            spread_pct = abs(market_option_price - fair_value) / fair_value * 100
+            if spread_pct > 5:
+                # 如果 ATM IV 和 Market IV 都存在且差異大，可能是 IV 來源不一致導致
+                if atm_iv is not None and market_iv > 0:
+                    iv_diff_pct = abs(atm_iv - market_iv) / market_iv * 100
+                    if iv_diff_pct > 15:  # 15% 差異可能導致顯著價差
+                        warnings.append(
+                            f"套戥價差 {spread_pct:.1f}% 超過 5%，"
+                            f"可能因 IV 來源不一致（ATM vs Market）導致"
+                        )
+        
+        if warnings:
+            return "; ".join(warnings)
+        return None
     
     @staticmethod
     def _validate_inputs(market_price: float, fair_value: float) -> bool:

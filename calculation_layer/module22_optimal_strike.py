@@ -77,6 +77,9 @@ class StrikeAnalysis:
     parity_valid: Optional[bool] = None  # Parity 驗證是否通過
     parity_deviation_pct: Optional[float] = None  # Parity 偏離百分比
     
+    # Short Put 安全概率 (Requirements 2.5)
+    safety_probability: float = 0.0  # 安全概率 (1 - |Delta|)
+    
     def to_dict(self) -> Dict:
         return {
             'strike': self.strike,
@@ -109,7 +112,8 @@ class StrikeAnalysis:
             'expected_return': round(self.expected_return, 2),
             'theta_adjusted_return': round(self.theta_adjusted_return, 2),
             'parity_valid': self.parity_valid,
-            'parity_deviation_pct': round(self.parity_deviation_pct, 2) if self.parity_deviation_pct is not None else None
+            'parity_deviation_pct': round(self.parity_deviation_pct, 2) if self.parity_deviation_pct is not None else None,
+            'safety_probability': round(self.safety_probability, 4)  # Requirements 2.5
         }
 
 
@@ -410,6 +414,7 @@ class OptimalStrikeCalculator:
                     'iv': round(s.iv, 2),
                     'iv_skew': round(s.iv_skew, 2),
                     'bid_ask_spread_pct': round(s.bid_ask_spread_pct, 2),
+                    'safety_probability': round(s.safety_probability, 4),  # Requirements 2.5
                     'reason': self._generate_recommendation_reason(s, strategy_type)
                 }
                 for i, s in enumerate(analyzed_strikes[:3])
@@ -475,6 +480,54 @@ class OptimalStrikeCalculator:
             logger.error(f"x 最佳行使價分析失敗: {e}")
             return self._create_empty_result(str(e))
 
+    
+    def _filter_short_put(self, strike: float, current_price: float, delta: float) -> tuple:
+        """
+        Short Put 安全過濾
+        
+        過濾條件:
+        1. ITM Put（行使價 >= 當前股價）
+        2. 高 Delta Put（|Delta| > 0.35）
+        3. 距離過近的 Put（距離 < 3%）
+        
+        參數:
+            strike: 行使價
+            current_price: 當前股價
+            delta: Delta 值（Put 的 Delta 是負數）
+        
+        返回:
+            tuple: (是否通過過濾, 跳過原因)
+        
+        Requirements: 2.1, 2.2, 2.3, 2.4
+        """
+        try:
+            # 過濾 ITM Put（行使價 >= 當前股價）
+            # Requirements 2.1
+            if strike >= current_price:
+                reason = f"ITM Put: ${strike:.2f} >= ${current_price:.2f}"
+                logger.debug(f"  跳過 {reason}")
+                return (False, reason)
+            
+            # 過濾高 Delta Put（|Delta| > 0.35）
+            # Requirements 2.2
+            abs_delta = abs(delta)
+            if abs_delta > 0.35:
+                reason = f"高 Delta: |Δ|={abs_delta:.2f} > 0.35"
+                logger.debug(f"  跳過 {reason}")
+                return (False, reason)
+            
+            # 確保距離 >= 3%
+            # Requirements 2.3
+            distance_pct = (current_price - strike) / current_price
+            if distance_pct < 0.03:
+                reason = f"距離過近: {distance_pct*100:.1f}% < 3%"
+                logger.debug(f"  跳過 {reason}")
+                return (False, reason)
+            
+            return (True, "")
+        except Exception as e:
+            logger.error(f"Short Put 過濾失敗: {e}")
+            return (False, f"過濾錯誤: {e}")
     
     def _analyze_single_strike(
         self,
@@ -564,6 +617,14 @@ class OptimalStrikeCalculator:
                 theta = theta or 0
                 vega = vega or 0
             
+            # Short Put 安全過濾
+            # Requirements: 2.1, 2.2, 2.3, 2.4
+            if strategy_type == 'short_put':
+                passed, skip_reason = self._filter_short_put(strike, current_price, delta)
+                if not passed:
+                    logger.debug(f"  Short Put 過濾: 跳過行使價 ${strike:.2f} - {skip_reason}")
+                    return None
+            
             # 計算 Bid-Ask Spread 百分比
             mid_price = (bid + ask) / 2 if (bid + ask) > 0 else last_price
             bid_ask_spread_pct = ((ask - bid) / mid_price * 100) if mid_price > 0 else 0
@@ -597,6 +658,10 @@ class OptimalStrikeCalculator:
                 analysis, current_price, strategy_type, target_price, 
                 holding_days=days_to_expiration
             )
+            
+            # 計算安全概率 (1 - |Delta|)
+            # Requirements: 2.5
+            analysis.safety_probability = 1.0 - abs(analysis.delta)
             
             return analysis
             
@@ -980,8 +1045,15 @@ class OptimalStrikeCalculator:
         生成推薦理由
         
         根據評分最高的維度生成推薦理由
+        Requirements: 2.5 - 在推薦理由中顯示安全概率
         """
         reasons = []
+        
+        # Short Put 安全概率顯示
+        # Requirements: 2.5
+        if strategy_type == 'short_put':
+            safety_pct = analysis.safety_probability * 100
+            reasons.append(f"安全概率 {safety_pct:.1f}%")
         
         # 流動性評分
         if analysis.liquidity_score >= 80:

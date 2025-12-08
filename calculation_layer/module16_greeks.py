@@ -250,6 +250,62 @@ class GreeksCalculator:
             logger.error(f"✗ 計算 Gamma 失敗: {e}")
             raise
     
+    def _calculate_theta_annual(
+        self,
+        stock_price: float,
+        strike_price: float,
+        risk_free_rate: float,
+        time_to_expiration: float,
+        volatility: float,
+        option_type: str = 'call'
+    ) -> float:
+        """
+        計算年化 Theta（內部方法）
+        
+        參數:
+            stock_price: 當前股價
+            strike_price: 行使價
+            risk_free_rate: 無風險利率
+            time_to_expiration: 到期時間（年）
+            volatility: 波動率
+            option_type: 期權類型 ('call' 或 'put')
+        
+        返回:
+            float: 年化 Theta 值
+        
+        公式:
+            Call: Θ = -[S×N'(d1)×σ / (2×√T)] - r×K×e^(-r×T)×N(d2)
+            Put:  Θ = -[S×N'(d1)×σ / (2×√T)] + r×K×e^(-r×T)×N(-d2)
+        """
+        # 計算 d1 和 d2
+        d1, d2 = self.bs_calculator.calculate_d1_d2(
+            stock_price, strike_price, risk_free_rate,
+            time_to_expiration, volatility
+        )
+        
+        # 計算共同項
+        sqrt_t = math.sqrt(time_to_expiration)
+        discount_factor = math.exp(-risk_free_rate * time_to_expiration)
+        
+        # 第一項（對 Call 和 Put 都相同）
+        term1 = -(stock_price * self.bs_calculator.normal_pdf(d1) * volatility) / (2 * sqrt_t)
+        
+        # 第二項（Call 和 Put 不同）
+        option_type_lower = option_type.lower()
+        
+        if option_type_lower == 'call':
+            # Call Theta
+            term2 = -risk_free_rate * strike_price * discount_factor * self.bs_calculator.normal_cdf(d2)
+            theta_annual = term1 + term2
+        elif option_type_lower == 'put':
+            # Put Theta
+            term2 = risk_free_rate * strike_price * discount_factor * self.bs_calculator.normal_cdf(-d2)
+            theta_annual = term1 + term2
+        else:
+            raise ValueError(f"無效的期權類型: {option_type}")
+        
+        return theta_annual
+
     def calculate_theta(
         self,
         stock_price: float,
@@ -260,7 +316,7 @@ class GreeksCalculator:
         option_type: str = 'call'
     ) -> float:
         """
-        計算 Theta
+        計算 Theta（每日時間衰減）
         
         Theta 衡量期權價格對時間流逝的敏感度（時間衰減）。
         通常為負數，表示隨著時間流逝，期權價值減少。
@@ -274,49 +330,33 @@ class GreeksCalculator:
             option_type: 期權類型 ('call' 或 'put')
         
         返回:
-            float: Theta 值（每年）
-                注: 返回值是年化的，除以 365 可得每日 Theta
+            float: 每日 Theta 值（$/天）
         
         公式:
             Call: Θ = -[S×N'(d1)×σ / (2×√T)] - r×K×e^(-r×T)×N(d2)
             Put:  Θ = -[S×N'(d1)×σ / (2×√T)] + r×K×e^(-r×T)×N(-d2)
+            每日 Theta = 年化 Theta / 365
         
         解釋:
             - Theta 通常為負（時間衰減）
             - ATM 期權的 Theta 最大（絕對值）
             - 接近到期時，Theta 加速
+            - 返回值為每日衰減金額，例如 -0.05 表示每天損失 $0.05
         """
         try:
-            # 計算 d1 和 d2
-            d1, d2 = self.bs_calculator.calculate_d1_d2(
+            # 計算年化 Theta
+            theta_annual = self._calculate_theta_annual(
                 stock_price, strike_price, risk_free_rate,
-                time_to_expiration, volatility
+                time_to_expiration, volatility, option_type
             )
             
-            # 計算共同項
-            sqrt_t = math.sqrt(time_to_expiration)
-            discount_factor = math.exp(-risk_free_rate * time_to_expiration)
+            # 轉換為每日 Theta
+            theta_daily = theta_annual / 365.0
             
-            # 第一項（對 Call 和 Put 都相同）
-            term1 = -(stock_price * self.bs_calculator.normal_pdf(d1) * volatility) / (2 * sqrt_t)
+            # 記錄年化值和每日值以便驗證
+            logger.debug(f"  Theta ({option_type}): 年化={theta_annual:.6f}, 每日={theta_daily:.6f} ($/天)")
             
-            # 第二項（Call 和 Put 不同）
-            option_type_lower = option_type.lower()
-            
-            if option_type_lower == 'call':
-                # Call Theta
-                term2 = -risk_free_rate * strike_price * discount_factor * self.bs_calculator.normal_cdf(d2)
-                theta = term1 + term2
-            elif option_type_lower == 'put':
-                # Put Theta
-                term2 = risk_free_rate * strike_price * discount_factor * self.bs_calculator.normal_cdf(-d2)
-                theta = term1 + term2
-            else:
-                raise ValueError(f"無效的期權類型: {option_type}")
-            
-            logger.debug(f"  Theta ({option_type}): {theta:.6f} (年化)")
-            
-            return theta
+            return theta_daily
             
         except Exception as e:
             logger.error(f"✗ 計算 Theta 失敗: {e}")
@@ -538,7 +578,7 @@ class GreeksCalculator:
             logger.info(f"  計算結果:")
             logger.info(f"    Delta = {delta:.6f}")
             logger.info(f"    Gamma = {gamma:.6f}")
-            logger.info(f"    Theta = {theta:.6f} (年化)")
+            logger.info(f"    Theta = {theta:.6f} ($/天)")
             logger.info(f"    Vega = {vega:.6f}")
             logger.info(f"    Rho = {rho:.6f}")
             
@@ -598,8 +638,7 @@ if __name__ == "__main__":
     print(f"\nGreeks:")
     print(f"  Delta:  {result1.delta:>10.6f}  (股價變化 $1 → 期權價格變化 ${result1.delta:.2f})")
     print(f"  Gamma:  {result1.gamma:>10.6f}  (股價變化 $1 → Delta 變化 {result1.gamma:.6f})")
-    print(f"  Theta:  {result1.theta:>10.6f}  (每年時間衰減)")
-    print(f"          {result1.theta/365:>10.6f}  (每日時間衰減)")
+    print(f"  Theta:  {result1.theta:>10.6f}  (每日時間衰減 $/天)")
     print(f"  Vega:   {result1.vega:>10.6f}  (波動率變化 1% → 期權價格變化 ${result1.vega/100:.2f})")
     print(f"  Rho:    {result1.rho:>10.6f}  (利率變化 1% → 期權價格變化 ${result1.rho/100:.2f})")
     
