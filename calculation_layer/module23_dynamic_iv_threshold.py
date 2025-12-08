@@ -106,6 +106,13 @@ class DynamicIVThresholdCalculator:
         """
         try:
             logger.info(f"開始動態IV閾值計算...")
+            
+            # 修復：確保 current_iv 是百分比形式
+            # 如果 current_iv < 1.0，則認為是小數形式，轉換為百分比
+            if current_iv < 1.0:
+                current_iv = current_iv * 100.0
+                logger.info(f"  當前IV格式轉換: 小數 -> 百分比")
+            
             logger.info(f"  當前IV: {current_iv:.2f}%")
             
             calculation_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -143,6 +150,15 @@ class DynamicIVThresholdCalculator:
         calculation_date: str
     ) -> IVThresholdResult:
         """計算動態閾值（基於歷史數據）"""
+        
+        # 修復：檢測並轉換歷史 IV 數據格式
+        # 如果數據是小數形式（如 0.25 表示 25%），轉換為百分比形式
+        # 判斷標準：如果中位數 < 1.0，則認為是小數形式
+        median_check = float(np.median(iv_data))
+        if median_check < 1.0:
+            # 小數形式，轉換為百分比
+            iv_data = iv_data * 100.0
+            logger.info(f"  歷史IV數據格式轉換: 小數 -> 百分比 (中位數: {median_check:.4f} -> {median_check*100:.2f}%)")
         
         # 計算百分位數
         percentile_75 = float(np.percentile(iv_data, 75))

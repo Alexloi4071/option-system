@@ -133,7 +133,7 @@ class OptimalStrikeCalculator:
     WEIGHT_IV = 0.20
     WEIGHT_RISK_REWARD = 0.20
     
-    # 流動性閾值（金曹三不買原則）
+    # 流動性閾值（金曹三不買原則）- 修改為 OR 邏輯
     MIN_VOLUME = 10
     MIN_OPEN_INTEREST = 100
     MAX_BID_ASK_SPREAD_PCT = 10.0
@@ -145,6 +145,9 @@ class OptimalStrikeCalculator:
     
     # IV 默認值
     DEFAULT_IV = 0.30
+    
+    # 行使價範圍（擴大到 ±20%）
+    STRIKE_RANGE_PCT = 0.20
     
     def __init__(self):
         logger.info("* 最佳行使價計算器已初始化")
@@ -327,13 +330,15 @@ class OptimalStrikeCalculator:
                 logger.warning("! 期權鏈數據為空")
                 return self._create_empty_result("期權鏈數據為空")
             
-            # 過濾行使價範圍 (ATM ± 15%)
-            min_strike = current_price * 0.85
-            max_strike = current_price * 1.15
+            # 過濾行使價範圍 (ATM ± 20%)
+            min_strike = current_price * (1 - self.STRIKE_RANGE_PCT)
+            max_strike = current_price * (1 + self.STRIKE_RANGE_PCT)
             
-            # 分析每個行使價
+            # 第一輪：收集所有符合條件的行使價並計算 ATM IV
             analyzed_strikes = []
-            atm_iv = None  # 用於計算 IV Skew
+            atm_iv = None
+            atm_strike = None
+            min_atm_distance = float('inf')
             
             for option in options_data:
                 strike = option.get('strike', 0)
@@ -342,11 +347,12 @@ class OptimalStrikeCalculator:
                 if strike < min_strike or strike > max_strike:
                     continue
                 
-                # 過濾流動性不足的行使價（金曹三不買原則）
+                # 過濾流動性不足的行使價（金曹三不買原則）- 改為 OR 邏輯
                 volume = option.get('volume', 0) or 0
                 oi = option.get('openInterest', 0) or 0
                 
-                if volume < self.MIN_VOLUME or oi < self.MIN_OPEN_INTEREST:
+                # 修復：使用 OR 邏輯，只要 Volume 或 OI 其中一個達標即可
+                if volume < self.MIN_VOLUME and oi < self.MIN_OPEN_INTEREST:
                     continue
                 
                 # 創建分析對象
@@ -358,18 +364,26 @@ class OptimalStrikeCalculator:
                 if analysis:
                     analyzed_strikes.append(analysis)
                     
-                    # 記錄 ATM IV 用於計算 IV Skew
-                    if abs(strike - current_price) < current_price * 0.02:
+                    # 找到最接近 ATM 的行使價
+                    distance = abs(strike - current_price)
+                    if distance < min_atm_distance:
+                        min_atm_distance = distance
                         atm_iv = analysis.iv
+                        atm_strike = strike
             
             if not analyzed_strikes:
                 logger.warning("! 沒有符合條件的行使價")
                 return self._create_empty_result("沒有符合流動性條件的行使價")
             
-            # 計算 IV Skew
+            # 第二輪：計算 IV Skew（在評分之前）
             if atm_iv:
+                logger.debug(f"  ATM IV: {atm_iv:.2f}% (行使價: ${atm_strike:.2f})")
                 for analysis in analyzed_strikes:
                     analysis.iv_skew = analysis.iv - atm_iv
+            
+            # 第三輪：重新計算 IV 評分（現在 IV Skew 已經有值了）
+            for analysis in analyzed_strikes:
+                analysis.iv_score = self._calculate_iv_score(analysis, strategy_type)
             
             # 計算綜合評分
             for analysis in analyzed_strikes:
@@ -388,8 +402,15 @@ class OptimalStrikeCalculator:
                     'iv_score': round(s.iv_score, 2),
                     'risk_reward_score': round(s.risk_reward_score, 2),
                     'delta': round(s.delta, 4),
+                    'gamma': round(s.gamma, 4),
+                    'theta': round(s.theta, 4),
+                    'vega': round(s.vega, 4),
                     'volume': s.volume,
-                    'open_interest': s.open_interest
+                    'open_interest': s.open_interest,
+                    'iv': round(s.iv, 2),
+                    'iv_skew': round(s.iv_skew, 2),
+                    'bid_ask_spread_pct': round(s.bid_ask_spread_pct, 2),
+                    'reason': self._generate_recommendation_reason(s, strategy_type)
                 }
                 for i, s in enumerate(analyzed_strikes[:3])
             ]
@@ -429,10 +450,19 @@ class OptimalStrikeCalculator:
                 'total_analyzed': len(analyzed_strikes),
                 'strategy_type': strategy_type,
                 'current_price': current_price,
+                'strike_range': {
+                    'min': round(min_strike, 2),
+                    'max': round(max_strike, 2),
+                    'range_pct': self.STRIKE_RANGE_PCT * 100
+                },
+                'atm_info': {
+                    'strike': atm_strike,
+                    'iv': atm_iv
+                },
                 'analysis_summary': self._generate_summary(analyzed_strikes[0], strategy_type) if analyzed_strikes else "無推薦",
                 'calculation_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'parity_validation': parity_validation,  # 添加 Parity 驗證結果
-                'volatility_smile': volatility_smile_result  # 添加波動率微笑分析結果 (Requirements 5.6)
+                'parity_validation': parity_validation,
+                'volatility_smile': volatility_smile_result
             }
             
             logger.info(f"* 最佳行使價分析完成")
@@ -578,36 +608,51 @@ class OptimalStrikeCalculator:
         """
         計算流動性評分 (0-100)
         
-        基於金曹三不買原則:
-        - Volume: 推薦 ≥ 100, 最低 ≥ 10
-        - Open Interest: 推薦 ≥ 500, 最低 ≥ 100
-        - Bid-Ask Spread: 推薦 < 5%, 最高 < 10%
+        基於金曹三不買原則，增加更細緻的分數區間:
+        - Volume: 推薦 ≥ 100, 優秀 ≥ 500, 最低 ≥ 10
+        - Open Interest: 推薦 ≥ 500, 優秀 ≥ 2000, 最低 ≥ 100
+        - Bid-Ask Spread: 推薦 < 5%, 優秀 < 2%, 最高 < 10%
         """
         score = 0.0
         
-        # Volume 評分 (40%)
-        if analysis.volume >= self.RECOMMENDED_VOLUME:
-            volume_score = 40.0
+        # Volume 評分 (35%) - 增加更細緻的區間
+        EXCELLENT_VOLUME = 500
+        if analysis.volume >= EXCELLENT_VOLUME:
+            volume_score = 35.0
+        elif analysis.volume >= self.RECOMMENDED_VOLUME:
+            # 100-500: 線性插值 25-35
+            volume_score = 25.0 + (analysis.volume - self.RECOMMENDED_VOLUME) / (EXCELLENT_VOLUME - self.RECOMMENDED_VOLUME) * 10.0
         elif analysis.volume >= self.MIN_VOLUME:
-            volume_score = 20.0 + (analysis.volume - self.MIN_VOLUME) / (self.RECOMMENDED_VOLUME - self.MIN_VOLUME) * 20.0
+            # 10-100: 線性插值 10-25
+            volume_score = 10.0 + (analysis.volume - self.MIN_VOLUME) / (self.RECOMMENDED_VOLUME - self.MIN_VOLUME) * 15.0
         else:
             volume_score = 0.0
         score += volume_score
         
-        # Open Interest 評分 (40%)
-        if analysis.open_interest >= self.RECOMMENDED_OPEN_INTEREST:
-            oi_score = 40.0
+        # Open Interest 評分 (35%) - 增加更細緻的區間
+        EXCELLENT_OI = 2000
+        if analysis.open_interest >= EXCELLENT_OI:
+            oi_score = 35.0
+        elif analysis.open_interest >= self.RECOMMENDED_OPEN_INTEREST:
+            # 500-2000: 線性插值 25-35
+            oi_score = 25.0 + (analysis.open_interest - self.RECOMMENDED_OPEN_INTEREST) / (EXCELLENT_OI - self.RECOMMENDED_OPEN_INTEREST) * 10.0
         elif analysis.open_interest >= self.MIN_OPEN_INTEREST:
-            oi_score = 20.0 + (analysis.open_interest - self.MIN_OPEN_INTEREST) / (self.RECOMMENDED_OPEN_INTEREST - self.MIN_OPEN_INTEREST) * 20.0
+            # 100-500: 線性插值 10-25
+            oi_score = 10.0 + (analysis.open_interest - self.MIN_OPEN_INTEREST) / (self.RECOMMENDED_OPEN_INTEREST - self.MIN_OPEN_INTEREST) * 15.0
         else:
             oi_score = 0.0
         score += oi_score
         
-        # Bid-Ask Spread 評分 (20%)
-        if analysis.bid_ask_spread_pct <= self.RECOMMENDED_BID_ASK_SPREAD_PCT:
-            spread_score = 20.0
+        # Bid-Ask Spread 評分 (30%) - 增加更細緻的區間
+        EXCELLENT_SPREAD = 2.0
+        if analysis.bid_ask_spread_pct <= EXCELLENT_SPREAD:
+            spread_score = 30.0
+        elif analysis.bid_ask_spread_pct <= self.RECOMMENDED_BID_ASK_SPREAD_PCT:
+            # 2-5%: 線性插值 20-30
+            spread_score = 20.0 + (self.RECOMMENDED_BID_ASK_SPREAD_PCT - analysis.bid_ask_spread_pct) / (self.RECOMMENDED_BID_ASK_SPREAD_PCT - EXCELLENT_SPREAD) * 10.0
         elif analysis.bid_ask_spread_pct <= self.MAX_BID_ASK_SPREAD_PCT:
-            spread_score = 10.0 + (self.MAX_BID_ASK_SPREAD_PCT - analysis.bid_ask_spread_pct) / (self.MAX_BID_ASK_SPREAD_PCT - self.RECOMMENDED_BID_ASK_SPREAD_PCT) * 10.0
+            # 5-10%: 線性插值 5-20
+            spread_score = 5.0 + (self.MAX_BID_ASK_SPREAD_PCT - analysis.bid_ask_spread_pct) / (self.MAX_BID_ASK_SPREAD_PCT - self.RECOMMENDED_BID_ASK_SPREAD_PCT) * 15.0
         else:
             spread_score = 0.0
         score += spread_score
@@ -618,46 +663,56 @@ class OptimalStrikeCalculator:
         """
         計算 Greeks 評分 (0-100)
         
-        根據策略類型調整評分:
+        根據策略類型調整評分，使用連續函數而非離散區間:
         - Long Call/Put: 偏好較高 Delta (0.3-0.7), 較低 Theta 損失
         - Short Call/Put: 偏好較低 Delta (0.1-0.3), 較高 Theta 收益
         """
-        score = 0.0
         delta = abs(analysis.delta)
         
         if strategy_type in ['long_call', 'long_put']:
-            # Long 策略: 偏好 Delta 0.3-0.7
-            if 0.4 <= delta <= 0.6:
-                delta_score = 50.0  # ATM 最佳
-            elif 0.3 <= delta <= 0.7:
-                delta_score = 40.0
-            elif 0.2 <= delta <= 0.8:
-                delta_score = 25.0
-            else:
-                delta_score = 10.0
+            # Long 策略: 偏好 Delta 0.4-0.6 (ATM)
+            # 使用高斯函數，中心在 0.5，標準差 0.15
+            # 這樣 Delta=0.5 得分最高，越遠離 0.5 分數越低
+            delta_center = 0.5
+            delta_std = 0.15
+            delta_score = 50.0 * (2.718 ** (-((delta - delta_center) ** 2) / (2 * delta_std ** 2)))
             
-            # Theta 評分: Long 策略希望 Theta 損失小
-            theta_score = max(0, 30.0 + analysis.theta * 10) if analysis.theta < 0 else 30.0
+            # Theta 評分: Long 策略希望 Theta 損失小（Theta 是負數）
+            # Theta 越接近 0 越好，使用線性函數
+            # 假設 Theta 範圍 [-0.5, 0]，-0.5 得 0 分，0 得 30 分
+            if analysis.theta < 0:
+                theta_score = max(0, 30.0 + analysis.theta * 60)  # -0.5 -> 0, 0 -> 30
+            else:
+                theta_score = 30.0
             
             # Vega 評分: Long 策略希望 Vega 高（受益於 IV 上升）
-            vega_score = min(20.0, analysis.vega * 2) if analysis.vega > 0 else 0
+            # 假設 Vega 範圍 [0, 50]，使用對數函數
+            if analysis.vega > 0:
+                import math
+                vega_score = min(20.0, 5.0 * math.log(1 + analysis.vega))
+            else:
+                vega_score = 0
             
         else:  # short_call, short_put
-            # Short 策略: 偏好 Delta 0.1-0.3
-            if 0.1 <= delta <= 0.2:
-                delta_score = 50.0  # 最佳
-            elif 0.2 < delta <= 0.3:
-                delta_score = 40.0
-            elif delta < 0.1 or 0.3 < delta <= 0.4:
-                delta_score = 25.0
-            else:
-                delta_score = 10.0
+            # Short 策略: 偏好 Delta 0.15-0.25
+            # 使用高斯函數，中心在 0.2，標準差 0.08
+            delta_center = 0.20
+            delta_std = 0.08
+            delta_score = 50.0 * (2.718 ** (-((delta - delta_center) ** 2) / (2 * delta_std ** 2)))
             
-            # Theta 評分: Short 策略希望 Theta 收益高
-            theta_score = min(30.0, abs(analysis.theta) * 10) if analysis.theta < 0 else 0
+            # Theta 評分: Short 策略希望 Theta 收益高（Theta 是負數，對 Short 有利）
+            # Theta 越負越好，使用線性函數
+            if analysis.theta < 0:
+                theta_score = min(30.0, abs(analysis.theta) * 40)  # -0.75 -> 30
+            else:
+                theta_score = 0
             
             # Vega 評分: Short 策略希望 Vega 低（不受 IV 上升影響）
-            vega_score = max(0, 20.0 - analysis.vega * 2)
+            # Vega 越低越好
+            if analysis.vega >= 0:
+                vega_score = max(0, 20.0 - analysis.vega * 0.5)
+            else:
+                vega_score = 20.0
         
         score = delta_score + theta_score + vega_score
         return min(100.0, max(0.0, score))
@@ -666,65 +721,41 @@ class OptimalStrikeCalculator:
         """
         計算 IV 評分 (0-100)
         
-        根據策略類型調整評分:
+        根據策略類型調整評分，使用連續函數:
         - Long 策略: 偏好低 IV Rank (買便宜的期權)
         - Short 策略: 偏好高 IV Rank (賣貴的期權)
         """
-        score = 0.0
         iv_rank = analysis.iv_rank
         
         if strategy_type in ['long_call', 'long_put']:
             # Long 策略: IV Rank 越低越好
-            if iv_rank <= 20:
-                iv_rank_score = 60.0
-            elif iv_rank <= 30:
-                iv_rank_score = 50.0
-            elif iv_rank <= 50:
-                iv_rank_score = 35.0
-            elif iv_rank <= 70:
-                iv_rank_score = 20.0
-            else:
-                iv_rank_score = 10.0
+            # 使用線性函數: IV Rank 0 -> 60 分, IV Rank 100 -> 10 分
+            iv_rank_score = 60.0 - (iv_rank / 100.0) * 50.0
         else:
             # Short 策略: IV Rank 越高越好
-            if iv_rank >= 80:
-                iv_rank_score = 60.0
-            elif iv_rank >= 70:
-                iv_rank_score = 50.0
-            elif iv_rank >= 50:
-                iv_rank_score = 35.0
-            elif iv_rank >= 30:
-                iv_rank_score = 20.0
-            else:
-                iv_rank_score = 10.0
-        
-        score += iv_rank_score
+            # 使用線性函數: IV Rank 0 -> 10 分, IV Rank 100 -> 60 分
+            iv_rank_score = 10.0 + (iv_rank / 100.0) * 50.0
         
         # IV Skew 評分 (40%)
         # 負 Skew 表示該行使價 IV 低於 ATM，正 Skew 表示高於 ATM
         skew = analysis.iv_skew
+        
         if strategy_type in ['long_call', 'long_put']:
             # Long 策略: 偏好負 Skew (IV 低於 ATM)
-            if skew <= -5:
-                skew_score = 40.0
-            elif skew <= 0:
-                skew_score = 30.0
-            elif skew <= 5:
-                skew_score = 20.0
+            # 使用線性函數: Skew -10 -> 40 分, Skew 0 -> 25 分, Skew +10 -> 10 分
+            if skew <= 0:
+                skew_score = 25.0 + min(15.0, abs(skew) * 1.5)  # -10 -> 40
             else:
-                skew_score = 10.0
+                skew_score = max(10.0, 25.0 - skew * 1.5)  # +10 -> 10
         else:
             # Short 策略: 偏好正 Skew (IV 高於 ATM)
-            if skew >= 5:
-                skew_score = 40.0
-            elif skew >= 0:
-                skew_score = 30.0
-            elif skew >= -5:
-                skew_score = 20.0
+            # 使用線性函數: Skew +10 -> 40 分, Skew 0 -> 25 分, Skew -10 -> 10 分
+            if skew >= 0:
+                skew_score = 25.0 + min(15.0, skew * 1.5)  # +10 -> 40
             else:
-                skew_score = 10.0
+                skew_score = max(10.0, 25.0 + skew * 1.5)  # -10 -> 10
         
-        score += skew_score
+        score = iv_rank_score + skew_score
         return min(100.0, max(0.0, score))
     
     def _calculate_risk_reward_score(
@@ -943,6 +974,50 @@ class OptimalStrikeCalculator:
             analysis.risk_reward_score * self.WEIGHT_RISK_REWARD
         )
         return min(100.0, max(0.0, composite))
+    
+    def _generate_recommendation_reason(self, analysis: StrikeAnalysis, strategy_type: str) -> str:
+        """
+        生成推薦理由
+        
+        根據評分最高的維度生成推薦理由
+        """
+        reasons = []
+        
+        # 流動性評分
+        if analysis.liquidity_score >= 80:
+            reasons.append("流動性優秀")
+        elif analysis.liquidity_score >= 60:
+            reasons.append("流動性良好")
+        
+        # Delta 評分
+        delta = abs(analysis.delta)
+        if strategy_type in ['long_call', 'long_put']:
+            if 0.4 <= delta <= 0.6:
+                reasons.append("Delta 接近 ATM")
+            elif 0.3 <= delta <= 0.7:
+                reasons.append("Delta 適中")
+        else:
+            if 0.1 <= delta <= 0.3:
+                reasons.append("Delta 適合 Short 策略")
+        
+        # IV Skew 評分
+        if analysis.iv_skew < -3:
+            reasons.append("IV 低於 ATM")
+        elif analysis.iv_skew > 3:
+            reasons.append("IV 高於 ATM")
+        
+        # Theta 評分
+        if strategy_type in ['short_call', 'short_put'] and analysis.theta < -0.5:
+            reasons.append("Theta 收益高")
+        
+        # 風險回報
+        if analysis.risk_reward_score >= 70:
+            reasons.append("風險回報比佳")
+        
+        if not reasons:
+            reasons.append("綜合評分最高")
+        
+        return "、".join(reasons[:3])  # 最多顯示 3 個理由
     
     def _generate_summary(self, best: StrikeAnalysis, strategy_type: str) -> str:
         """生成分析摘要"""

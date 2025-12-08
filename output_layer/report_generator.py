@@ -1301,6 +1301,18 @@ class ReportGenerator:
             report += "└────────────────────────────────────────────────┘\n"
             return report
         
+        # 顯示分析範圍（從任一策略獲取）
+        for strategy_key in ['long_call', 'long_put', 'short_call', 'short_put']:
+            if strategy_key in results:
+                strategy_data = results[strategy_key]
+                if 'strike_range' in strategy_data:
+                    sr = strategy_data['strike_range']
+                    report += f"│ 📊 分析範圍: ${sr.get('min', 0):.2f} - ${sr.get('max', 0):.2f} (ATM ±{sr.get('range_pct', 20):.0f}%)\n"
+                if 'total_analyzed' in strategy_data:
+                    report += f"│ 📈 分析行使價數量: {strategy_data.get('total_analyzed', 0)}\n"
+                report += "│\n"
+                break
+        
         # 遍歷四種策略
         strategies = {
             'long_call': ('📈 Long Call', '看漲買入'),
@@ -1317,37 +1329,72 @@ class ReportGenerator:
             
             report += f"│ {emoji_name} ({desc}):\n"
             
-            # 最佳行使價
-            best_strike = strategy_data.get('best_strike')
-            if best_strike:
-                report += f"│   推薦行使價: ${best_strike:.2f}\n"
-                
-                # 找到對應的推薦詳情
-                if 'top_recommendations' in strategy_data and strategy_data['top_recommendations']:
-                    best_rec = strategy_data['top_recommendations'][0]
+            # 顯示 Top 3 推薦
+            if 'top_recommendations' in strategy_data and strategy_data['top_recommendations']:
+                for i, rec in enumerate(strategy_data['top_recommendations'][:3]):
+                    strike = rec.get('strike', 0)
+                    score = rec.get('composite_score', 0)
+                    delta = rec.get('delta', 0)
+                    theta = rec.get('theta', 0)
+                    gamma = rec.get('gamma', 0)
+                    vega = rec.get('vega', 0)
+                    reason = rec.get('reason', '')
                     
-                    # 評分
-                    score = best_rec.get('composite_score', 0)
-                    stars = '★' * int(score / 20) + '☆' * (5 - int(score / 20))
-                    report += f"│   綜合評分: {stars} ({score:.1f}/100)\n"
+                    if i == 0:
+                        stars = '★' * int(score / 20) + '☆' * (5 - int(score / 20))
+                        report += f"│   🥇 推薦 #1: ${strike:.2f} ({stars} {score:.1f}分)\n"
+                    elif i == 1:
+                        report += f"│   🥈 推薦 #2: ${strike:.2f} ({score:.1f}分)\n"
+                    else:
+                        report += f"│   🥉 推薦 #3: ${strike:.2f} ({score:.1f}分)\n"
                     
-                    # 關鍵指標
-                    if 'delta' in best_rec:
-                        report += f"│   Delta: {best_rec.get('delta', 0):.4f}\n"
-                    if 'premium' in best_rec:
-                        report += f"│   權利金: ${best_rec.get('premium', 0):.2f}\n"
-                    if 'liquidity_score' in best_rec:
-                        report += f"│   流動性得分: {best_rec.get('liquidity_score', 0):.1f}/100\n"
+                    # 顯示完整 Greeks
+                    report += f"│      Greeks: Δ={delta:.4f} Γ={gamma:.4f} Θ={theta:.4f} ν={vega:.2f}\n"
+                    
+                    # 顯示推薦理由
+                    if reason:
+                        report += f"│      理由: {reason}\n"
+                    
+                    # 顯示評分細節（僅第一名）
+                    if i == 0:
+                        liq = rec.get('liquidity_score', 0)
+                        grk = rec.get('greeks_score', 0)
+                        ivs = rec.get('iv_score', 0)
+                        rrs = rec.get('risk_reward_score', 0)
+                        report += f"│      評分: 流動性={liq:.0f} Greeks={grk:.0f} IV={ivs:.0f} 風險回報={rrs:.0f}\n"
             else:
                 report += f"│   ! 無推薦（數據不足）\n"
             
             report += "│\n"
         
+        # 顯示 IV 環境建議（從 Module 23 整合）
+        iv_environment = None
+        iv_suggestion = None
+        for strategy_key in ['long_call', 'long_put', 'short_call', 'short_put']:
+            if strategy_key in results:
+                iv_environment = results[strategy_key].get('iv_environment')
+                iv_suggestion = results[strategy_key].get('iv_trading_suggestion')
+                if iv_environment:
+                    break
+        
+        if iv_environment:
+            report += "│ 📊 IV 環境分析 (來自 Module 23):\n"
+            if iv_environment == 'high':
+                report += "│   🔴 IV 偏高 - 建議 Short 策略 (賣出期權)\n"
+                report += "│   推薦: Short Call, Short Put, Iron Condor\n"
+            elif iv_environment == 'low':
+                report += "│   🔵 IV 偏低 - 建議 Long 策略 (買入期權)\n"
+                report += "│   推薦: Long Call, Long Put, Debit Spread\n"
+            else:
+                report += "│   🟢 IV 中性 - 可根據方向判斷選擇策略\n"
+                report += "│   推薦: Calendar Spread, Butterfly\n"
+            report += "│\n"
+        
         report += "│ 💡 使用建議:\n"
         report += "│   1. 優先選擇流動性得分 > 70 的行使價\n"
         report += "│   2. Long策略選擇 Delta 0.30-0.70 範圍\n"
-        report += "│   3. Short策略選擇 Delta 0.20-0.40 範圍\n"
-        report += "│   4. 結合 Module 14 監察崗位綜合判斷\n"
+        report += "│   3. Short策略選擇 Delta 0.10-0.30 範圍\n"
+        report += "│   4. 結合 Module 14 監察崗位和 Module 23 IV 環境綜合判斷\n"
         report += "└────────────────────────────────────────────────┘\n"
         
         # 添加波動率微笑分析（如果存在）

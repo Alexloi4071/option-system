@@ -1346,7 +1346,57 @@ class OptionsAnalysisSystem:
                     'degradation_note': '! 降級: 模塊執行失敗，請檢查日誌'
                 }
             
-            # ========== 模塊22: 最佳行使價分析 ==========
+            # ========== 模塊23: 動態IV閾值 (移到 Module 22 之前) ==========
+            # 原因: Module 22 需要 Module 23 的 IV 環境信息來調整推薦策略
+            logger.info("\n→ 運行 Module 23: 動態IV閾值計算...")
+            iv_environment = 'neutral'  # 默認中性
+            iv_trading_suggestion = None
+            try:
+                dynamic_iv_calc = DynamicIVThresholdCalculator()
+                
+                # 獲取歷史IV數據
+                historical_iv = None
+                hv_data = self.analysis_results.get('module18_historical_volatility', {})
+                if 'historical_iv' in hv_data:
+                    historical_iv = hv_data['historical_iv']
+                
+                # 計算動態閾值
+                iv_threshold_result = dynamic_iv_calc.calculate_thresholds(
+                    current_iv=analysis_data.get('implied_volatility', 25.0),
+                    historical_iv=historical_iv,
+                    vix=vix_value
+                )
+                
+                self.analysis_results['module23_dynamic_iv_threshold'] = iv_threshold_result.to_dict()
+                
+                # 獲取交易建議
+                trading_suggestion = dynamic_iv_calc.get_trading_suggestion(iv_threshold_result)
+                self.analysis_results['module23_dynamic_iv_threshold']['trading_suggestion'] = trading_suggestion
+                iv_trading_suggestion = trading_suggestion
+                
+                # 確定 IV 環境（用於 Module 22 整合）
+                if iv_threshold_result.current_iv > iv_threshold_result.high_threshold:
+                    iv_environment = 'high'
+                elif iv_threshold_result.current_iv < iv_threshold_result.low_threshold:
+                    iv_environment = 'low'
+                else:
+                    iv_environment = 'neutral'
+                
+                logger.info(f"* 模塊23完成: 動態IV閾值計算")
+                logger.info(f"  當前IV: {iv_threshold_result.current_iv:.2f}%")
+                logger.info(f"  高閾值: {iv_threshold_result.high_threshold:.2f}%")
+                logger.info(f"  低閾值: {iv_threshold_result.low_threshold:.2f}%")
+                logger.info(f"  狀態: {iv_threshold_result.status}")
+                logger.info(f"  IV環境: {iv_environment}")
+                logger.info(f"  數據質量: {iv_threshold_result.data_quality}")
+            except Exception as exc:
+                logger.warning(f"! 模塊23執行失敗: {exc}")
+                self.analysis_results['module23_dynamic_iv_threshold'] = {
+                    'status': 'error',
+                    'reason': str(exc)
+                }
+            
+            # ========== 模塊22: 最佳行使價分析 (整合 Module 23 IV 環境) ==========
             logger.info("\n→ 運行 Module 22: 最佳行使價分析...")
             try:
                 # 獲取期權鏈數據
@@ -1399,6 +1449,11 @@ class OptionsAnalysisSystem:
                             days_to_expiration=int(days_to_expiration) if days_to_expiration else 30,
                             iv_rank=iv_rank_value
                         )
+                        
+                        # 整合 Module 23 IV 環境信息
+                        result['iv_environment'] = iv_environment
+                        result['iv_trading_suggestion'] = iv_trading_suggestion
+                        
                         optimal_results[strategy] = result
                         
                         if result.get('best_strike'):
@@ -1406,6 +1461,7 @@ class OptionsAnalysisSystem:
                     
                     self.analysis_results['module22_optimal_strike'] = optimal_results
                     logger.info("* 模塊22完成: 最佳行使價分析")
+                    logger.info(f"  IV環境整合: {iv_environment}")
                 else:
                     logger.info("! 模塊22跳過: 期權鏈數據不足")
                     self.analysis_results['module22_optimal_strike'] = {
@@ -1415,43 +1471,6 @@ class OptionsAnalysisSystem:
             except Exception as exc:
                 logger.warning(f"! 模塊22執行失敗: {exc}")
                 self.analysis_results['module22_optimal_strike'] = {
-                    'status': 'error',
-                    'reason': str(exc)
-                }
-            
-            # ========== 模塊23: 動態IV閾值 ==========
-            logger.info("\n→ 運行 Module 23: 動態IV閾值計算...")
-            try:
-                dynamic_iv_calc = DynamicIVThresholdCalculator()
-                
-                # 獲取歷史IV數據
-                historical_iv = None
-                hv_data = self.analysis_results.get('module18_historical_volatility', {})
-                if 'historical_iv' in hv_data:
-                    historical_iv = hv_data['historical_iv']
-                
-                # 計算動態閾值
-                iv_threshold_result = dynamic_iv_calc.calculate_thresholds(
-                    current_iv=analysis_data.get('implied_volatility', 25.0),
-                    historical_iv=historical_iv,
-                    vix=vix_value
-                )
-                
-                self.analysis_results['module23_dynamic_iv_threshold'] = iv_threshold_result.to_dict()
-                
-                # 獲取交易建議
-                trading_suggestion = dynamic_iv_calc.get_trading_suggestion(iv_threshold_result)
-                self.analysis_results['module23_dynamic_iv_threshold']['trading_suggestion'] = trading_suggestion
-                
-                logger.info(f"* 模塊23完成: 動態IV閾值計算")
-                logger.info(f"  當前IV: {iv_threshold_result.current_iv:.2f}%")
-                logger.info(f"  高閾值: {iv_threshold_result.high_threshold:.2f}%")
-                logger.info(f"  低閾值: {iv_threshold_result.low_threshold:.2f}%")
-                logger.info(f"  狀態: {iv_threshold_result.status}")
-                logger.info(f"  數據質量: {iv_threshold_result.data_quality}")
-            except Exception as exc:
-                logger.warning(f"! 模塊23執行失敗: {exc}")
-                self.analysis_results['module23_dynamic_iv_threshold'] = {
                     'status': 'error',
                     'reason': str(exc)
                 }
