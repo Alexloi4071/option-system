@@ -2061,6 +2061,8 @@ class DataFetcher:
         logger.info(f"開始獲取 {ticker} {expiration} 期權鏈...")
         
         # 方案1: 嘗試使用 IBKR（如果啟用）
+        # 注意: IBKR 只返回合約基本信息，不包含市場數據（IV, bid, ask）
+        # 因此即使 IBKR 連接成功，我們仍需要從 Yahoo Finance 獲取市場數據
         if self.ibkr_client and self.ibkr_client.is_connected():
             try:
                 logger.info("  使用 IBKR...")
@@ -2073,17 +2075,26 @@ class DataFetcher:
                     
                     # 檢查是否真的有數據（不只是空 DataFrame）
                     if len(calls_df) > 0 or len(puts_df) > 0:
-                        logger.info(f"* 成功獲取 {ticker} {expiration} 期權鏈 (IBKR)")
-                        logger.info(f"  Call期權: {len(calls_df)} 個")
-                        logger.info(f"  Put期權: {len(puts_df)} 個")
-                        self._record_fallback('option_chain', 'ibkr')
+                        # 檢查是否有 IV 數據（IBKR 通常不返回 IV，需要額外訂閱）
+                        has_iv = 'impliedVolatility' in calls_df.columns and calls_df['impliedVolatility'].notna().any()
                         
-                        return {
-                            'calls': calls_df,
-                            'puts': puts_df,
-                            'expiration': expiration,
-                            'data_source': 'ibkr'
-                        }
+                        if has_iv:
+                            logger.info(f"* 成功獲取 {ticker} {expiration} 期權鏈 (IBKR - 含IV)")
+                            logger.info(f"  Call期權: {len(calls_df)} 個")
+                            logger.info(f"  Put期權: {len(puts_df)} 個")
+                            self._record_fallback('option_chain', 'ibkr')
+                            
+                            return {
+                                'calls': calls_df,
+                                'puts': puts_df,
+                                'expiration': expiration,
+                                'data_source': 'ibkr'
+                            }
+                        else:
+                            # IBKR 返回了合約但沒有 IV，需要降級到 Yahoo Finance 獲取市場數據
+                            logger.info(f"  IBKR 返回 {len(calls_df)} calls, {len(puts_df)} puts (僅合約信息，無IV)")
+                            logger.info(f"  降級到 Yahoo Finance 獲取市場數據...")
+                            self._record_fallback_failure('option_chain', 'IBKR', '無IV數據，需要市場數據訂閱')
                     else:
                         logger.warning(f"! IBKR 返回 0 個期權合約，降級到 Yahoo Finance")
                         self._record_fallback_failure('option_chain', 'IBKR', '返回0個合約')
@@ -4037,6 +4048,175 @@ class DataFetcher:
                 'source': result.get('rsi_source', '')
             }
         return None
+
+    # ==================== Finnhub K線數據 (Module 24 技術方向分析) ====================
+    
+    def get_finnhub_candles(self, ticker: str, resolution: str = 'D',
+                           days: int = 200) -> Optional[pd.DataFrame]:
+        """
+        從 Finnhub 獲取 K 線數據
+        
+        參數:
+            ticker: 股票代碼
+            resolution: 時間框架 ('1', '5', '15', '30', '60', 'D', 'W', 'M')
+            days: 回看天數
+        
+        返回:
+            pd.DataFrame: 包含 Open, High, Low, Close, Volume 的 DataFrame
+        
+        Requirements: 1.1, 2.1
+        """
+        try:
+            logger.info(f"從 Finnhub 獲取 {ticker} K線數據 (resolution={resolution}, days={days})...")
+            
+            if not self.finnhub_client:
+                logger.warning("Finnhub 客戶端未初始化")
+                return None
+            
+            # 計算時間範圍
+            to_time = int(datetime.now().timestamp())
+            from_time = int((datetime.now() - timedelta(days=days)).timestamp())
+            
+            # 調用 Finnhub API
+            candles = self.finnhub_client.stock_candles(
+                ticker.upper(),
+                resolution,
+                from_time,
+                to_time
+            )
+            
+            if candles and candles.get('s') == 'ok':
+                df = pd.DataFrame({
+                    'Open': candles['o'],
+                    'High': candles['h'],
+                    'Low': candles['l'],
+                    'Close': candles['c'],
+                    'Volume': candles['v'],
+                    'Timestamp': candles['t']
+                })
+                
+                # 轉換時間戳為日期索引
+                df['Date'] = pd.to_datetime(df['Timestamp'], unit='s')
+                df.set_index('Date', inplace=True)
+                df.drop('Timestamp', axis=1, inplace=True)
+                
+                logger.info(f"  * 成功獲取 {len(df)} 根 K 線")
+                self._record_fallback(f'candles_{resolution}', 'Finnhub')
+                return df
+            else:
+                logger.warning(f"  ! Finnhub 返回無效數據: {candles.get('s', 'unknown')}")
+                return None
+                
+        except Exception as e:
+            logger.warning(f"  ! Finnhub K線獲取失敗: {e}")
+            self._record_api_failure('Finnhub', f"stock_candles: {e}")
+            return None
+    
+    def get_daily_candles(self, ticker: str, days: int = 200) -> Optional[pd.DataFrame]:
+        """
+        獲取日線 K 線數據（支持降級）
+        
+        降級順序: Finnhub → Yahoo Finance
+        
+        Requirements: 1.1, 1.4
+        """
+        # 方案1: Finnhub
+        df = self.get_finnhub_candles(ticker, 'D', days)
+        if df is not None and len(df) >= 50:
+            return df
+        
+        # 方案2: 降級到 Yahoo Finance
+        logger.info(f"  降級到 Yahoo Finance 獲取日線數據...")
+        try:
+            hist = self.get_historical_data(ticker, period=f'{days}d', interval='1d')
+            if hist is not None and len(hist) >= 50:
+                self._record_fallback('candles_D', 'Yahoo Finance')
+                return hist
+        except Exception as e:
+            logger.warning(f"  ! Yahoo Finance 日線獲取失敗: {e}")
+        
+        return None
+    
+    def get_intraday_candles(self, ticker: str, resolution: str = '15',
+                            days: int = 5) -> Optional[pd.DataFrame]:
+        """
+        獲取日內 K 線數據（支持降級）
+        
+        降級順序: Finnhub → Yahoo Finance
+        
+        參數:
+            ticker: 股票代碼
+            resolution: 時間框架 ('1', '5', '15', '30', '60')
+            days: 回看天數
+        
+        Requirements: 2.1, 2.4
+        """
+        # 方案1: Finnhub
+        df = self.get_finnhub_candles(ticker, resolution, days)
+        if df is not None and len(df) >= 20:
+            return df
+        
+        # 方案2: 降級到 Yahoo Finance
+        logger.info(f"  降級到 Yahoo Finance 獲取 {resolution} 分鐘數據...")
+        try:
+            # Yahoo Finance 的 interval 格式
+            yf_interval = f'{resolution}m'
+            hist = self.get_historical_data(ticker, period=f'{days}d', interval=yf_interval)
+            if hist is not None and len(hist) >= 20:
+                self._record_fallback(f'candles_{resolution}', 'Yahoo Finance')
+                return hist
+        except Exception as e:
+            logger.warning(f"  ! Yahoo Finance {resolution}分鐘數據獲取失敗: {e}")
+        
+        return None
+    
+    def get_finnhub_aggregate_indicator(self, ticker: str, 
+                                        resolution: str = 'D') -> Optional[Dict]:
+        """
+        從 Finnhub 獲取綜合技術分析信號
+        
+        返回:
+            {
+                'signal': 'buy' | 'sell' | 'neutral',
+                'buy_count': int,
+                'sell_count': int,
+                'neutral_count': int,
+                'adx': float,
+                'trending': bool
+            }
+        
+        Requirements: 1.1
+        """
+        try:
+            logger.info(f"從 Finnhub 獲取 {ticker} 綜合技術分析...")
+            
+            if not self.finnhub_client:
+                logger.warning("Finnhub 客戶端未初始化")
+                return None
+            
+            result = self.finnhub_client.aggregate_indicator(ticker.upper(), resolution)
+            
+            if result:
+                tech_analysis = result.get('technicalAnalysis', {})
+                trend = result.get('trend', {})
+                
+                output = {
+                    'signal': tech_analysis.get('signal', 'neutral'),
+                    'buy_count': tech_analysis.get('count', {}).get('buy', 0),
+                    'sell_count': tech_analysis.get('count', {}).get('sell', 0),
+                    'neutral_count': tech_analysis.get('count', {}).get('neutral', 0),
+                    'adx': trend.get('adx'),
+                    'trending': trend.get('trending', False)
+                }
+                
+                logger.info(f"  * 綜合信號: {output['signal']} (買:{output['buy_count']}, 賣:{output['sell_count']})")
+                return output
+            
+            return None
+            
+        except Exception as e:
+            logger.warning(f"  ! Finnhub 綜合指標獲取失敗: {e}")
+            return None
 
 
 # 使用示例

@@ -75,18 +75,29 @@ class StrategyRecommender:
                  days_to_expiry: int) -> List[StrategyRecommendation]:
         
         recommendations = []
-        logger.info(f"* 開始策略推薦分析: Price=${current_price}, IV Rank={iv_rank}, Trend={trend}")
+        logger.info(f"* 開始策略推薦分析: Price=${current_price}, IV Rank={iv_rank:.1f}, IV/HV={iv_hv_ratio:.2f}, Trend={trend}")
         
         # 1. 判斷波動率狀態
         is_high_iv = iv_rank > 50 or iv_hv_ratio > 1.2
         is_low_iv = iv_rank < 30 or iv_hv_ratio < 0.8
+        is_neutral_iv = not is_high_iv and not is_low_iv  # IV 在中性區間
         
-        # 2. 判斷價格位置
-        dist_to_support = (current_price - support_level) / current_price
-        dist_to_resistance = (resistance_level - current_price) / current_price
+        logger.info(f"  IV狀態: High={is_high_iv}, Low={is_low_iv}, Neutral={is_neutral_iv}")
         
-        is_near_support = dist_to_support < 0.03 # 3% 以內
-        is_near_resistance = dist_to_resistance < 0.03 # 3% 以內
+        # 2. 判斷價格位置（處理無效的支持/阻力位）
+        has_valid_levels = support_level > 0 and resistance_level > 0 and resistance_level > support_level
+        
+        if has_valid_levels:
+            dist_to_support = (current_price - support_level) / current_price
+            dist_to_resistance = (resistance_level - current_price) / current_price
+            is_near_support = dist_to_support < 0.03  # 3% 以內
+            is_near_resistance = dist_to_resistance < 0.03  # 3% 以內
+        else:
+            dist_to_support = 1.0
+            dist_to_resistance = 1.0
+            is_near_support = False
+            is_near_resistance = False
+            logger.warning(f"  ! 支持/阻力位無效: support={support_level}, resistance={resistance_level}")
         
         # ========== 策略邏輯 ==========
         
@@ -192,7 +203,7 @@ class StrategyRecommender:
             if is_high_iv:
                 # Iron Condor
                 rec = StrategyRecommendation(
-                    strategy_name="Iron Condor (鐵以此)",
+                    strategy_name="Iron Condor (鐵鷹)",
                     direction="Neutral",
                     confidence="High",
                     reasoning=reasoning + ["IV 高，適合區間收租"],
@@ -200,7 +211,19 @@ class StrategyRecommender:
                     suggested_strike=self._round_to_strike(current_price)
                 )
                 recommendations.append(rec)
-            else:
+                
+                # Short Straddle (高風險)
+                rec_straddle = StrategyRecommendation(
+                    strategy_name="Short Straddle (賣出跨式)",
+                    direction="Neutral",
+                    confidence="Medium",
+                    reasoning=reasoning + ["IV 高，收取高額期權金", "⚠️ 風險無限"],
+                    key_levels={'pivot': current_price},
+                    suggested_strike=self._round_to_strike(current_price)
+                )
+                recommendations.append(rec_straddle)
+                
+            elif is_low_iv:
                 # Calendar Spread (Long Vega)
                 rec = StrategyRecommendation(
                     strategy_name="Calendar Spread (日曆價差)",
@@ -212,8 +235,67 @@ class StrategyRecommender:
                 )
                 recommendations.append(rec)
                 
+                # Long Straddle (預期波動)
+                rec_straddle = StrategyRecommendation(
+                    strategy_name="Long Straddle (買入跨式)",
+                    direction="Neutral",
+                    confidence="Low",
+                    reasoning=reasoning + ["IV 低，預期波動率上升", "需要大幅波動才能獲利"],
+                    key_levels={'pivot': current_price},
+                    suggested_strike=self._round_to_strike(current_price)
+                )
+                recommendations.append(rec_straddle)
+                
+            else:
+                # IV 中性 - 提供觀望建議
+                rec = StrategyRecommendation(
+                    strategy_name="觀望 / 等待機會",
+                    direction="Neutral",
+                    confidence="Low",
+                    reasoning=reasoning + [f"IV Rank {iv_rank:.0f}% 處於中性區間", "建議等待更明確的方向或波動率信號"],
+                    key_levels={'upper': resistance_level, 'lower': support_level},
+                    suggested_strike=self._round_to_strike(current_price)
+                )
+                recommendations.append(rec)
+        
+        # D. 如果沒有任何推薦，提供基於 IV 的默認建議
+        if not recommendations:
+            logger.info("  未匹配任何策略條件，生成基於 IV 的默認建議")
+            if is_low_iv:
+                rec = StrategyRecommendation(
+                    strategy_name="Long Call/Put (買入期權)",
+                    direction="Neutral",
+                    confidence="Low",
+                    reasoning=[f"IV Rank {iv_rank:.0f}% 偏低", "適合買入期權", "需配合方向判斷選擇 Call 或 Put"],
+                    key_levels={'current': current_price},
+                    suggested_strike=self._round_to_strike(current_price)
+                )
+                recommendations.append(rec)
+            elif is_high_iv:
+                rec = StrategyRecommendation(
+                    strategy_name="Short Put (賣出認沽)",
+                    direction="Bullish",
+                    confidence="Low",
+                    reasoning=[f"IV Rank {iv_rank:.0f}% 偏高", "適合賣出期權收取期權金", "需確認支持位"],
+                    key_levels={'current': current_price},
+                    suggested_strike=self._round_to_strike(current_price * 0.95)
+                )
+                recommendations.append(rec)
+            else:
+                rec = StrategyRecommendation(
+                    strategy_name="觀望 / 等待機會",
+                    direction="Neutral",
+                    confidence="Low",
+                    reasoning=["趨勢不明確", f"IV Rank {iv_rank:.0f}% 處於中性區間", "建議等待更明確的信號"],
+                    key_levels={'current': current_price},
+                    suggested_strike=None
+                )
+                recommendations.append(rec)
+                
         # 排序推薦 (按信心度)
         confidence_map = {'High': 3, 'Medium': 2, 'Low': 1}
         recommendations.sort(key=lambda x: confidence_map.get(x.confidence, 0), reverse=True)
+        
+        logger.info(f"* 策略推薦完成: 生成 {len(recommendations)} 個建議")
         
         return recommendations

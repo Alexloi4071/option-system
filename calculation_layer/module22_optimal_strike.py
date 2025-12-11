@@ -150,8 +150,8 @@ class OptimalStrikeCalculator:
     # IV 默認值
     DEFAULT_IV = 0.30
     
-    # 行使價範圍（擴大到 ±20%）
-    STRIKE_RANGE_PCT = 0.20
+    # 行使價數量限制（ATM 上下各取最多 20 個）
+    MAX_STRIKES_EACH_SIDE = 20
     
     def __init__(self):
         logger.info("* 最佳行使價計算器已初始化")
@@ -334,9 +334,40 @@ class OptimalStrikeCalculator:
                 logger.warning("! 期權鏈數據為空")
                 return self._create_empty_result("期權鏈數據為空")
             
-            # 過濾行使價範圍 (ATM ± 20%)
-            min_strike = current_price * (1 - self.STRIKE_RANGE_PCT)
-            max_strike = current_price * (1 + self.STRIKE_RANGE_PCT)
+            # 新邏輯：從 ATM 行使價向上和向下各取最多 20 個行使價
+            # 1. 先按行使價排序所有期權
+            sorted_options = sorted(options_data, key=lambda x: x.get('strike', 0))
+            
+            # 2. 找到最接近 ATM 的行使價索引
+            atm_index = 0
+            min_distance = float('inf')
+            for i, opt in enumerate(sorted_options):
+                strike = opt.get('strike', 0)
+                distance = abs(strike - current_price)
+                if distance < min_distance:
+                    min_distance = distance
+                    atm_index = i
+            
+            # 3. 從 ATM 向下取最多 20 個（價內 for call，價外 for put）
+            lower_options = sorted_options[max(0, atm_index - self.MAX_STRIKES_EACH_SIDE):atm_index]
+            
+            # 4. 從 ATM 向上取最多 20 個（價外 for call，價內 for put）
+            upper_options = sorted_options[atm_index:min(len(sorted_options), atm_index + self.MAX_STRIKES_EACH_SIDE + 1)]
+            
+            # 5. 合併選中的行使價
+            selected_options = lower_options + upper_options
+            
+            # 計算實際選取的範圍
+            if selected_options:
+                min_strike = min(opt.get('strike', 0) for opt in selected_options)
+                max_strike = max(opt.get('strike', 0) for opt in selected_options)
+            else:
+                min_strike = current_price * 0.8
+                max_strike = current_price * 1.2
+            
+            logger.info(f"  行使價選取: ATM 上下各最多 {self.MAX_STRIKES_EACH_SIDE} 個")
+            logger.info(f"  實際選取範圍: ${min_strike:.2f} - ${max_strike:.2f}")
+            logger.info(f"  選取數量: {len(selected_options)} 個")
             
             # 第一輪：收集所有符合條件的行使價並計算 ATM IV
             analyzed_strikes = []
@@ -344,12 +375,8 @@ class OptimalStrikeCalculator:
             atm_strike = None
             min_atm_distance = float('inf')
             
-            for option in options_data:
+            for option in selected_options:
                 strike = option.get('strike', 0)
-                
-                # 過濾範圍外的行使價
-                if strike < min_strike or strike > max_strike:
-                    continue
                 
                 # 過濾流動性不足的行使價（金曹三不買原則）- 改為 OR 邏輯
                 volume = option.get('volume', 0) or 0
@@ -458,7 +485,8 @@ class OptimalStrikeCalculator:
                 'strike_range': {
                     'min': round(min_strike, 2),
                     'max': round(max_strike, 2),
-                    'range_pct': self.STRIKE_RANGE_PCT * 100
+                    'max_strikes_each_side': self.MAX_STRIKES_EACH_SIDE,
+                    'total_selected': len(selected_options)
                 },
                 'atm_info': {
                     'strike': atm_strike,
@@ -547,6 +575,25 @@ class OptimalStrikeCalculator:
             last_price = option.get('lastPrice', 0) or 0
             volume = option.get('volume', 0) or 0
             oi = option.get('openInterest', 0) or 0
+            
+            # Bid/Ask 價格過濾邏輯
+            # - Bid = 0 且 Ask = 0：跳過（無法交易）
+            # - 只有 Bid（Ask = 0）：只能用於 Short 策略
+            # - 只有 Ask（Bid = 0）：只能用於 Long 策略
+            is_long_strategy = strategy_type in ['long_call', 'long_put']
+            is_short_strategy = strategy_type in ['short_call', 'short_put']
+            
+            if bid == 0 and ask == 0:
+                logger.debug(f"  跳過行使價 ${strike:.2f}: Bid 和 Ask 都為 0")
+                return None
+            
+            if bid == 0 and is_short_strategy:
+                logger.debug(f"  跳過行使價 ${strike:.2f}: Short 策略需要 Bid 價格，但 Bid = 0")
+                return None
+            
+            if ask == 0 and is_long_strategy:
+                logger.debug(f"  跳過行使價 ${strike:.2f}: Long 策略需要 Ask 價格，但 Ask = 0")
+                return None
             
             # 計算時間（年）
             time_to_expiry = days_to_expiration / 365.0
@@ -1116,6 +1163,12 @@ class OptimalStrikeCalculator:
             'total_analyzed': 0,
             'strategy_type': '',
             'current_price': 0,
+            'strike_range': {
+                'min': 0,
+                'max': 0,
+                'max_strikes_each_side': self.MAX_STRIKES_EACH_SIDE,
+                'total_selected': 0
+            },
             'analysis_summary': f"分析失敗: {reason}",
             'calculation_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             'error': reason,

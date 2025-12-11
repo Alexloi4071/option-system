@@ -4,13 +4,22 @@ Finviz 數據抓取器（優化版）
 用於獲取準確的股票基本面數據（EPS, PE, 財務報表等）
 
 優化功能:
+- curl_cffi: 使用 TLS 指紋模擬真實瀏覽器，繞過反爬蟲檢測
 - UserAgentRotator: 每次請求使用不同的 User-Agent
 - 隨機延遲: 1-3 秒隨機延遲避免被封禁
 - 封鎖檢測: 檢測 CAPTCHA 和 403/429 響應
 - 多重選擇器: 多個 CSS 選擇器容錯
 """
 
-import requests
+# 優先使用 curl_cffi（可以繞過 Cloudflare 等反爬蟲）
+try:
+    from curl_cffi import requests as curl_requests
+    USE_CURL_CFFI = True
+except ImportError:
+    import requests as curl_requests
+    USE_CURL_CFFI = False
+
+import requests  # 保留原始 requests 用於其他用途
 from bs4 import BeautifulSoup
 import logging
 import time
@@ -540,17 +549,29 @@ class FinvizScraper:
             current_ua = self._rotate_user_agent()
             
             logger.info(f"開始從 Finviz 獲取 {ticker} 基本面數據...")
-            logger.debug(f"  User-Agent: {current_ua[:50]}...")
+            if USE_CURL_CFFI:
+                logger.debug(f"  使用 curl_cffi (Chrome TLS 指紋)")
+            else:
+                logger.debug(f"  User-Agent: {current_ua[:50]}...")
             
             # 構建 URL（根據是否使用 Elite 版本）
             base_url = self.ELITE_BASE_URL if self.use_elite else self.BASE_URL
             url = f"{base_url}?t={ticker.upper()}"
             
-            # 發送請求（使用配置的超時）
-            response = self.session.get(url, headers=self.headers, timeout=self.connection_config.timeout)
+            # 發送請求（優先使用 curl_cffi 繞過反爬蟲）
+            if USE_CURL_CFFI:
+                # 使用 curl_cffi 模擬 Chrome 瀏覽器的 TLS 指紋
+                response = curl_requests.get(
+                    url, 
+                    impersonate='chrome',
+                    timeout=self.connection_config.timeout
+                )
+            else:
+                # 回退到普通 requests
+                response = self.session.get(url, headers=self.headers, timeout=self.connection_config.timeout)
             
-            # 檢測封鎖
-            if self._detect_block(response):
+            # 檢測封鎖（curl_cffi 通常不會被封鎖，但仍然檢查）
+            if not USE_CURL_CFFI and self._detect_block(response):
                 if self.retry_handler.should_retry(response.status_code, retry_count):
                     wait_time = self.retry_handler.calculate_delay(retry_count + 1, 'exponential')
                     logger.warning(f"  重試 {retry_count + 1}，等待 {wait_time:.1f}s...")
@@ -737,8 +758,15 @@ class FinvizScraper:
             # 構建 URL（包含 statements 參數）
             url = f"{self.STATEMENTS_URL}?t={ticker.upper()}&p=d#statements"
             
-            # 發送請求（使用配置的超時）
-            response = self.session.get(url, headers=self.headers, timeout=self.connection_config.timeout)
+            # 發送請求（優先使用 curl_cffi 繞過反爬蟲）
+            if USE_CURL_CFFI:
+                response = curl_requests.get(
+                    url, 
+                    impersonate='chrome',
+                    timeout=self.connection_config.timeout
+                )
+            else:
+                response = self.session.get(url, headers=self.headers, timeout=self.connection_config.timeout)
             response.raise_for_status()
             
             # 解析 HTML

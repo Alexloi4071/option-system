@@ -13,6 +13,8 @@ import logging
 from output_layer.csv_exporter import CSVExporter
 from output_layer.json_exporter import JSONExporter
 from output_layer.output_manager import OutputPathManager
+from output_layer.strategy_scenario_generator import StrategyScenarioGenerator
+from output_layer.module_consistency_checker import ModuleConsistencyChecker
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +47,9 @@ class ReportGenerator:
         # 初始化 CSV 和 JSON 導出器（舊結構，保留向後兼容）
         self.csv_exporter = CSVExporter(str(self.output_dir / 'csv'))
         self.json_exporter = JSONExporter(str(self.output_dir / 'json'))
+        
+        # 初始化模塊一致性檢查器 (Requirements: 8.1, 8.2, 8.3, 8.4)
+        self.consistency_checker = ModuleConsistencyChecker()
         
         logger.info(f"* 報告生成器初始化完成")
         logger.info(f"  主輸出目錄: {self.output_dir}")
@@ -656,7 +661,11 @@ class ReportGenerator:
                 elif module_name == 'module22_optimal_strike':
                     f.write(self._format_module22_optimal_strike(module_data))
                 elif module_name == 'module23_dynamic_iv_threshold':
-                    f.write(self._format_module23_dynamic_iv_threshold(module_data))
+                    # Requirement 11.4: 傳遞 Module 18 IV Rank 數據進行交叉驗證
+                    iv_rank_data = calculation_results.get('module18_historical_volatility', {})
+                    f.write(self._format_module23_dynamic_iv_threshold(module_data, iv_rank_data))
+                elif module_name == 'module24_technical_direction':
+                    f.write(self._format_module24_technical_direction(module_data))
                 elif module_name == 'strike_selection':
                     # 顯示行使價選擇說明
                     f.write(self._format_strike_selection(module_data))
@@ -674,8 +683,11 @@ class ReportGenerator:
                         for i, item in enumerate(module_data, 1):
                             f.write(f"  場景 {i}: {item}\n")
             
-            # 添加數據來源摘要
-            f.write(self._format_data_source_summary(raw_data, calculation_results))
+            # 添加綜合建議區塊 (Requirements: 8.1, 8.2, 8.3, 8.4)
+            f.write(self._format_consolidated_recommendation(calculation_results))
+            
+            # 添加數據來源摘要 (Requirements: 14.1, 14.2, 14.3, 14.4, 14.5)
+            f.write(self._format_data_source_summary(raw_data, calculation_results, api_status))
         
         logger.info(f"* 文本報告已保存: {filepath}")
     
@@ -686,7 +698,15 @@ class ReportGenerator:
         report += "│\n"
         report += f"│ 股票: {ticker}\n"
         report += f"│ 當前價格: ${results['stock_price']:.2f}\n"
-        report += f"│ 隱含波動率: {results['implied_volatility']:.1f}%\n"
+        
+        # 顯示 IV 來源信息
+        iv_value = results['implied_volatility']
+        iv_source = results.get('iv_source', 'Market IV')
+        if 'ATM IV' in iv_source:
+            report += f"│ 隱含波動率: {iv_value:.1f}% (ATM IV - Module 17)\n"
+        else:
+            report += f"│ 隱含波動率: {iv_value:.1f}%\n"
+        
         report += f"│ 到期天數: {results['days_to_expiration']}個交易日\n"
         report += "│\n"
         report += "│ 信心度 | Z值  | 波動幅度  | 支持位    | 阻力位    | 波動%\n"
@@ -722,18 +742,37 @@ class ReportGenerator:
         return report
     
     def _format_module15_black_scholes(self, results: dict) -> str:
-        """格式化 Black-Scholes 定價結果"""
+        """格式化 Black-Scholes 定價結果
+        
+        改進:
+        - 到期時間以天數格式顯示（同時保留年化）
+        - 短期期權警告（< 7 天）
+        Requirements: 4.1, 4.2, 4.3
+        """
         report = "\n┌─ Module 15: Black-Scholes 期權定價 ─────────┐\n"
         report += "│\n"
         
+        days_to_expiry = None
         if 'parameters' in results:
             params = results['parameters']
+            time_to_expiry_years = params.get('time_to_expiration', 0)
+            # 將年化時間轉換為天數 (1年 = 365天)
+            days_to_expiry = time_to_expiry_years * 365
+            
             report += f"│ 參數設置:\n"
             report += f"│   股價: ${params.get('stock_price', 0):.2f}\n"
             report += f"│   行使價: ${params.get('strike_price', 0):.2f}\n"
             report += f"│   無風險利率: {params.get('risk_free_rate', 0)*100:.2f}%\n"
-            report += f"│   到期時間: {params.get('time_to_expiration', 0):.4f}年\n"
+            # 同時顯示天數和年化格式 (Requirements 4.1, 4.2)
+            report += f"│   到期時間: {days_to_expiry:.0f} 天 ({time_to_expiry_years:.4f} 年)\n"
             report += f"│   波動率: {params.get('volatility', 0)*100:.2f}%\n"
+            
+            # 短期期權警告 (Requirement 4.3)
+            if days_to_expiry is not None and days_to_expiry < 7:
+                report += "│\n"
+                report += "│ ⚠️ 短期期權警告:\n"
+                report += f"│   距到期僅 {days_to_expiry:.0f} 天，時間價值衰減加速\n"
+                report += "│   Theta 影響顯著，請謹慎操作\n"
             report += "│\n"
         
         if 'call' in results:
@@ -757,31 +796,127 @@ class ReportGenerator:
         return report
     
     def _format_module16_greeks(self, results: dict) -> str:
-        """格式化 Greeks 結果"""
+        """
+        格式化 Greeks 結果
+        
+        Requirements: 5.1, 5.2, 5.3, 5.4, 5.5
+        - 添加 Delta 方向性解讀
+        - 添加 Theta 時間衰減總結
+        - 添加 Vega 波動率敏感度總結
+        - 添加 Gamma 高值警告
+        - 添加整體風險評估
+        """
         report = "\n┌─ Module 16: Greeks 風險指標 ─────────────────┐\n"
         report += "│\n"
         
-        if 'call' in results:
-            call = results['call']
-            report += f"│ 📈 Call Greeks:\n"
-            report += f"│   Delta:  {call.get('delta', 0):8.4f}  (股價變動敏感度)\n"
-            report += f"│   Gamma:  {call.get('gamma', 0):8.6f}  (Delta 變化率)\n"
-            report += f"│   Theta:  {call.get('theta', 0):8.4f}  ($/天 時間衰減)\n"
-            report += f"│   Vega:   {call.get('vega', 0):8.4f}  (波動率敏感度)\n"
-            report += f"│   Rho:    {call.get('rho', 0):8.4f}  (利率敏感度)\n"
-            report += "│\n"
+        call_greeks = results.get('call', {})
+        put_greeks = results.get('put', {})
         
-        if 'put' in results:
-            put = results['put']
+        # Call Greeks 數據和解讀
+        if call_greeks:
+            call_delta = call_greeks.get('delta', 0)
+            call_gamma = call_greeks.get('gamma', 0)
+            call_theta = call_greeks.get('theta', 0)
+            call_vega = call_greeks.get('vega', 0)
+            call_rho = call_greeks.get('rho', 0)
+            
+            report += f"│ 📈 Call Greeks:\n"
+            report += f"│   Delta:  {call_delta:8.4f}  (股價變動敏感度)\n"
+            report += f"│   Gamma:  {call_gamma:8.6f}  (Delta 變化率)\n"
+            report += f"│   Theta:  {call_theta:8.4f}  ($/天 時間衰減)\n"
+            report += f"│   Vega:   {call_vega:8.4f}  (波動率敏感度)\n"
+            report += f"│   Rho:    {call_rho:8.4f}  (利率敏感度)\n"
+            report += "│\n"
+            
+            # Delta 解讀 (Requirements: 5.1)
+            delta_interp = self._get_delta_interpretation(call_delta, 'call')
+            report += f"│   📊 Delta 解讀:\n"
+            report += f"│     方向: {delta_interp['direction']}\n"
+            report += f"│     {delta_interp['probability_hint']}\n"
+            report += f"│     {delta_interp['sensitivity']}\n"
+            report += "│\n"
+            
+            # Theta 解讀 (Requirements: 5.2)
+            theta_interp = self._get_theta_interpretation(call_theta)
+            report += f"│   ⏱️ Theta 解讀:\n"
+            report += f"│     每日衰減: {theta_interp['daily_decay']}\n"
+            report += f"│     每週衰減: {theta_interp['weekly_decay']}\n"
+            report += f"│     {theta_interp['decay_rate']}\n"
+            report += f"│     建議: {theta_interp['strategy_hint']}\n"
+            report += "│\n"
+            
+            # Vega 解讀 (Requirements: 5.3)
+            vega_interp = self._get_vega_interpretation(call_vega)
+            report += f"│   📈 Vega 解讀:\n"
+            report += f"│     {vega_interp['sensitivity']}\n"
+            report += f"│     {vega_interp['iv_impact']}\n"
+            report += f"│     {vega_interp['risk_level']}\n"
+            report += "│\n"
+            
+            # Gamma 警告 (Requirements: 5.4)
+            gamma_warning = self._get_gamma_warning(call_gamma, call_delta)
+            if gamma_warning['warning_level'] != '低':
+                report += f"│   ⚡ Gamma 警告: {gamma_warning['warning_level']}\n"
+                report += f"│     {gamma_warning['delta_change_hint']}\n"
+                report += f"│     {gamma_warning['risk_description']}\n"
+                report += f"│     建議: {gamma_warning['action_hint']}\n"
+                report += "│\n"
+        
+        # Put Greeks 數據和解讀
+        if put_greeks:
+            put_delta = put_greeks.get('delta', 0)
+            put_gamma = put_greeks.get('gamma', 0)
+            put_theta = put_greeks.get('theta', 0)
+            put_vega = put_greeks.get('vega', 0)
+            put_rho = put_greeks.get('rho', 0)
+            
             report += f"│ 📉 Put Greeks:\n"
-            report += f"│   Delta:  {put.get('delta', 0):8.4f}\n"
-            report += f"│   Gamma:  {put.get('gamma', 0):8.6f}\n"
-            report += f"│   Theta:  {put.get('theta', 0):8.4f}  ($/天)\n"
-            report += f"│   Vega:   {put.get('vega', 0):8.4f}\n"
-            report += f"│   Rho:    {put.get('rho', 0):8.4f}\n"
+            report += f"│   Delta:  {put_delta:8.4f}\n"
+            report += f"│   Gamma:  {put_gamma:8.6f}\n"
+            report += f"│   Theta:  {put_theta:8.4f}  ($/天)\n"
+            report += f"│   Vega:   {put_vega:8.4f}\n"
+            report += f"│   Rho:    {put_rho:8.4f}\n"
+            report += "│\n"
+            
+            # Delta 解讀 (Requirements: 5.1)
+            delta_interp = self._get_delta_interpretation(put_delta, 'put')
+            report += f"│   📊 Delta 解讀:\n"
+            report += f"│     方向: {delta_interp['direction']}\n"
+            report += f"│     {delta_interp['probability_hint']}\n"
+            report += f"│     {delta_interp['sensitivity']}\n"
+            report += "│\n"
+            
+            # Theta 解讀 (Requirements: 5.2)
+            theta_interp = self._get_theta_interpretation(put_theta)
+            report += f"│   ⏱️ Theta 解讀:\n"
+            report += f"│     每日衰減: {theta_interp['daily_decay']}\n"
+            report += f"│     每週衰減: {theta_interp['weekly_decay']}\n"
+            report += f"│     {theta_interp['decay_rate']}\n"
+            report += "│\n"
+            
+            # Gamma 警告 (Requirements: 5.4)
+            gamma_warning = self._get_gamma_warning(put_gamma, put_delta)
+            if gamma_warning['warning_level'] != '低':
+                report += f"│   ⚡ Gamma 警告: {gamma_warning['warning_level']}\n"
+                report += f"│     {gamma_warning['delta_change_hint']}\n"
+                report += f"│     建議: {gamma_warning['action_hint']}\n"
+                report += "│\n"
+        
+        # 整體風險評估 (Requirements: 5.5)
+        overall_assessment = self._get_overall_greeks_assessment(call_greeks, put_greeks)
+        report += f"│ 🎯 整體風險評估:\n"
+        report += f"│   風險等級: {overall_assessment['overall_risk']}\n"
+        report += f"│\n"
+        report += f"│   主要風險:\n"
+        for risk in overall_assessment['key_risks']:
+            report += f"│     • {risk}\n"
+        report += f"│\n"
+        report += f"│   建議:\n"
+        for rec in overall_assessment['recommendations']:
+            report += f"│     • {rec}\n"
         
         report += "│\n"
-        report += "│ 💡 解讀:\n"
+        report += "│ 💡 Greeks 快速參考:\n"
         report += "│   Delta: 股價每變動$1，期權價格變動\n"
         report += "│   Gamma: Delta 的變化速度\n"
         report += "│   Theta: 每天時間衰減的價值 ($/天)\n"
@@ -790,16 +925,30 @@ class ReportGenerator:
         report += "└────────────────────────────────────────────┘\n"
         return report
     
-    def _format_module17_implied_volatility(self, results: dict) -> str:
-        """格式化隱含波動率結果"""
+    def _format_module17_implied_volatility(self, results: dict, historical_iv: float = None) -> str:
+        """
+        格式化隱含波動率結果
+        
+        增強功能:
+        - Call/Put IV 比較分析
+        - IV 偏斜警告（差異 > 5%）
+        - 與歷史 IV 比較
+        - 策略建議
+        
+        Requirements: 6.1, 6.2, 6.3, 6.4
+        """
         report = "\n┌─ Module 17: 隱含波動率計算 ──────────────────┐\n"
         report += "│\n"
+        
+        call_iv = None
+        put_iv = None
         
         if 'call' in results:
             call = results['call']
             converged = call.get('converged', False)
+            call_iv = call.get('implied_volatility', 0)
             report += f"│ 📈 Call IV:\n"
-            report += f"│   隱含波動率: {call.get('implied_volatility', 0)*100:.2f}%\n"
+            report += f"│   隱含波動率: {call_iv*100:.2f}%\n"
             report += f"│   收斂狀態: {'* 成功' if converged else 'x 失敗'}\n"
             report += f"│   迭代次數: {call.get('iterations', 0)}\n"
             report += f"│   市場價格: ${call.get('market_price', 0):.2f}\n"
@@ -808,20 +957,193 @@ class ReportGenerator:
         if 'put' in results:
             put = results['put']
             converged = put.get('converged', False)
+            put_iv = put.get('implied_volatility', 0)
             report += f"│ 📉 Put IV:\n"
-            report += f"│   隱含波動率: {put.get('implied_volatility', 0)*100:.2f}%\n"
+            report += f"│   隱含波動率: {put_iv*100:.2f}%\n"
             report += f"│   收斂狀態: {'* 成功' if converged else 'x 失敗'}\n"
             report += f"│   迭代次數: {put.get('iterations', 0)}\n"
             report += f"│   市場價格: ${put.get('market_price', 0):.2f}\n"
+            report += "│\n"
         
-        report += "│\n"
-        report += "│ 💡 說明: 從市場價格反推的隱含波動率\n"
+        # 添加 Call/Put IV 比較分析 (Requirements 6.1, 6.2)
+        iv_comparison = self._get_iv_comparison_analysis(call_iv, put_iv)
+        if iv_comparison:
+            report += "│ 📊 Call/Put IV 比較分析:\n"
+            report += f"│   {iv_comparison['comparison_text']}\n"
+            if iv_comparison.get('has_skew'):
+                report += f"│   ⚠️ IV 偏斜警告: {iv_comparison['skew_warning']}\n"
+                report += f"│   可能原因: {iv_comparison['skew_reason']}\n"
+            report += "│\n"
+        
+        # 添加與歷史 IV 比較 (Requirement 6.3)
+        if historical_iv is not None and historical_iv > 0:
+            current_iv = call_iv if call_iv else put_iv
+            if current_iv:
+                historical_comparison = self._get_historical_iv_comparison(current_iv, historical_iv)
+                report += "│ 📈 與歷史 IV 比較:\n"
+                report += f"│   當前 IV: {current_iv*100:.2f}%\n"
+                report += f"│   歷史 IV: {historical_iv*100:.2f}%\n"
+                report += f"│   狀態: {historical_comparison['status']}\n"
+                report += "│\n"
+        
+        # 添加策略建議 (Requirement 6.4)
+        strategy_suggestion = self._get_iv_strategy_suggestion(call_iv, put_iv, historical_iv)
+        if strategy_suggestion:
+            report += "│ 💡 策略建議:\n"
+            report += f"│   {strategy_suggestion['recommendation']}\n"
+            report += f"│   原因: {strategy_suggestion['reason']}\n"
+            report += "│\n"
+        
+        report += "│ 📝 說明: 從市場價格反推的隱含波動率\n"
         report += "│   用於判斷市場對未來波動的預期\n"
         report += "└────────────────────────────────────────────┘\n"
         return report
     
+    def _get_iv_comparison_analysis(self, call_iv: float, put_iv: float) -> dict:
+        """
+        獲取 Call/Put IV 比較分析
+        
+        Requirements: 6.1, 6.2
+        
+        參數:
+            call_iv: Call 期權隱含波動率（小數形式）
+            put_iv: Put 期權隱含波動率（小數形式）
+        
+        返回:
+            dict: 包含比較分析結果
+        """
+        if call_iv is None or put_iv is None or call_iv <= 0 or put_iv <= 0:
+            return None
+        
+        # 計算差異百分比
+        max_iv = max(call_iv, put_iv)
+        diff_pct = abs(call_iv - put_iv) / max_iv * 100
+        
+        result = {
+            'call_iv': call_iv,
+            'put_iv': put_iv,
+            'diff_pct': diff_pct,
+            'has_skew': diff_pct > 5.0,
+            'comparison_text': f"Call IV: {call_iv*100:.2f}% vs Put IV: {put_iv*100:.2f}% (差異: {diff_pct:.1f}%)"
+        }
+        
+        # 判斷偏斜方向和原因
+        if diff_pct > 5.0:
+            if put_iv > call_iv:
+                result['skew_warning'] = f"Put IV 高於 Call IV {diff_pct:.1f}%"
+                result['skew_reason'] = "市場對下跌風險的擔憂較大，可能存在避險需求"
+                result['skew_direction'] = 'put_premium'
+            else:
+                result['skew_warning'] = f"Call IV 高於 Put IV {diff_pct:.1f}%"
+                result['skew_reason'] = "市場對上漲的預期較強，可能存在投機需求"
+                result['skew_direction'] = 'call_premium'
+        else:
+            result['skew_warning'] = None
+            result['skew_reason'] = None
+            result['skew_direction'] = 'neutral'
+        
+        return result
+    
+    def _get_historical_iv_comparison(self, current_iv: float, historical_iv: float) -> dict:
+        """
+        獲取與歷史 IV 的比較
+        
+        Requirement: 6.3
+        
+        參數:
+            current_iv: 當前 IV（小數形式）
+            historical_iv: 歷史 IV（小數形式）
+        
+        返回:
+            dict: 包含比較結果
+        """
+        if current_iv <= 0 or historical_iv <= 0:
+            return {'status': '數據不可用', 'level': 'unknown'}
+        
+        ratio = current_iv / historical_iv
+        
+        if ratio > 1.2:
+            return {
+                'status': f'🔴 高於歷史 ({ratio:.2f}x) - IV 偏高',
+                'level': 'high',
+                'ratio': ratio
+            }
+        elif ratio < 0.8:
+            return {
+                'status': f'🔵 低於歷史 ({ratio:.2f}x) - IV 偏低',
+                'level': 'low',
+                'ratio': ratio
+            }
+        else:
+            return {
+                'status': f'🟢 接近歷史 ({ratio:.2f}x) - IV 正常',
+                'level': 'normal',
+                'ratio': ratio
+            }
+    
+    def _get_iv_strategy_suggestion(self, call_iv: float, put_iv: float, historical_iv: float = None) -> dict:
+        """
+        根據 IV 水平提供策略建議
+        
+        Requirement: 6.4
+        
+        參數:
+            call_iv: Call IV（小數形式）
+            put_iv: Put IV（小數形式）
+            historical_iv: 歷史 IV（小數形式，可選）
+        
+        返回:
+            dict: 包含策略建議
+        """
+        current_iv = call_iv if call_iv and call_iv > 0 else put_iv
+        if not current_iv or current_iv <= 0:
+            return None
+        
+        # 基於 IV 水平的基本建議
+        if current_iv > 0.5:  # IV > 50%
+            base_suggestion = {
+                'recommendation': '考慮賣出期權策略（如 Covered Call、Credit Spread）',
+                'reason': f'當前 IV ({current_iv*100:.1f}%) 較高，期權權金豐厚'
+            }
+        elif current_iv < 0.2:  # IV < 20%
+            base_suggestion = {
+                'recommendation': '考慮買入期權策略（如 Long Call/Put、Debit Spread）',
+                'reason': f'當前 IV ({current_iv*100:.1f}%) 較低，期權價格便宜'
+            }
+        else:
+            base_suggestion = {
+                'recommendation': '可根據方向性判斷選擇策略',
+                'reason': f'當前 IV ({current_iv*100:.1f}%) 處於中性區間'
+            }
+        
+        # 如果有歷史 IV，進一步調整建議
+        if historical_iv and historical_iv > 0:
+            ratio = current_iv / historical_iv
+            if ratio > 1.2:
+                base_suggestion['recommendation'] = '強烈建議賣出期權策略'
+                base_suggestion['reason'] = f'當前 IV 高於歷史 {(ratio-1)*100:.0f}%，適合收取高額權金'
+            elif ratio < 0.8:
+                base_suggestion['recommendation'] = '強烈建議買入期權策略'
+                base_suggestion['reason'] = f'當前 IV 低於歷史 {(1-ratio)*100:.0f}%，期權價格被低估'
+        
+        # 考慮 Call/Put IV 偏斜
+        if call_iv and put_iv and call_iv > 0 and put_iv > 0:
+            max_iv = max(call_iv, put_iv)
+            diff_pct = abs(call_iv - put_iv) / max_iv * 100
+            if diff_pct > 10:
+                if put_iv > call_iv:
+                    base_suggestion['recommendation'] += '；Put IV 偏高，可考慮賣出 Put'
+                else:
+                    base_suggestion['recommendation'] += '；Call IV 偏高，可考慮賣出 Call'
+        
+        return base_suggestion
+    
     def _format_module18_historical_volatility(self, results: dict) -> str:
-        """格式化歷史波動率結果"""
+        """
+        格式化歷史波動率結果
+        
+        Requirements 7.3, 7.4: 添加數據來源說明和數據不足警告
+        """
         report = "\n┌─ Module 18: 歷史波動率分析 ──────────────────┐\n"
         report += "│\n"
         
@@ -855,6 +1177,7 @@ class ReportGenerator:
         iv_rank = results.get('iv_rank')
         iv_percentile = results.get('iv_percentile')
         iv_recommendation = results.get('iv_recommendation', {})
+        iv_rank_details = results.get('iv_rank_details', {})
         
         if iv_rank is not None or iv_percentile is not None:
             report += "│ 📈 IV Rank / IV Percentile 分析:\n"
@@ -877,6 +1200,40 @@ class ReportGenerator:
                 report += f"│   IV Percentile: {iv_percentile:.2f}%\n"
             report += "│\n"
             
+            # Requirements 7.3: 顯示計算所用的 IV 數值和歷史範圍
+            if iv_rank_details and not iv_rank_details.get('error'):
+                report += "│ 📋 IV Rank 計算詳情:\n"
+                iv_source = iv_rank_details.get('iv_source', 'N/A')
+                current_iv_pct = iv_rank_details.get('current_iv_percent', 0)
+                iv_min_pct = iv_rank_details.get('historical_iv_min_percent', 0)
+                iv_max_pct = iv_rank_details.get('historical_iv_max_percent', 0)
+                data_points = iv_rank_details.get('historical_data_points', 0)
+                
+                report += f"│   數據來源: {iv_source}\n"
+                report += f"│   當前 IV: {current_iv_pct:.2f}%\n"
+                report += f"│   52週 IV 範圍: {iv_min_pct:.2f}% - {iv_max_pct:.2f}%\n"
+                report += f"│   歷史數據點: {data_points} 天\n"
+                
+                # Requirements 7.2: IV Rank 為 0% 時的數據驗證警告
+                validation = iv_rank_details.get('validation', {})
+                if not validation.get('is_valid', True):
+                    report += "│\n"
+                    report += "│ ⚠️ 數據驗證警告:\n"
+                    for warning in validation.get('warnings', []):
+                        report += f"│   ! {warning}\n"
+                report += "│\n"
+            
+            # Requirements 7.4: 數據不足警告
+            elif iv_rank_details and iv_rank_details.get('error'):
+                report += "│ ⚠️ 數據不足警告:\n"
+                error_msg = iv_rank_details.get('error', '未知錯誤')
+                report += f"│   {error_msg}\n"
+                if 'data_points_available' in iv_rank_details:
+                    available = iv_rank_details.get('data_points_available', 0)
+                    required = iv_rank_details.get('data_points_required', 200)
+                    report += f"│   可用數據: {available} 天 (需要 {required} 天)\n"
+                report += "│\n"
+            
             # IV 交易建議
             if iv_recommendation:
                 action = iv_recommendation.get('action', 'N/A')
@@ -887,6 +1244,15 @@ class ReportGenerator:
                 report += f"│   原因: {reason}\n"
                 report += f"│   信心度: {confidence}\n"
                 report += "│\n"
+        else:
+            # Requirements 7.4: 當 IV Rank 數據完全不可用時的警告
+            report += "│ ⚠️ IV Rank 數據不可用:\n"
+            if iv_rank_details and iv_rank_details.get('error'):
+                report += f"│   原因: {iv_rank_details.get('error')}\n"
+            else:
+                report += "│   原因: 歷史 IV 數據不足，無法計算 IV Rank\n"
+            report += "│   建議: 請確保有至少 200 天的歷史 IV 數據\n"
+            report += "│\n"
         
         report += "│ 📖 解讀:\n"
         report += "│   IV Rank < 30%: IV 偏低，考慮買入期權\n"
@@ -944,7 +1310,15 @@ class ReportGenerator:
         return report
     
     def _format_module3_arbitrage_spread(self, results: dict) -> str:
-        """格式化 Module 3 套戥水位結果"""
+        """
+        格式化 Module 3 套戥水位結果
+        
+        Requirements: 9.1, 9.2, 9.3, 9.4
+        - 9.1: 清楚標示 IV 來源
+        - 9.2: 添加 ATM IV 與 Market IV 差異解釋
+        - 9.3: 提供明確的套利結論
+        - 9.4: 存在套利機會時提供具體的套利策略建議
+        """
         report = "\n┌─ Module 3: 套戥水位 ─────────────────────────┐\n"
         report += "│\n"
         
@@ -975,32 +1349,70 @@ class ReportGenerator:
         report += f"│   套戥價差: ${spread:.2f} ({spread_pct:+.2f}%)\n"
         report += "│\n"
         
+        # IV 來源和值顯示（Requirements 9.1 - 清楚標示 IV 來源）
+        iv_used = results.get('iv_used')
+        iv_used_percent = results.get('iv_used_percent')
+        iv_source = results.get('iv_source')
+        market_iv = results.get('market_iv')  # 整體市場 IV
+        atm_iv = results.get('atm_iv')  # ATM IV
+        
+        report += f"│ 📈 波動率 (IV) 來源說明:\n"
+        
+        # 顯示使用的 IV（Requirements 9.1）
+        if iv_used_percent is not None:
+            report += f"│   ✓ 計算使用的 IV: {iv_used_percent:.2f}%\n"
+        elif iv_used is not None:
+            report += f"│   ✓ 計算使用的 IV: {iv_used*100:.2f}%\n"
+        
+        # 顯示 IV 來源（Requirements 9.1）
+        if iv_source:
+            iv_source_explanation = self._get_iv_source_explanation(iv_source)
+            report += f"│   ✓ IV 來源: {iv_source}\n"
+            if iv_source_explanation:
+                report += f"│     {iv_source_explanation}\n"
+        
+        # 顯示 ATM IV 與 Market IV 的比較（Requirements 9.2）
+        if atm_iv is not None and market_iv is not None:
+            atm_iv_pct = atm_iv * 100 if atm_iv < 1 else atm_iv
+            market_iv_pct = market_iv * 100 if market_iv < 1 else market_iv
+            iv_diff = abs(atm_iv_pct - market_iv_pct)
+            iv_diff_pct = (iv_diff / market_iv_pct * 100) if market_iv_pct > 0 else 0
+            
+            report += "│\n"
+            report += f"│ 📊 ATM IV vs Market IV 比較:\n"
+            report += f"│   ATM IV (Module 17): {atm_iv_pct:.2f}%\n"
+            report += f"│   Market IV (整體): {market_iv_pct:.2f}%\n"
+            report += f"│   差異: {iv_diff:.2f}% ({iv_diff_pct:.1f}%)\n"
+            
+            # 差異解釋（Requirements 9.2）
+            if iv_diff_pct > 30:
+                report += "│\n"
+                report += "│   ⚠️ 差異解釋 (差異 > 30%):\n"
+                report += "│   ATM IV 與 Market IV 差異較大，可能原因:\n"
+                report += "│   1. 市場對近期事件（財報、重大消息）有預期\n"
+                report += "│   2. 期權鏈流動性不均，ATM 期權定價更準確\n"
+                report += "│   3. Market IV 可能包含 OTM 期權的偏斜影響\n"
+                report += "│   → 建議以 ATM IV 為主要參考\n"
+            elif iv_diff_pct > 10:
+                report += "│\n"
+                report += "│   ℹ️ 差異解釋 (差異 10-30%):\n"
+                report += "│   ATM IV 與 Market IV 存在一定差異\n"
+                report += "│   可能因波動率微笑/偏斜導致\n"
+                report += "│   → ATM IV 通常更能反映真實市場預期\n"
+        
+        report += "│\n"
+        
         # 數據來源標註
         source = results.get('theoretical_price_source', 'N/A')
         note = results.get('note', '')
-        report += f"│ 📊 數據來源:\n"
-        report += f"│   理論價來源: {source}\n"
+        report += f"│ 📋 理論價計算來源:\n"
+        report += f"│   {source}\n"
         if note:
             report += f"│   說明: {note}\n"
         report += "│\n"
         
-        # IV 來源和值顯示（Requirements 4.3）
-        iv_used = results.get('iv_used')
-        iv_used_percent = results.get('iv_used_percent')
-        iv_source = results.get('iv_source')
+        # IV 不一致警告顯示
         iv_warning = results.get('iv_warning')
-        
-        if iv_used is not None or iv_source is not None:
-            report += f"│ 📈 波動率 (IV) 信息:\n"
-            if iv_used_percent is not None:
-                report += f"│   使用的 IV: {iv_used_percent:.2f}%\n"
-            elif iv_used is not None:
-                report += f"│   使用的 IV: {iv_used*100:.2f}%\n"
-            if iv_source:
-                report += f"│   IV 來源: {iv_source}\n"
-            report += "│\n"
-        
-        # IV 不一致警告顯示（Requirements 4.4）
         if iv_warning:
             report += f"│ ⚠️ IV 警告:\n"
             # 處理多個警告（用分號分隔）
@@ -1009,32 +1421,187 @@ class ReportGenerator:
                 report += f"│   {warning}\n"
             report += "│\n"
         
-        # 套利機會評估
-        if abs(spread_pct) > 5:
-            report += f"│ ! 套利機會: 價差超過 5%，可能存在套利機會\n"
-        elif abs(spread_pct) > 2:
-            report += f"│ * 套利機會: 價差在 2-5%，需進一步評估\n"
-        else:
-            report += f"│ * 套利機會: 價差小於 2%，市場定價合理\n"
+        # 明確的套利結論（Requirements 9.3）
+        report += "│ ═══════════════════════════════════════════\n"
+        report += "│ 📌 套利結論:\n"
+        
+        arbitrage_conclusion = self._get_arbitrage_conclusion(spread_pct, spread, market_price, theoretical_price)
+        report += arbitrage_conclusion
+        
+        # 套利策略建議（Requirements 9.4）
+        if abs(spread_pct) > 2:
+            report += "│\n"
+            report += "│ 💡 套利策略建議:\n"
+            strategy_suggestion = self._get_arbitrage_strategy_suggestion(spread_pct, spread)
+            report += strategy_suggestion
         
         report += "│\n"
-        report += "│ 💡 解讀: 使用 Black-Scholes 期權理論價計算\n"
-        report += "│   正價差: 市場價 > 理論價（期權可能高估）\n"
-        report += "│   負價差: 市場價 < 理論價（期權可能低估）\n"
+        report += "│ ═══════════════════════════════════════════\n"
+        report += "│ 📖 解讀說明:\n"
+        report += "│   • 理論價使用 Black-Scholes 模型計算\n"
+        report += "│   • 正價差: 市場價 > 理論價（期權可能高估）\n"
+        report += "│   • 負價差: 市場價 < 理論價（期權可能低估）\n"
+        report += "│   • 價差 < 2%: 市場定價合理，無套利空間\n"
+        report += "│   • 價差 2-5%: 輕微偏離，需考慮交易成本\n"
+        report += "│   • 價差 > 5%: 顯著偏離，可能存在套利機會\n"
         report += "└────────────────────────────────────────────┘\n"
         return report
     
+    def _get_iv_source_explanation(self, iv_source: str) -> str:
+        """
+        獲取 IV 來源的解釋說明
+        
+        Requirements: 9.1 - 清楚標示 IV 來源
+        """
+        if not iv_source:
+            return ""
+        
+        iv_source_lower = iv_source.lower()
+        
+        if 'atm' in iv_source_lower and 'module 17' in iv_source_lower:
+            return "(從 ATM 期權市場價格反推的隱含波動率)"
+        elif 'atm' in iv_source_lower:
+            return "(平價期權的隱含波動率，最能反映市場預期)"
+        elif 'market' in iv_source_lower:
+            return "(整體市場隱含波動率，可能包含偏斜影響)"
+        elif 'historical' in iv_source_lower or 'hv' in iv_source_lower:
+            return "(基於歷史價格計算的波動率)"
+        else:
+            return ""
+    
+    def _get_arbitrage_conclusion(self, spread_pct: float, spread: float, 
+                                   market_price: float, theoretical_price: float) -> str:
+        """
+        生成明確的套利結論
+        
+        Requirements: 9.3 - 提供明確的套利結論
+        """
+        conclusion = ""
+        
+        if abs(spread_pct) < 2:
+            conclusion += "│   ✅ 結論: 【無套利機會】\n"
+            conclusion += f"│   價差 {spread_pct:+.2f}% 在合理範圍內 (±2%)\n"
+            conclusion += "│   市場定價合理，期權價格反映真實價值\n"
+        elif abs(spread_pct) < 5:
+            if spread_pct > 0:
+                conclusion += "│   ⚠️ 結論: 【輕微高估，需評估】\n"
+                conclusion += f"│   市場價 ${market_price:.2f} 高於理論價 ${theoretical_price:.2f}\n"
+                conclusion += f"│   價差 {spread_pct:+.2f}%，扣除交易成本後可能無利可圖\n"
+            else:
+                conclusion += "│   ⚠️ 結論: 【輕微低估，需評估】\n"
+                conclusion += f"│   市場價 ${market_price:.2f} 低於理論價 ${theoretical_price:.2f}\n"
+                conclusion += f"│   價差 {spread_pct:+.2f}%，扣除交易成本後可能無利可圖\n"
+        else:
+            if spread_pct > 0:
+                conclusion += "│   🔴 結論: 【有套利機會 - 期權高估】\n"
+                conclusion += f"│   市場價 ${market_price:.2f} 顯著高於理論價 ${theoretical_price:.2f}\n"
+                conclusion += f"│   價差 {spread_pct:+.2f}%，存在賣出套利空間\n"
+            else:
+                conclusion += "│   🟢 結論: 【有套利機會 - 期權低估】\n"
+                conclusion += f"│   市場價 ${market_price:.2f} 顯著低於理論價 ${theoretical_price:.2f}\n"
+                conclusion += f"│   價差 {spread_pct:+.2f}%，存在買入套利空間\n"
+        
+        return conclusion
+    
+    def _get_arbitrage_strategy_suggestion(self, spread_pct: float, spread: float) -> str:
+        """
+        生成具體的套利策略建議
+        
+        Requirements: 9.4 - 存在套利機會時提供具體的套利策略建議
+        """
+        suggestion = ""
+        
+        if spread_pct > 5:
+            # 期權高估，建議賣出策略
+            suggestion += "│   【期權高估策略】\n"
+            suggestion += "│   1. 賣出 Call (Sell Call):\n"
+            suggestion += "│      - 收取權利金，等待期權價值回歸\n"
+            suggestion += "│      - 風險: 股價大漲時虧損無限\n"
+            suggestion += "│   2. Bear Call Spread (熊市看漲價差):\n"
+            suggestion += "│      - 賣出較低行使價 Call + 買入較高行使價 Call\n"
+            suggestion += "│      - 限制最大虧損，適合風險控制\n"
+            suggestion += "│   3. 合成空頭 + 買入正股:\n"
+            suggestion += "│      - 如果合成空頭價格 > 正股，可套利\n"
+        elif spread_pct > 2:
+            suggestion += "│   【輕微高估策略】\n"
+            suggestion += "│   1. 觀望為主，等待更好機會\n"
+            suggestion += "│   2. 如要操作，建議使用價差策略限制風險\n"
+            suggestion += "│   3. 注意交易成本可能吃掉利潤\n"
+        elif spread_pct < -5:
+            # 期權低估，建議買入策略
+            suggestion += "│   【期權低估策略】\n"
+            suggestion += "│   1. 買入 Call (Long Call):\n"
+            suggestion += "│      - 以低於理論價買入，等待價值回歸\n"
+            suggestion += "│      - 風險: 最大虧損為權利金\n"
+            suggestion += "│   2. Bull Call Spread (牛市看漲價差):\n"
+            suggestion += "│      - 買入較低行使價 Call + 賣出較高行使價 Call\n"
+            suggestion += "│      - 降低成本，限制最大利潤\n"
+            suggestion += "│   3. 合成多頭 vs 正股:\n"
+            suggestion += "│      - 如果合成多頭價格 < 正股，可套利\n"
+        elif spread_pct < -2:
+            suggestion += "│   【輕微低估策略】\n"
+            suggestion += "│   1. 可考慮小倉位買入\n"
+            suggestion += "│   2. 使用價差策略降低成本\n"
+            suggestion += "│   3. 注意交易成本可能吃掉利潤\n"
+        
+        # 通用風險提示
+        suggestion += "│\n"
+        suggestion += "│   ⚠️ 風險提示:\n"
+        suggestion += "│   • 套利機會可能因市場變化快速消失\n"
+        suggestion += "│   • 需考慮買賣價差、佣金等交易成本\n"
+        suggestion += "│   • 理論價基於模型假設，實際可能有偏差\n"
+        
+        return suggestion
+    
     def _format_module13_position_analysis(self, results: dict) -> str:
-        """格式化 Module 13 倉位分析結果"""
+        """
+        格式化 Module 13 倉位分析結果
+        
+        Requirements: 2.1, 2.2, 2.3, 2.4 - 分別顯示 Call 和 Put 數據，
+        顯示 Put/Call 比率，處理數據不可用情況
+        """
         report = "\n┌─ Module 13: 倉位分析（含所有權結構）────────┐\n"
         report += "│\n"
         
-        # 基本倉位信息
-        report += f"│ 📊 倉位數據:\n"
+        # Call/Put 分離倉位數據 (Requirements: 2.1, 2.2)
+        report += f"│ 📊 期權倉位數據:\n"
+        
+        # Call 數據
+        call_volume = results.get('call_volume')
+        call_oi = results.get('call_open_interest')
+        report += f"│   📈 Call 期權:\n"
+        report += f"│      成交量: {self._format_position_value(call_volume)}\n"
+        report += f"│      未平倉量: {self._format_position_value(call_oi)}\n"
+        
+        # Put 數據
+        put_volume = results.get('put_volume')
+        put_oi = results.get('put_open_interest')
+        report += f"│   📉 Put 期權:\n"
+        report += f"│      成交量: {self._format_position_value(put_volume)}\n"
+        report += f"│      未平倉量: {self._format_position_value(put_oi)}\n"
+        
+        # Put/Call 比率 (Requirements: 2.3)
+        put_call_ratio = results.get('put_call_ratio')
+        if put_call_ratio is not None:
+            report += f"│   📊 Put/Call 比率: {put_call_ratio:.4f}\n"
+            # 添加 Put/Call 比率解讀
+            if put_call_ratio > 1.0:
+                report += f"│      ⚠️ 看跌傾向（Put > Call）\n"
+            elif put_call_ratio < 0.7:
+                report += f"│      ✓ 看漲傾向（Call > Put）\n"
+            else:
+                report += f"│      中性（Put/Call 接近平衡）\n"
+        else:
+            report += f"│   📊 Put/Call 比率: 數據不可用\n"
+        
+        report += "│\n"
+        
+        # 總計數據
+        report += f"│ 📋 總計:\n"
         if 'volume' in results:
-            report += f"│   成交量: {results.get('volume', 0):,}\n"
+            report += f"│   總成交量: {results.get('volume', 0):,}\n"
         if 'open_interest' in results:
-            report += f"│   未平倉量: {results.get('open_interest', 0):,}\n"
+            report += f"│   總未平倉量: {results.get('open_interest', 0):,}\n"
         if 'volume_oi_ratio' in results:
             report += f"│   成交量/未平倉比: {results.get('volume_oi_ratio', 0):.2f}\n"
         report += "│\n"
@@ -1089,10 +1656,461 @@ class ReportGenerator:
         report += "└────────────────────────────────────────────┘\n"
         return report
     
+    def _format_position_value(self, value) -> str:
+        """
+        格式化倉位數值，處理數據不可用情況
+        
+        Requirements: 2.4 - WHEN 未平倉量數據不可用 THEN Report_Generator 
+                           SHALL 明確標示「數據不可用」而非顯示 0
+        """
+        if value is None:
+            return "數據不可用"
+        return f"{value:,}"
+    
+    def _get_rsi_interpretation(self, rsi: float) -> dict:
+        """
+        獲取 RSI 解讀
+        
+        Requirements: 3.2, 3.3, 3.4
+        
+        返回:
+            dict: {
+                'status': str,  # '超買', '超賣', '中性'
+                'description': str,  # 詳細描述
+                'action_hint': str  # 操作提示
+            }
+        """
+        if rsi is None:
+            return {
+                'status': '數據不可用',
+                'description': 'RSI 數據不可用',
+                'action_hint': '無法提供建議'
+            }
+        
+        if rsi > 70:
+            return {
+                'status': '超買',
+                'description': f'RSI {rsi:.2f} > 70，股票處於超買狀態',
+                'action_hint': '可能回調，謹慎追高，考慮獲利了結或等待回調'
+            }
+        elif rsi < 30:
+            return {
+                'status': '超賣',
+                'description': f'RSI {rsi:.2f} < 30，股票處於超賣狀態',
+                'action_hint': '可能反彈，關注買入機會，但需確認底部信號'
+            }
+        else:
+            return {
+                'status': '中性',
+                'description': f'RSI {rsi:.2f} 在 30-70 範圍內，動量正常',
+                'action_hint': '無明顯超買超賣信號，可根據其他指標判斷'
+            }
+    
+    def _get_atr_interpretation(self, atr: float, stock_price: float) -> dict:
+        """
+        獲取 ATR 實際應用解讀（止損距離建議）
+        
+        Requirements: 3.5
+        
+        返回:
+            dict: {
+                'atr_percentage': float,  # ATR 佔股價百分比
+                'stop_loss_suggestion': str,  # 止損建議
+                'position_sizing_hint': str  # 倉位建議
+            }
+        """
+        if atr is None or stock_price is None or stock_price <= 0:
+            return {
+                'atr_percentage': None,
+                'stop_loss_suggestion': '數據不可用',
+                'position_sizing_hint': '無法計算'
+            }
+        
+        atr_percentage = (atr / stock_price) * 100
+        
+        # 止損距離建議（通常使用 1.5-2 倍 ATR）
+        stop_loss_1x = atr
+        stop_loss_1_5x = atr * 1.5
+        stop_loss_2x = atr * 2.0
+        
+        # 根據 ATR 百分比判斷波動性
+        if atr_percentage > 5:
+            volatility_level = '高波動'
+            position_hint = '建議減少倉位，波動較大'
+        elif atr_percentage > 2:
+            volatility_level = '中等波動'
+            position_hint = '正常倉位，注意風險管理'
+        else:
+            volatility_level = '低波動'
+            position_hint = '可適當增加倉位，波動較小'
+        
+        return {
+            'atr_percentage': atr_percentage,
+            'stop_loss_1x': stop_loss_1x,
+            'stop_loss_1_5x': stop_loss_1_5x,
+            'stop_loss_2x': stop_loss_2x,
+            'volatility_level': volatility_level,
+            'stop_loss_suggestion': f'建議止損距離: ${stop_loss_1_5x:.2f}-${stop_loss_2x:.2f} (1.5-2倍ATR)',
+            'position_sizing_hint': position_hint
+        }
+    
+    def _get_delta_interpretation(self, delta: float, option_type: str = 'call') -> dict:
+        """
+        獲取 Delta 方向性解讀
+        
+        Requirements: 5.1
+        
+        參數:
+            delta: Delta 值
+            option_type: 'call' 或 'put'
+        
+        返回:
+            dict: {
+                'direction': str,  # 方向性描述
+                'probability_hint': str,  # 到期價內概率提示
+                'hedge_ratio': str,  # 對沖比率說明
+                'sensitivity': str  # 敏感度說明
+            }
+        """
+        if delta is None:
+            return {
+                'direction': '數據不可用',
+                'probability_hint': '無法計算',
+                'hedge_ratio': '無法計算',
+                'sensitivity': '無法計算'
+            }
+        
+        abs_delta = abs(delta)
+        
+        # 方向性解讀
+        if option_type.lower() == 'call':
+            if delta > 0.7:
+                direction = '強看漲 - 深度價內'
+                probability_hint = f'約 {abs_delta*100:.0f}% 概率到期價內'
+            elif delta > 0.5:
+                direction = '看漲 - 價內或接近平價'
+                probability_hint = f'約 {abs_delta*100:.0f}% 概率到期價內'
+            elif delta > 0.3:
+                direction = '輕微看漲 - 接近平價'
+                probability_hint = f'約 {abs_delta*100:.0f}% 概率到期價內'
+            else:
+                direction = '弱看漲 - 價外'
+                probability_hint = f'約 {abs_delta*100:.0f}% 概率到期價內'
+        else:  # put
+            if delta < -0.7:
+                direction = '強看跌 - 深度價內'
+                probability_hint = f'約 {abs_delta*100:.0f}% 概率到期價內'
+            elif delta < -0.5:
+                direction = '看跌 - 價內或接近平價'
+                probability_hint = f'約 {abs_delta*100:.0f}% 概率到期價內'
+            elif delta < -0.3:
+                direction = '輕微看跌 - 接近平價'
+                probability_hint = f'約 {abs_delta*100:.0f}% 概率到期價內'
+            else:
+                direction = '弱看跌 - 價外'
+                probability_hint = f'約 {abs_delta*100:.0f}% 概率到期價內'
+        
+        # 對沖比率
+        hedge_shares = int(abs_delta * 100)
+        hedge_ratio = f'每 1 份期權需 {hedge_shares} 股對沖'
+        
+        # 敏感度說明
+        sensitivity = f'股價每變動 $1，期權價格變動約 ${abs_delta:.2f}'
+        
+        return {
+            'direction': direction,
+            'probability_hint': probability_hint,
+            'hedge_ratio': hedge_ratio,
+            'sensitivity': sensitivity
+        }
+    
+    def _get_theta_interpretation(self, theta: float, option_price: float = None) -> dict:
+        """
+        獲取 Theta 時間衰減影響總結
+        
+        Requirements: 5.2
+        
+        參數:
+            theta: Theta 值（每天損失的美元數）
+            option_price: 期權價格（用於計算衰減百分比）
+        
+        返回:
+            dict: {
+                'daily_decay': str,  # 每日衰減
+                'weekly_decay': str,  # 每週衰減
+                'decay_rate': str,  # 衰減速度評估
+                'strategy_hint': str  # 策略建議
+            }
+        """
+        if theta is None:
+            return {
+                'daily_decay': '數據不可用',
+                'weekly_decay': '數據不可用',
+                'decay_rate': '無法評估',
+                'strategy_hint': '無法提供建議'
+            }
+        
+        # 計算每日和每週衰減
+        daily_decay = abs(theta)
+        weekly_decay = daily_decay * 5  # 交易日
+        
+        # 計算衰減百分比（如果有期權價格）
+        if option_price and option_price > 0:
+            daily_pct = (daily_decay / option_price) * 100
+            if daily_pct > 2:
+                decay_rate = '快速衰減 - 時間價值流失嚴重'
+                strategy_hint = '買方不利，考慮賣出或選擇更長期限'
+            elif daily_pct > 1:
+                decay_rate = '中等衰減 - 需注意時間價值'
+                strategy_hint = '關注到期時間，避免持有過久'
+            else:
+                decay_rate = '緩慢衰減 - 時間價值相對穩定'
+                strategy_hint = '時間壓力較小，可持有觀察'
+        else:
+            if daily_decay > 0.5:
+                decay_rate = '高衰減 - 每日損失較大'
+                strategy_hint = '買方需謹慎，賣方有利'
+            elif daily_decay > 0.1:
+                decay_rate = '中等衰減'
+                strategy_hint = '正常時間衰減範圍'
+            else:
+                decay_rate = '低衰減'
+                strategy_hint = '時間價值損失較小'
+        
+        return {
+            'daily_decay': f'${daily_decay:.4f}/天',
+            'weekly_decay': f'${weekly_decay:.4f}/週',
+            'decay_rate': decay_rate,
+            'strategy_hint': strategy_hint
+        }
+    
+    def _get_vega_interpretation(self, vega: float, current_iv: float = None) -> dict:
+        """
+        獲取 Vega 波動率敏感度總結
+        
+        Requirements: 5.3
+        
+        參數:
+            vega: Vega 值
+            current_iv: 當前隱含波動率（用於評估）
+        
+        返回:
+            dict: {
+                'sensitivity': str,  # 敏感度說明
+                'iv_impact': str,  # IV 變化影響
+                'risk_level': str,  # 波動率風險等級
+                'strategy_hint': str  # 策略建議
+            }
+        """
+        if vega is None:
+            return {
+                'sensitivity': '數據不可用',
+                'iv_impact': '無法計算',
+                'risk_level': '無法評估',
+                'strategy_hint': '無法提供建議'
+            }
+        
+        # 敏感度說明
+        sensitivity = f'IV 每變動 1%，期權價格變動約 ${vega:.4f}'
+        
+        # IV 變化影響
+        iv_up_5 = vega * 5
+        iv_down_5 = -vega * 5
+        iv_impact = f'IV +5%: +${iv_up_5:.2f} | IV -5%: ${iv_down_5:.2f}'
+        
+        # 風險等級評估
+        if vega > 0.5:
+            risk_level = '高波動率敏感 - IV 變化影響大'
+            if current_iv and current_iv > 0.4:  # 40%
+                strategy_hint = '當前 IV 較高，買入期權需謹慎 IV 回落風險'
+            elif current_iv and current_iv < 0.2:  # 20%
+                strategy_hint = '當前 IV 較低，買入期權可能受益於 IV 上升'
+            else:
+                strategy_hint = '關注 IV 變化，可能顯著影響期權價值'
+        elif vega > 0.2:
+            risk_level = '中等波動率敏感'
+            strategy_hint = 'IV 變化有一定影響，需持續關注'
+        else:
+            risk_level = '低波動率敏感'
+            strategy_hint = 'IV 變化影響較小，可專注於方向性判斷'
+        
+        return {
+            'sensitivity': sensitivity,
+            'iv_impact': iv_impact,
+            'risk_level': risk_level,
+            'strategy_hint': strategy_hint
+        }
+    
+    def _get_gamma_warning(self, gamma: float, delta: float = None) -> dict:
+        """
+        獲取 Gamma 警告（當 Gamma 較高時警告 Delta 可能快速變化）
+        
+        Requirements: 5.4
+        
+        參數:
+            gamma: Gamma 值
+            delta: 當前 Delta 值（用於評估變化幅度）
+        
+        返回:
+            dict: {
+                'warning_level': str,  # 警告等級
+                'delta_change_hint': str,  # Delta 變化提示
+                'risk_description': str,  # 風險描述
+                'action_hint': str  # 操作建議
+            }
+        """
+        if gamma is None:
+            return {
+                'warning_level': '無',
+                'delta_change_hint': '數據不可用',
+                'risk_description': '無法評估',
+                'action_hint': '無法提供建議'
+            }
+        
+        # Gamma 閾值判斷
+        # 一般來說，ATM 期權的 Gamma 最高，約 0.01-0.05
+        if gamma > 0.05:
+            warning_level = '⚠️ 高'
+            delta_change_hint = f'股價每變動 $1，Delta 變化約 {gamma:.4f}'
+            risk_description = 'Delta 可能快速變化，期權價格波動加劇'
+            action_hint = '需頻繁調整對沖，或考慮減少倉位'
+        elif gamma > 0.02:
+            warning_level = '中等'
+            delta_change_hint = f'股價每變動 $1，Delta 變化約 {gamma:.4f}'
+            risk_description = 'Delta 變化速度適中'
+            action_hint = '定期檢查對沖比率'
+        else:
+            warning_level = '低'
+            delta_change_hint = f'股價每變動 $1，Delta 變化約 {gamma:.4f}'
+            risk_description = 'Delta 相對穩定'
+            action_hint = '對沖調整頻率可較低'
+        
+        # 如果提供了 Delta，計算股價變動 $5 後的 Delta 變化
+        if delta is not None:
+            delta_after_5up = delta + (gamma * 5)
+            delta_after_5down = delta - (gamma * 5)
+            delta_change_hint += f'\n│     股價 +$5: Delta → {delta_after_5up:.4f}'
+            delta_change_hint += f'\n│     股價 -$5: Delta → {delta_after_5down:.4f}'
+        
+        return {
+            'warning_level': warning_level,
+            'delta_change_hint': delta_change_hint,
+            'risk_description': risk_description,
+            'action_hint': action_hint
+        }
+    
+    def _get_overall_greeks_assessment(self, call_greeks: dict = None, put_greeks: dict = None) -> dict:
+        """
+        獲取整體 Greeks 風險評估總結
+        
+        Requirements: 5.5
+        
+        參數:
+            call_greeks: Call 期權的 Greeks 字典
+            put_greeks: Put 期權的 Greeks 字典
+        
+        返回:
+            dict: {
+                'overall_risk': str,  # 整體風險等級
+                'key_risks': list,  # 主要風險點
+                'recommendations': list  # 建議
+            }
+        """
+        key_risks = []
+        recommendations = []
+        risk_score = 0  # 0-10 分
+        
+        # 分析 Call Greeks
+        if call_greeks:
+            delta = call_greeks.get('delta', 0)
+            gamma = call_greeks.get('gamma', 0)
+            theta = call_greeks.get('theta', 0)
+            vega = call_greeks.get('vega', 0)
+            
+            # Delta 風險
+            if abs(delta) > 0.8:
+                key_risks.append('Call Delta 極高，方向性風險大')
+                risk_score += 2
+            
+            # Gamma 風險
+            if gamma > 0.05:
+                key_risks.append('Call Gamma 高，Delta 可能快速變化')
+                risk_score += 2
+            
+            # Theta 風險
+            if theta < -0.5:
+                key_risks.append('Call Theta 衰減快，時間價值流失嚴重')
+                risk_score += 1
+            
+            # Vega 風險
+            if vega > 0.5:
+                key_risks.append('Call Vega 高，對 IV 變化敏感')
+                risk_score += 1
+        
+        # 分析 Put Greeks
+        if put_greeks:
+            delta = put_greeks.get('delta', 0)
+            gamma = put_greeks.get('gamma', 0)
+            theta = put_greeks.get('theta', 0)
+            vega = put_greeks.get('vega', 0)
+            
+            # Delta 風險
+            if abs(delta) > 0.8:
+                key_risks.append('Put Delta 極高，方向性風險大')
+                risk_score += 2
+            
+            # Gamma 風險
+            if gamma > 0.05:
+                key_risks.append('Put Gamma 高，Delta 可能快速變化')
+                risk_score += 2
+            
+            # Theta 風險
+            if theta < -0.5:
+                key_risks.append('Put Theta 衰減快，時間價值流失嚴重')
+                risk_score += 1
+            
+            # Vega 風險
+            if vega > 0.5:
+                key_risks.append('Put Vega 高，對 IV 變化敏感')
+                risk_score += 1
+        
+        # 生成建議
+        if risk_score >= 6:
+            overall_risk = '⚠️ 高風險'
+            recommendations.append('建議減少倉位或增加對沖')
+            recommendations.append('密切監控市場變化')
+        elif risk_score >= 3:
+            overall_risk = '中等風險'
+            recommendations.append('定期檢查倉位和對沖比率')
+            recommendations.append('關注 IV 和時間衰減')
+        else:
+            overall_risk = '低風險'
+            recommendations.append('風險可控，可維持現有策略')
+        
+        if not key_risks:
+            key_risks.append('無明顯風險警告')
+        
+        return {
+            'overall_risk': overall_risk,
+            'risk_score': risk_score,
+            'key_risks': key_risks,
+            'recommendations': recommendations
+        }
+    
     def _format_module14_monitoring_posts(self, results: dict) -> str:
-        """格式化 Module 14 監察崗位結果"""
+        """
+        格式化 Module 14 監察崗位結果
+        
+        Requirements: 3.1, 3.2, 3.3, 3.4, 3.5
+        - 添加 RSI 數值顯示
+        - 添加 RSI 解讀（超買/超賣/中性）
+        - 添加 ATR 實際應用解讀（止損距離建議）
+        """
         report = "\n┌─ Module 14: 12監察崗位（含 RSI/Beta）────────┐\n"
         report += "│\n"
+        
+        # 獲取股價用於 ATR 計算
+        stock_price = results.get('stock_price', 0)
         
         # 基本監察數據
         report += f"│ 🔍 監察指標:\n"
@@ -1101,36 +2119,63 @@ class ReportGenerator:
         if 'iv' in results:
             report += f"│   隱含波動率: {results.get('iv', 0):.2f}%\n"
         if 'atr' in results:
-            report += f"│   ATR: ${results.get('atr', 0):.2f}\n"
+            atr = results.get('atr', 0)
+            report += f"│   ATR: ${atr:.2f}\n"
         if 'bid_ask_spread' in results:
             report += f"│   買賣價差: ${results.get('bid_ask_spread', 0):.2f}\n"
         report += "│\n"
         
-        # Finviz RSI 和 Beta 數據
-        has_finviz_data = False
-        if 'rsi' in results or 'beta' in results:
-            has_finviz_data = True
-            report += f"│ 📊 技術指標 (Finviz):\n"
-            
-            if 'rsi' in results:
-                rsi = results.get('rsi', 0)
-                rsi_status = results.get('rsi_status', '')
-                report += f"│   RSI: {rsi:.2f}\n"
-                if rsi_status:
-                    report += f"│   {rsi_status}\n"
-            
-            if 'beta' in results:
-                beta = results.get('beta', 0)
-                beta_status = results.get('beta_status', '')
-                report += f"│   Beta: {beta:.2f}\n"
-                if beta_status:
-                    report += f"│   {beta_status}\n"
-            
+        # RSI 數值和解讀 (Requirements: 3.1, 3.2, 3.3, 3.4)
+        rsi = results.get('rsi')
+        if rsi is not None:
+            rsi_interp = self._get_rsi_interpretation(rsi)
+            report += f"│ 📊 RSI 分析:\n"
+            report += f"│   RSI 數值: {rsi:.2f}\n"
+            report += f"│   狀態: {rsi_interp['status']}\n"
+            report += f"│   解讀: {rsi_interp['description']}\n"
+            report += f"│   建議: {rsi_interp['action_hint']}\n"
+            report += "│\n"
+        else:
+            # 檢查是否有 rsi_status（舊格式兼容）
+            rsi_status = results.get('rsi_status', '')
+            if rsi_status:
+                report += f"│ 📊 RSI 分析:\n"
+                report += f"│   {rsi_status}\n"
+                report += "│\n"
+        
+        # ATR 實際應用解讀 (Requirements: 3.5)
+        atr = results.get('atr')
+        if atr is not None and stock_price > 0:
+            atr_interp = self._get_atr_interpretation(atr, stock_price)
+            report += f"│ 📏 ATR 止損建議:\n"
+            report += f"│   ATR: ${atr:.2f} ({atr_interp['atr_percentage']:.2f}% 股價)\n"
+            report += f"│   波動性: {atr_interp['volatility_level']}\n"
+            report += f"│   1倍ATR止損: ${atr_interp['stop_loss_1x']:.2f}\n"
+            report += f"│   1.5倍ATR止損: ${atr_interp['stop_loss_1_5x']:.2f}\n"
+            report += f"│   2倍ATR止損: ${atr_interp['stop_loss_2x']:.2f}\n"
+            report += f"│   {atr_interp['stop_loss_suggestion']}\n"
+            report += f"│   倉位建議: {atr_interp['position_sizing_hint']}\n"
+            report += "│\n"
+        
+        # Beta 數據
+        if 'beta' in results:
+            beta = results.get('beta', 0)
+            beta_status = results.get('beta_status', '')
+            report += f"│ 📈 Beta 分析:\n"
+            report += f"│   Beta: {beta:.2f}\n"
+            if beta > 1:
+                report += f"│   解讀: 波動性高於市場，風險較大\n"
+            elif beta < 1:
+                report += f"│   解讀: 波動性低於市場，相對穩定\n"
+            else:
+                report += f"│   解讀: 波動性與市場同步\n"
+            if beta_status:
+                report += f"│   {beta_status}\n"
             report += "│\n"
         
         # 風險評估
         if 'risk_level' in results:
-            report += f"│ ! 風險等級: {results.get('risk_level', 'N/A')}\n"
+            report += f"│ ⚠️ 風險等級: {results.get('risk_level', 'N/A')}\n"
         
         if 'monitoring_alerts' in results:
             alerts = results.get('monitoring_alerts', [])
@@ -1139,33 +2184,69 @@ class ReportGenerator:
                 for alert in alerts:
                     report += f"│   • {alert}\n"
         
-        if has_finviz_data:
-            report += "│\n"
-            report += "│ 📌 數據來源: Finviz (RSI/Beta 數據)\n"
-        
+        # 數據來源
         report += "│\n"
-        report += "│ 💡 解讀:\n"
-        report += "│   RSI > 70: 超買，可能回調\n"
-        report += "│   RSI < 30: 超賣，可能反彈\n"
-        report += "│   Beta > 1: 波動性高於市場\n"
-        report += "│   Beta < 1: 波動性低於市場\n"
+        report += "│ 📌 數據來源: Finviz (RSI/Beta 數據)\n"
+        
+        # 簡化的解讀說明
+        report += "│\n"
+        report += "│ 💡 快速參考:\n"
+        report += "│   RSI > 70: 超買區域 | RSI < 30: 超賣區域\n"
+        report += "│   Beta > 1: 高波動 | Beta < 1: 低波動\n"
+        report += "│   止損建議: 使用 1.5-2 倍 ATR 設置止損點\n"
         report += "└────────────────────────────────────────────┘\n"
         return report
     
     def _format_module20_fundamental_health(self, results: dict) -> str:
-        """格式化 Module 20 基本面健康檢查結果"""
+        """格式化 Module 20 基本面健康檢查結果
+        
+        改進內容 (Requirements 10.2, 10.3, 10.4):
+        - 明確列出缺失的具體指標
+        - 基於可用數據提供有限度分析
+        - 添加手動查詢建議
+        """
         report = "\n┌─ Module 20: 基本面健康檢查 ──────────────────┐\n"
         report += "│\n"
         
+        # 定義所有指標及其名稱
+        ALL_METRICS = {
+            'peg_ratio': 'PEG 比率',
+            'roe': 'ROE (股本回報率)',
+            'profit_margin': '淨利潤率',
+            'debt_eq': '負債/股本比',
+            'inst_own': '機構持股比例'
+        }
+        
         # 檢查是否跳過
         if results.get('status') == 'skipped':
-            report += f"│ ! 狀態: 跳過執行\n"
+            report += f"│ ⚠ 狀態: 跳過執行\n"
             report += f"│ 原因: {results.get('reason', 'N/A')}\n"
             available = results.get('available_metrics', 0)
             required = results.get('required_metrics', 3)
             report += f"│ 可用指標: {available}/{required}\n"
             report += "│\n"
+            
+            # 列出缺失的具體指標 (Requirement 10.2)
+            report += "│ 📋 缺失指標詳情:\n"
+            missing_metrics = results.get('missing_metrics', [])
+            if missing_metrics:
+                for metric in missing_metrics:
+                    metric_name = ALL_METRICS.get(metric, metric)
+                    report += f"│   ✗ {metric_name}\n"
+            else:
+                # 如果沒有明確的缺失列表，列出所有指標
+                for key, name in ALL_METRICS.items():
+                    report += f"│   ✗ {name}\n"
+            report += "│\n"
+            
+            # 手動查詢建議 (Requirement 10.4)
+            report += "│ 🔍 手動查詢建議:\n"
+            report += "│   • Finviz: https://finviz.com/quote.ashx?t=TICKER\n"
+            report += "│   • Yahoo Finance: https://finance.yahoo.com/quote/TICKER\n"
+            report += "│   • MarketWatch: https://www.marketwatch.com/investing/stock/TICKER\n"
+            report += "│\n"
             report += "│ 💡 說明: 需要至少 3 個基本面指標才能執行分析\n"
+            report += "│   請手動查詢上述網站獲取基本面數據\n"
             report += "└────────────────────────────────────────────┘\n"
             return report
         
@@ -1181,40 +2262,219 @@ class ReportGenerator:
         report += f"│   使用指標: {available_metrics}/5\n"
         report += "│\n"
         
-        # 各項指標
+        # 各項指標 - 顯示可用和缺失的指標
         report += f"│ 📊 基本面指標:\n"
-        if 'peg_ratio' in results:
+        
+        # 追蹤可用和缺失的指標
+        available_list = []
+        missing_list = []
+        
+        # PEG 比率
+        if results.get('peg_ratio') is not None:
             peg = results.get('peg_ratio', 0)
-            report += f"│   PEG 比率: {peg:.2f}\n"
-        if 'roe' in results:
+            peg_analysis = self._get_peg_analysis(peg)
+            report += f"│   ✓ PEG 比率: {peg:.2f} {peg_analysis}\n"
+            available_list.append('peg_ratio')
+        else:
+            missing_list.append('peg_ratio')
+        
+        # ROE
+        if results.get('roe') is not None:
             roe = results.get('roe', 0)
-            report += f"│   ROE: {roe:.2f}%\n"
-        if 'profit_margin' in results:
+            roe_analysis = self._get_roe_analysis(roe)
+            report += f"│   ✓ ROE: {roe:.2f}% {roe_analysis}\n"
+            available_list.append('roe')
+        else:
+            missing_list.append('roe')
+        
+        # 淨利潤率
+        if results.get('profit_margin') is not None:
             margin = results.get('profit_margin', 0)
-            report += f"│   淨利潤率: {margin:.2f}%\n"
-        if 'debt_eq' in results:
+            margin_analysis = self._get_profit_margin_analysis(margin)
+            report += f"│   ✓ 淨利潤率: {margin:.2f}% {margin_analysis}\n"
+            available_list.append('profit_margin')
+        else:
+            missing_list.append('profit_margin')
+        
+        # 負債/股本
+        if results.get('debt_eq') is not None:
             debt = results.get('debt_eq', 0)
-            report += f"│   負債/股本: {debt:.2f}\n"
-        if 'inst_own' in results:
+            debt_analysis = self._get_debt_analysis(debt)
+            report += f"│   ✓ 負債/股本: {debt:.2f} {debt_analysis}\n"
+            available_list.append('debt_eq')
+        else:
+            missing_list.append('debt_eq')
+        
+        # 機構持股
+        if results.get('inst_own') is not None:
             inst = results.get('inst_own', 0)
-            report += f"│   機構持股: {inst:.2f}%\n"
+            inst_analysis = self._get_inst_own_analysis(inst)
+            report += f"│   ✓ 機構持股: {inst:.2f}% {inst_analysis}\n"
+            available_list.append('inst_own')
+        else:
+            missing_list.append('inst_own')
+        
         report += "│\n"
+        
+        # 列出缺失的指標 (Requirement 10.2)
+        if missing_list:
+            report += "│ ⚠ 缺失指標:\n"
+            for metric in missing_list:
+                metric_name = ALL_METRICS.get(metric, metric)
+                report += f"│   ✗ {metric_name}\n"
+            report += "│\n"
+        
+        # 基於可用數據提供有限度分析 (Requirement 10.3)
+        if available_metrics < 5:
+            report += "│ 📈 有限度分析:\n"
+            limited_analysis = self._get_limited_fundamental_analysis(results, available_list)
+            for line in limited_analysis:
+                report += f"│   {line}\n"
+            report += "│\n"
+            
+            # 信心等級
+            confidence = self._get_fundamental_confidence(available_metrics)
+            report += f"│ 📊 分析信心: {confidence}\n"
+            report += "│\n"
         
         # 數據來源
         report += f"│ 📌 數據來源: {data_source}\n"
         if available_metrics < 5:
-            report += f"│ ! 注意: 僅使用 {available_metrics}/5 個指標\n"
+            report += f"│ ⚠ 注意: 僅使用 {available_metrics}/5 個指標，分析可能不完整\n"
         report += "│\n"
+        
+        # 手動查詢建議 (Requirement 10.4) - 當數據不完整時顯示
+        if missing_list:
+            ticker = results.get('ticker', 'TICKER')
+            report += "│ 🔍 補充數據建議:\n"
+            report += f"│   • Finviz: https://finviz.com/quote.ashx?t={ticker}\n"
+            report += f"│   • Yahoo Finance: https://finance.yahoo.com/quote/{ticker}\n"
+            report += "│\n"
         
         # 等級解讀
         report += f"│ 💡 等級解讀:\n"
-        report += f"│   A (90-100): 優秀，基本面非常健康\n"
-        report += f"│   B (80-89): 良好，基本面健康\n"
-        report += f"│   C (70-79): 中等，基本面一般\n"
-        report += f"│   D (60-69): 較差，需謹慎\n"
-        report += f"│   F (<60): 差，基本面存在問題\n"
+        report += f"│   A (80-100): 優秀，基本面非常健康\n"
+        report += f"│   B (60-79): 良好，基本面健康\n"
+        report += f"│   C (40-59): 中等，基本面一般\n"
+        report += f"│   D (<40): 需警惕，基本面存在問題\n"
         report += "└────────────────────────────────────────────┘\n"
         return report
+    
+    def _get_peg_analysis(self, peg: float) -> str:
+        """獲取 PEG 比率分析"""
+        if peg < 1.0:
+            return "(低估)"
+        elif peg < 2.0:
+            return "(合理)"
+        elif peg < 3.0:
+            return "(略高)"
+        else:
+            return "(高估)"
+    
+    def _get_roe_analysis(self, roe: float) -> str:
+        """獲取 ROE 分析"""
+        if roe > 20:
+            return "(優秀)"
+        elif roe > 15:
+            return "(良好)"
+        elif roe > 10:
+            return "(一般)"
+        else:
+            return "(偏低)"
+    
+    def _get_profit_margin_analysis(self, margin: float) -> str:
+        """獲取淨利潤率分析"""
+        if margin > 20:
+            return "(優秀)"
+        elif margin > 10:
+            return "(良好)"
+        elif margin > 5:
+            return "(一般)"
+        else:
+            return "(偏低)"
+    
+    def _get_debt_analysis(self, debt: float) -> str:
+        """獲取負債/股本分析"""
+        if debt < 0.5:
+            return "(優秀)"
+        elif debt < 1.0:
+            return "(良好)"
+        elif debt < 2.0:
+            return "(一般)"
+        else:
+            return "(高負債)"
+    
+    def _get_inst_own_analysis(self, inst: float) -> str:
+        """獲取機構持股分析"""
+        if inst > 60:
+            return "(高認可)"
+        elif inst > 40:
+            return "(正常)"
+        elif inst > 20:
+            return "(偏低)"
+        else:
+            return "(低認可)"
+    
+    def _get_limited_fundamental_analysis(self, results: dict, available_list: list) -> list:
+        """基於可用數據提供有限度分析 (Requirement 10.3)"""
+        analysis = []
+        
+        # 估值分析
+        if 'peg_ratio' in available_list:
+            peg = results.get('peg_ratio', 0)
+            if peg < 1.0:
+                analysis.append("• 估值: 股票可能被低估，具有投資價值")
+            elif peg < 2.0:
+                analysis.append("• 估值: 股票估值合理")
+            else:
+                analysis.append("• 估值: 股票可能被高估，需謹慎")
+        
+        # 盈利能力分析
+        if 'roe' in available_list or 'profit_margin' in available_list:
+            roe = results.get('roe')
+            margin = results.get('profit_margin')
+            if roe and roe > 15:
+                analysis.append("• 盈利: 公司盈利能力強")
+            elif margin and margin > 10:
+                analysis.append("• 盈利: 公司利潤率健康")
+            elif roe or margin:
+                analysis.append("• 盈利: 公司盈利能力一般")
+        
+        # 財務健康分析
+        if 'debt_eq' in available_list:
+            debt = results.get('debt_eq', 0)
+            if debt < 1.0:
+                analysis.append("• 財務: 負債水平健康")
+            else:
+                analysis.append("• 財務: 負債水平較高，需關注")
+        
+        # 市場認可度分析
+        if 'inst_own' in available_list:
+            inst = results.get('inst_own', 0)
+            if inst > 50:
+                analysis.append("• 市場: 機構投資者認可度高")
+            elif inst > 30:
+                analysis.append("• 市場: 機構投資者持股正常")
+            else:
+                analysis.append("• 市場: 機構投資者持股偏低")
+        
+        if not analysis:
+            analysis.append("• 可用數據不足，無法提供有效分析")
+        
+        return analysis
+    
+    def _get_fundamental_confidence(self, available_metrics: int) -> str:
+        """獲取基本面分析信心等級"""
+        if available_metrics >= 5:
+            return "高 (5/5 指標完整)"
+        elif available_metrics >= 4:
+            return "中高 (4/5 指標可用)"
+        elif available_metrics >= 3:
+            return "中等 (3/5 指標可用)"
+        elif available_metrics >= 2:
+            return "低 (2/5 指標可用，分析參考價值有限)"
+        else:
+            return "極低 (1/5 指標可用，建議手動查詢補充數據)"
     
     def _format_module21_momentum_filter(self, results: dict) -> str:
         """格式化 Module 21 動量過濾器結果"""
@@ -1306,7 +2566,15 @@ class ReportGenerator:
         return report
     
     def _format_module22_optimal_strike(self, results: dict) -> str:
-        """格式化 Module 22 最佳行使價分析結果"""
+        """
+        格式化 Module 22 最佳行使價分析結果
+        
+        增強功能 (Requirements 12.1, 12.2, 12.3, 12.4):
+        - 12.1: 顯示數據完整度
+        - 12.2: 流動性得分低於 50 時警告推薦可能不可靠
+        - 12.3: 說明評分主要影響因素
+        - 12.4: 數據不足時降低信心等級
+        """
         report = "\n┌─ Module 22: 最佳行使價分析 ───────────────────┐\n"
         report += "│\n"
         
@@ -1326,17 +2594,50 @@ class ReportGenerator:
             report += "└────────────────────────────────────────────────┘\n"
             return report
         
-        # 顯示分析範圍（從任一策略獲取）
+        # Requirements 12.1: 計算數據完整度
+        data_completeness = self._calculate_module22_data_completeness(results)
+        confidence_level = self._get_module22_confidence_level(data_completeness, results)
+        
+        # 顯示分析範圍和數據完整度（從任一策略獲取）
         for strategy_key in ['long_call', 'long_put', 'short_call', 'short_put']:
             if strategy_key in results:
                 strategy_data = results[strategy_key]
                 if 'strike_range' in strategy_data:
                     sr = strategy_data['strike_range']
-                    report += f"│ 📊 分析範圍: ${sr.get('min', 0):.2f} - ${sr.get('max', 0):.2f} (ATM ±{sr.get('range_pct', 20):.0f}%)\n"
+                    max_each_side = sr.get('max_strikes_each_side', 20)
+                    total_selected = sr.get('total_selected', 0)
+                    report += f"│ 📊 分析範圍: ${sr.get('min', 0):.2f} - ${sr.get('max', 0):.2f} (ATM 上下各最多 {max_each_side} 個，實際選取 {total_selected} 個)\n"
                 if 'total_analyzed' in strategy_data:
-                    report += f"│ 📈 分析行使價數量: {strategy_data.get('total_analyzed', 0)}\n"
+                    total_analyzed = strategy_data.get('total_analyzed', 0)
+                    report += f"│ 📈 分析行使價數量: {total_analyzed}\n"
+                
+                # Requirements 12.1: 顯示數據完整度
+                report += f"│ 📋 數據完整度: {data_completeness:.0f}%\n"
+                
+                # Requirements 12.4: 顯示信心等級
+                confidence_emoji = {'高': '🟢', '中': '🟡', '低': '🔴'}.get(confidence_level, '⚪')
+                report += f"│ 🎯 推薦信心等級: {confidence_emoji} {confidence_level}\n"
+                
+                # Requirements 12.4: 數據不足時說明原因
+                if confidence_level == '低':
+                    report += "│   ⚠️ 信心等級較低原因:\n"
+                    if total_analyzed < 3:
+                        report += "│      - 可分析行使價數量不足 (< 3)\n"
+                    if data_completeness < 50:
+                        report += "│      - 數據完整度不足 (< 50%)\n"
+                elif confidence_level == '中':
+                    report += "│   ℹ️ 建議結合其他模塊綜合判斷\n"
+                
                 report += "│\n"
                 break
+        
+        # Requirements 12.3: 說明評分主要影響因素
+        report += "│ 📊 評分權重說明:\n"
+        report += "│   • 流動性 (30%): 成交量、未平倉量、買賣價差\n"
+        report += "│   • Greeks (30%): Delta、Theta、Vega 適合度\n"
+        report += "│   • IV (20%): IV Rank、IV Skew\n"
+        report += "│   • 風險回報 (20%): 最大損失、盈虧平衡點\n"
+        report += "│\n"
         
         # 遍歷四種策略
         strategies = {
@@ -1364,6 +2665,7 @@ class ReportGenerator:
                     gamma = rec.get('gamma', 0)
                     vega = rec.get('vega', 0)
                     reason = rec.get('reason', '')
+                    liq_score = rec.get('liquidity_score', 0)
                     
                     if i == 0:
                         stars = '★' * int(score / 20) + '☆' * (5 - int(score / 20))
@@ -1372,6 +2674,10 @@ class ReportGenerator:
                         report += f"│   🥈 推薦 #2: ${strike:.2f} ({score:.1f}分)\n"
                     else:
                         report += f"│   🥉 推薦 #3: ${strike:.2f} ({score:.1f}分)\n"
+                    
+                    # Requirements 12.2: 流動性警告（得分 < 50）
+                    if liq_score < 50:
+                        report += f"│      ⚠️ 流動性警告: 得分 {liq_score:.0f} < 50，推薦可能不可靠\n"
                     
                     # 顯示完整 Greeks
                     report += f"│      Greeks: Δ={delta:.4f} Γ={gamma:.4f} Θ={theta:.4f} ν={vega:.2f}\n"
@@ -1387,8 +2693,14 @@ class ReportGenerator:
                         ivs = rec.get('iv_score', 0)
                         rrs = rec.get('risk_reward_score', 0)
                         report += f"│      評分: 流動性={liq:.0f} Greeks={grk:.0f} IV={ivs:.0f} 風險回報={rrs:.0f}\n"
+                        
+                        # Requirements 12.3: 說明主要影響因素
+                        main_factor = self._get_main_scoring_factor(liq, grk, ivs, rrs)
+                        report += f"│      主要影響因素: {main_factor}\n"
             else:
                 report += f"│   ! 無推薦（數據不足）\n"
+                # Requirements 12.4: 數據不足時的說明
+                report += f"│   ℹ️ 可能原因: 流動性不足或無符合條件的行使價\n"
             
             report += "│\n"
         
@@ -1420,6 +2732,9 @@ class ReportGenerator:
         report += "│   2. Long策略選擇 Delta 0.30-0.70 範圍\n"
         report += "│   3. Short策略選擇 Delta 0.10-0.30 範圍\n"
         report += "│   4. 結合 Module 14 監察崗位和 Module 23 IV 環境綜合判斷\n"
+        
+        # Requirements 12.2: 流動性警告提示
+        report += "│   5. ⚠️ 流動性得分 < 50 時，建議謹慎交易或選擇其他行使價\n"
         report += "└────────────────────────────────────────────────┘\n"
         
         # 添加波動率微笑分析（如果存在）
@@ -1445,8 +2760,170 @@ class ReportGenerator:
         
         return report
     
+    def _calculate_module22_data_completeness(self, results: dict) -> float:
+        """
+        計算 Module 22 數據完整度
+        
+        Requirements 12.1: 顯示數據完整度
+        
+        計算方式:
+        - 有效策略數量 (25%)
+        - 每個策略的推薦數量 (25%)
+        - Greeks 數據完整性 (25%)
+        - 流動性數據完整性 (25%)
+        
+        返回:
+            float: 數據完整度百分比 (0-100)
+        """
+        total_score = 0.0
+        strategy_keys = ['long_call', 'long_put', 'short_call', 'short_put']
+        
+        # 1. 有效策略數量 (25%)
+        valid_strategies = sum(1 for key in strategy_keys if key in results)
+        strategy_score = (valid_strategies / 4.0) * 25.0
+        total_score += strategy_score
+        
+        # 2. 推薦數量完整性 (25%)
+        total_recommendations = 0
+        max_recommendations = 0
+        for key in strategy_keys:
+            if key in results:
+                recs = results[key].get('top_recommendations', [])
+                total_recommendations += len(recs)
+                max_recommendations += 3  # 每個策略最多 3 個推薦
+        
+        if max_recommendations > 0:
+            rec_score = (total_recommendations / max_recommendations) * 25.0
+        else:
+            rec_score = 0.0
+        total_score += rec_score
+        
+        # 3. Greeks 數據完整性 (25%)
+        greeks_complete = 0
+        greeks_total = 0
+        for key in strategy_keys:
+            if key in results:
+                recs = results[key].get('top_recommendations', [])
+                for rec in recs:
+                    greeks_total += 4  # delta, gamma, theta, vega
+                    if rec.get('delta', 0) != 0:
+                        greeks_complete += 1
+                    if rec.get('gamma', 0) != 0:
+                        greeks_complete += 1
+                    if rec.get('theta', 0) != 0:
+                        greeks_complete += 1
+                    if rec.get('vega', 0) != 0:
+                        greeks_complete += 1
+        
+        if greeks_total > 0:
+            greeks_score = (greeks_complete / greeks_total) * 25.0
+        else:
+            greeks_score = 0.0
+        total_score += greeks_score
+        
+        # 4. 流動性數據完整性 (25%)
+        liquidity_complete = 0
+        liquidity_total = 0
+        for key in strategy_keys:
+            if key in results:
+                recs = results[key].get('top_recommendations', [])
+                for rec in recs:
+                    liquidity_total += 3  # volume, open_interest, bid_ask_spread
+                    if rec.get('volume', 0) > 0:
+                        liquidity_complete += 1
+                    if rec.get('open_interest', 0) > 0:
+                        liquidity_complete += 1
+                    if rec.get('bid_ask_spread_pct', -1) >= 0:
+                        liquidity_complete += 1
+        
+        if liquidity_total > 0:
+            liquidity_score = (liquidity_complete / liquidity_total) * 25.0
+        else:
+            liquidity_score = 0.0
+        total_score += liquidity_score
+        
+        return min(100.0, max(0.0, total_score))
+    
+    def _get_module22_confidence_level(self, data_completeness: float, results: dict) -> str:
+        """
+        獲取 Module 22 推薦信心等級
+        
+        Requirements 12.4: 數據不足時降低信心等級
+        
+        信心等級判斷:
+        - 高: 數據完整度 >= 70% 且有足夠推薦
+        - 中: 數據完整度 50-70% 或推薦數量有限
+        - 低: 數據完整度 < 50% 或無推薦
+        
+        返回:
+            str: '高', '中', '低'
+        """
+        # 計算總推薦數量
+        total_recommendations = 0
+        total_analyzed = 0
+        has_low_liquidity = False
+        
+        for key in ['long_call', 'long_put', 'short_call', 'short_put']:
+            if key in results:
+                recs = results[key].get('top_recommendations', [])
+                total_recommendations += len(recs)
+                total_analyzed = max(total_analyzed, results[key].get('total_analyzed', 0))
+                
+                # 檢查是否有低流動性推薦
+                for rec in recs:
+                    if rec.get('liquidity_score', 100) < 50:
+                        has_low_liquidity = True
+        
+        # 判斷信心等級
+        if data_completeness >= 70 and total_recommendations >= 4 and total_analyzed >= 5 and not has_low_liquidity:
+            return '高'
+        elif data_completeness >= 50 and total_recommendations >= 2 and total_analyzed >= 3:
+            return '中'
+        else:
+            return '低'
+    
+    def _get_main_scoring_factor(self, liquidity: float, greeks: float, iv: float, risk_reward: float) -> str:
+        """
+        獲取主要評分影響因素
+        
+        Requirements 12.3: 說明評分主要影響因素
+        
+        返回:
+            str: 主要影響因素說明
+        """
+        scores = {
+            '流動性': liquidity,
+            'Greeks': greeks,
+            'IV': iv,
+            '風險回報': risk_reward
+        }
+        
+        # 找出最高和最低分
+        max_factor = max(scores, key=scores.get)
+        min_factor = min(scores, key=scores.get)
+        max_score = scores[max_factor]
+        min_score = scores[min_factor]
+        
+        # 生成說明
+        if max_score - min_score > 30:
+            return f"{max_factor}表現優異 ({max_score:.0f}分)，{min_factor}相對較弱 ({min_score:.0f}分)"
+        elif max_score >= 70:
+            return f"{max_factor}為主要優勢 ({max_score:.0f}分)"
+        elif min_score < 40:
+            return f"⚠️ {min_factor}得分偏低 ({min_score:.0f}分)，需注意"
+        else:
+            return "各項評分均衡"
+    
     def _format_volatility_smile(self, smile_data: dict) -> str:
-        """格式化波動率微笑分析結果"""
+        """
+        格式化波動率微笑分析結果
+        
+        增強功能 (Requirements 13.1, 13.2, 13.3, 13.4):
+        - 13.1: 提供市場情緒總結（看漲/看跌/中性）
+        - 13.2: 解釋 Skew 負值的含義（市場預期下跌風險較大）
+        - 13.3: 解釋 Skew 正值的含義（市場預期上漲風險較大）
+        - 13.4: 提供微笑形狀的交易含義
+        """
         report = "\n┌─ 波動率微笑分析 (Volatility Smile) ──────────┐\n"
         report += "│\n"
         
@@ -1469,6 +2946,20 @@ class ReportGenerator:
         report += f"│   微笑形狀: {smile_shape}\n"
         report += "│\n"
         
+        # Requirements 13.1: 市場情緒總結
+        market_sentiment = self._get_volatility_smile_sentiment(skew, smile_shape)
+        report += f"│ 🎯 市場情緒總結:\n"
+        report += f"│   情緒判斷: {market_sentiment['sentiment']}\n"
+        report += f"│   信心程度: {market_sentiment['confidence']}\n"
+        report += "│\n"
+        
+        # Requirements 13.2, 13.3: Skew 正負值含義解釋
+        report += f"│ 📖 Skew 解讀:\n"
+        skew_interpretation = self._get_skew_interpretation(skew)
+        for line in skew_interpretation:
+            report += f"│   {line}\n"
+        report += "│\n"
+        
         # 微笑形狀解讀
         report += f"│ 💡 形狀解讀:\n"
         if smile_shape == 'put_skew':
@@ -1477,12 +2968,150 @@ class ReportGenerator:
         elif smile_shape == 'call_skew':
             report += "│   Call Skew: OTM Call IV > OTM Put IV\n"
             report += "│   市場預期上漲風險較大（商品期權常見）\n"
-        else:
+        elif smile_shape == 'symmetric':
             report += "│   Symmetric: OTM Put IV ≈ OTM Call IV\n"
             report += "│   市場對上下風險預期相近\n"
+        else:
+            report += "│   Unknown: 無法判斷微笑形狀\n"
+            report += "│   可能數據不足或市場異常\n"
+        report += "│\n"
+        
+        # Requirements 13.4: 微笑形狀的交易含義
+        report += f"│ 💰 交易含義:\n"
+        trading_implications = self._get_smile_trading_implications(smile_shape, skew, atm_iv)
+        for line in trading_implications:
+            report += f"│   {line}\n"
         
         report += "└────────────────────────────────────────────────┘\n"
         return report
+    
+    def _get_volatility_smile_sentiment(self, skew: float, smile_shape: str) -> dict:
+        """
+        根據 Skew 和微笑形狀判斷市場情緒
+        
+        Requirements 13.1: 提供市場情緒總結（看漲/看跌/中性）
+        
+        參數:
+            skew: Skew 值（百分比形式，如 2.5 表示 2.5%）
+            smile_shape: 微笑形狀 ('put_skew', 'call_skew', 'symmetric', 'unknown')
+        
+        返回:
+            dict: {'sentiment': str, 'confidence': str}
+        """
+        # Skew > 0 表示 OTM Put IV > OTM Call IV，市場擔心下跌 -> 看跌傾向
+        # Skew < 0 表示 OTM Call IV > OTM Put IV，市場擔心上漲 -> 看漲傾向
+        
+        if smile_shape == 'unknown':
+            return {'sentiment': '中性（數據不足）', 'confidence': '低'}
+        
+        # 使用 Skew 絕對值判斷信心程度
+        abs_skew = abs(skew)
+        if abs_skew < 1.0:  # < 1%
+            confidence = '低'
+        elif abs_skew < 3.0:  # 1-3%
+            confidence = '中'
+        else:  # > 3%
+            confidence = '高'
+        
+        # 判斷情緒方向
+        if skew > 1.0:  # Skew > 1%，看跌傾向
+            sentiment = '看跌'
+        elif skew < -1.0:  # Skew < -1%，看漲傾向
+            sentiment = '看漲'
+        else:  # -1% <= Skew <= 1%
+            sentiment = '中性'
+        
+        return {'sentiment': sentiment, 'confidence': confidence}
+    
+    def _get_skew_interpretation(self, skew: float) -> list:
+        """
+        解釋 Skew 正負值的含義
+        
+        Requirements 13.2, 13.3:
+        - 13.2: Skew 為負值時解釋市場預期下跌風險較大
+        - 13.3: Skew 為正值時解釋市場預期上漲風險較大
+        
+        注意: Skew = OTM Put IV - OTM Call IV
+        - Skew > 0: OTM Put 更貴，市場擔心下跌
+        - Skew < 0: OTM Call 更貴，市場擔心上漲
+        
+        參數:
+            skew: Skew 值（百分比形式）
+        
+        返回:
+            list: 解釋文字列表
+        """
+        interpretation = []
+        
+        if skew > 1.0:  # 正 Skew > 1%
+            interpretation.append(f"Skew 為正值 ({skew:.2f}%):")
+            interpretation.append("• OTM Put 期權的 IV 高於 OTM Call")
+            interpretation.append("• 市場預期下跌風險較大")
+            interpretation.append("• 投資者願意支付更高溢價購買下跌保護")
+            if skew > 5.0:
+                interpretation.append("⚠️ Skew 較大，市場恐慌情緒明顯")
+        elif skew < -1.0:  # 負 Skew < -1%
+            interpretation.append(f"Skew 為負值 ({skew:.2f}%):")
+            interpretation.append("• OTM Call 期權的 IV 高於 OTM Put")
+            interpretation.append("• 市場預期上漲風險較大")
+            interpretation.append("• 投資者願意支付更高溢價購買上漲機會")
+            if skew < -5.0:
+                interpretation.append("⚠️ Skew 較大，市場樂觀情緒明顯")
+        else:  # -1% <= Skew <= 1%
+            interpretation.append(f"Skew 接近零 ({skew:.2f}%):")
+            interpretation.append("• OTM Put 和 OTM Call 的 IV 相近")
+            interpretation.append("• 市場對上漲和下跌風險預期相近")
+            interpretation.append("• 無明顯方向性偏好")
+        
+        return interpretation
+    
+    def _get_smile_trading_implications(self, smile_shape: str, skew: float, atm_iv: float) -> list:
+        """
+        提供微笑形狀的交易含義
+        
+        Requirements 13.4: 提供形狀的交易含義
+        
+        參數:
+            smile_shape: 微笑形狀
+            skew: Skew 值（百分比形式）
+            atm_iv: ATM IV（百分比形式）
+        
+        返回:
+            list: 交易建議列表
+        """
+        implications = []
+        
+        if smile_shape == 'put_skew':
+            implications.append("【Put Skew 交易策略】")
+            implications.append("• 賣出 OTM Put 可獲得較高權利金")
+            implications.append("• 買入 Put Spread 比單腿 Put 更划算")
+            implications.append("• 考慮 Put Ratio Spread 利用 IV 差異")
+            if skew > 5.0:
+                implications.append("⚠️ 高 Skew 環境，謹慎賣出裸 Put")
+        elif smile_shape == 'call_skew':
+            implications.append("【Call Skew 交易策略】")
+            implications.append("• 賣出 OTM Call 可獲得較高權利金")
+            implications.append("• 買入 Call Spread 比單腿 Call 更划算")
+            implications.append("• 考慮 Call Ratio Spread 利用 IV 差異")
+            if skew < -5.0:
+                implications.append("⚠️ 高 Skew 環境，謹慎賣出裸 Call")
+        elif smile_shape == 'symmetric':
+            implications.append("【對稱微笑交易策略】")
+            implications.append("• 適合使用 Straddle/Strangle 策略")
+            implications.append("• Iron Condor 兩側風險相近")
+            implications.append("• 可根據方向判斷選擇單邊策略")
+        else:
+            implications.append("【數據不足】")
+            implications.append("• 無法提供具體交易建議")
+            implications.append("• 建議等待更多市場數據")
+        
+        # 根據 ATM IV 水平添加額外建議
+        if atm_iv > 50:
+            implications.append(f"📊 ATM IV ({atm_iv:.1f}%) 較高，賣方策略可能更有利")
+        elif atm_iv < 20:
+            implications.append(f"📊 ATM IV ({atm_iv:.1f}%) 較低，買方策略可能更有利")
+        
+        return implications
     
     def _format_parity_validation(self, parity_data: dict) -> str:
         """格式化 Put-Call Parity 驗證結果"""
@@ -1520,8 +3149,20 @@ class ReportGenerator:
         report += "└────────────────────────────────────────────────┘\n"
         return report
     
-    def _format_module23_dynamic_iv_threshold(self, results: dict) -> str:
-        """格式化 Module 23 動態IV閾值結果"""
+    def _format_module23_dynamic_iv_threshold(self, results: dict, iv_rank_data: dict = None) -> str:
+        """
+        格式化 Module 23 動態IV閾值結果
+        
+        增強功能 (Requirements 11.1, 11.2, 11.3, 11.4):
+        - 11.1: 解釋動態 IV 與 Module 17 隱含波動率的區別
+        - 11.2: 說明閾值計算方法（基於歷史百分位）
+        - 11.3: 添加邊界預警（當前 IV 接近閾值邊界）
+        - 11.4: 與 Module 18 IV Rank 交叉驗證
+        
+        參數:
+            results: Module 23 計算結果
+            iv_rank_data: Module 18 IV Rank 數據（用於交叉驗證）
+        """
         report = "\n┌─ Module 23: 動態IV閾值計算 ───────────────────┐\n"
         report += "│\n"
         
@@ -1579,6 +3220,11 @@ class ReportGenerator:
         
         report += f"│ {emoji} IV狀態: {display_status}\n"
         
+        # Requirement 11.3: 添加邊界預警
+        boundary_warning = self._get_iv_boundary_warning(current_iv, high_threshold, low_threshold)
+        if boundary_warning:
+            report += f"│ ⚠️ 邊界預警: {boundary_warning}\n"
+        
         # 交易建議
         if 'trading_suggestion' in results:
             suggestion = results['trading_suggestion']
@@ -1602,8 +3248,39 @@ class ReportGenerator:
         
         report += "│\n"
         
-        # 數據質量和可靠性 (Requirements 5.2, 5.3)
+        # Requirement 11.2: 說明閾值計算方法
+        report += "│ 📐 閾值計算方法:\n"
+        percentile_75 = results.get('percentile_75', high_threshold)
+        percentile_25 = results.get('percentile_25', low_threshold)
         historical_days = results.get('historical_days', 0)
+        
+        if data_quality == 'sufficient' or data_quality == 'limited':
+            report += f"│   方法: 基於 {historical_days} 天歷史 IV 數據的百分位計算\n"
+            report += f"│   高閾值: 75th 百分位 = {percentile_75:.2f}%\n"
+            report += f"│   低閾值: 25th 百分位 = {percentile_25:.2f}%\n"
+            median_iv = results.get('median_iv', 0)
+            if median_iv > 0:
+                report += f"│   中位數: {median_iv:.2f}%\n"
+        else:
+            report += f"│   方法: VIX 靜態閾值（歷史數據不足）\n"
+            report += f"│   高閾值: 基準 IV × 1.25\n"
+            report += f"│   低閾值: 基準 IV × 0.75\n"
+        report += "│\n"
+        
+        # Requirement 11.4: 與 Module 18 IV Rank 交叉驗證
+        if iv_rank_data:
+            cross_validation = self._cross_validate_iv_with_rank(
+                current_iv, high_threshold, low_threshold, iv_rank_data
+            )
+            report += "│ 🔄 與 Module 18 IV Rank 交叉驗證:\n"
+            report += f"│   Module 18 IV Rank: {cross_validation['iv_rank']:.2f}%\n"
+            report += f"│   Module 23 IV 狀態: {display_status}\n"
+            report += f"│   一致性: {cross_validation['consistency_emoji']} {cross_validation['consistency']}\n"
+            if cross_validation.get('explanation'):
+                report += f"│   說明: {cross_validation['explanation']}\n"
+            report += "│\n"
+        
+        # 數據質量和可靠性 (Requirements 5.2, 5.3)
         reliability = results.get('reliability', 'unknown')
         warning = results.get('warning', None)
         
@@ -1641,6 +3318,21 @@ class ReportGenerator:
             report += f"│    說明: 歷史數據有限，結果需謹慎參考\n"
         
         report += "│\n"
+        
+        # Requirement 11.1: 解釋動態 IV 與 Module 17 隱含波動率的區別
+        report += "│ 📖 動態 IV 閾值 vs Module 17 隱含波動率:\n"
+        report += "│   ┌────────────────────────────────────────────┐\n"
+        report += "│   │ Module 17 (隱含波動率):                    │\n"
+        report += "│   │   - 從期權市場價格反推的「當前」波動率     │\n"
+        report += "│   │   - 反映市場對未來波動的即時預期           │\n"
+        report += "│   │   - 用於期權定價和 Greeks 計算             │\n"
+        report += "│   ├────────────────────────────────────────────┤\n"
+        report += "│   │ Module 23 (動態 IV 閾值):                  │\n"
+        report += "│   │   - 基於歷史 IV 數據計算的「相對」位置     │\n"
+        report += "│   │   - 判斷當前 IV 是否偏高/偏低              │\n"
+        report += "│   │   - 用於決定買入或賣出期權策略             │\n"
+        report += "│   └────────────────────────────────────────────┘\n"
+        report += "│\n"
         report += "│ 📖 解讀:\n"
         report += "│   🔴 HIGH: IV 偏高，考慮賣出期權\n"
         report += "│   🟢 NORMAL: IV 合理，等待機會\n"
@@ -1648,13 +3340,409 @@ class ReportGenerator:
         report += "└────────────────────────────────────────────────┘\n"
         return report
     
-    def _format_data_source_summary(self, raw_data: dict, calculation_results: dict) -> str:
-        """格式化數據來源摘要"""
+    def _get_iv_boundary_warning(self, current_iv: float, high_threshold: float, low_threshold: float) -> str:
+        """
+        獲取 IV 邊界預警
+        
+        Requirement 11.3: 當前 IV 接近閾值邊界時提供預警
+        
+        參數:
+            current_iv: 當前 IV
+            high_threshold: 高閾值
+            low_threshold: 低閾值
+        
+        返回:
+            str: 邊界預警信息，如果不需要預警則返回空字符串
+        """
+        if high_threshold <= low_threshold:
+            return ""
+        
+        range_width = high_threshold - low_threshold
+        # 定義邊界區域為閾值範圍的 10%
+        boundary_margin = range_width * 0.10
+        
+        # 檢查是否接近高閾值
+        if current_iv < high_threshold and current_iv >= (high_threshold - boundary_margin):
+            distance_pct = ((high_threshold - current_iv) / range_width) * 100
+            return f"當前 IV 接近高閾值（距離 {distance_pct:.1f}%），可能即將進入高 IV 區域"
+        
+        # 檢查是否接近低閾值
+        if current_iv > low_threshold and current_iv <= (low_threshold + boundary_margin):
+            distance_pct = ((current_iv - low_threshold) / range_width) * 100
+            return f"當前 IV 接近低閾值（距離 {distance_pct:.1f}%），可能即將進入低 IV 區域"
+        
+        return ""
+    
+    def _cross_validate_iv_with_rank(self, current_iv: float, high_threshold: float, 
+                                      low_threshold: float, iv_rank_data: dict) -> dict:
+        """
+        與 Module 18 IV Rank 進行交叉驗證
+        
+        Requirement 11.4: 與 Module 18 IV Rank 交叉驗證
+        
+        參數:
+            current_iv: 當前 IV
+            high_threshold: 高閾值
+            low_threshold: 低閾值
+            iv_rank_data: Module 18 IV Rank 數據
+        
+        返回:
+            dict: 交叉驗證結果
+        """
+        iv_rank = iv_rank_data.get('iv_rank', 0)
+        
+        # 判斷 Module 23 的狀態
+        if current_iv > high_threshold:
+            module23_status = 'high'
+        elif current_iv < low_threshold:
+            module23_status = 'low'
+        else:
+            module23_status = 'normal'
+        
+        # 判斷 Module 18 IV Rank 的狀態
+        if iv_rank > 70:
+            module18_status = 'high'
+        elif iv_rank < 30:
+            module18_status = 'low'
+        else:
+            module18_status = 'normal'
+        
+        # 判斷一致性
+        if module23_status == module18_status:
+            consistency = '一致'
+            consistency_emoji = '✅'
+            if module23_status == 'high':
+                explanation = "兩個模塊均顯示 IV 偏高，建議賣出期權策略"
+            elif module23_status == 'low':
+                explanation = "兩個模塊均顯示 IV 偏低，建議買入期權策略"
+            else:
+                explanation = "兩個模塊均顯示 IV 正常，建議觀望"
+        else:
+            consistency = '不一致'
+            consistency_emoji = '⚠️'
+            # 提供不一致的解釋
+            if module23_status == 'low' and module18_status == 'normal':
+                explanation = "Module 23 顯示低於閾值，但 IV Rank 在正常範圍，可能是閾值設定較寬"
+            elif module23_status == 'normal' and module18_status == 'low':
+                explanation = "IV Rank 偏低但在動態閾值範圍內，建議參考 IV Rank 的買入信號"
+            elif module23_status == 'high' and module18_status == 'normal':
+                explanation = "Module 23 顯示高於閾值，但 IV Rank 在正常範圍，可能是閾值設定較窄"
+            elif module23_status == 'normal' and module18_status == 'high':
+                explanation = "IV Rank 偏高但在動態閾值範圍內，建議參考 IV Rank 的賣出信號"
+            else:
+                explanation = "兩個模塊判斷不同，建議綜合考慮其他因素"
+        
+        return {
+            'iv_rank': iv_rank,
+            'module23_status': module23_status,
+            'module18_status': module18_status,
+            'consistency': consistency,
+            'consistency_emoji': consistency_emoji,
+            'explanation': explanation
+        }
+    
+    def _format_module24_technical_direction(self, results: dict) -> str:
+        """格式化 Module 24 技術方向分析結果"""
+        report = "\n┌─ Module 24: 技術方向分析 ─────────────────────┐\n"
+        report += "│\n"
+        
+        # 檢查是否錯誤或跳過
+        if results.get('status') in ['error', 'skipped']:
+            report += f"│ x 狀態: {results.get('status')}\n"
+            report += f"│ 原因: {results.get('reason', 'N/A')}\n"
+            report += "│\n"
+            report += "└────────────────────────────────────────────────┘\n"
+            return report
+        
+        # 日線趨勢
+        daily = results.get('daily_trend', {})
+        trend = daily.get('trend', 'N/A')
+        trend_emoji = {'Bullish': '🟢 看漲', 'Bearish': '🔴 看跌', 'Neutral': '🟡 中性'}.get(trend, trend)
+        
+        report += "│ 📈 日線趨勢分析:\n"
+        report += f"│   趨勢方向: {trend_emoji}\n"
+        report += f"│   趨勢得分: {daily.get('score', 0):.1f} (-100 到 +100)\n"
+        report += "│\n"
+        
+        # 均線系統
+        sma = daily.get('sma', {})
+        price = daily.get('price', 0)
+        price_vs_sma = daily.get('price_vs_sma', {})
+        
+        if sma:
+            report += "│   均線系統:\n"
+            for key, value in sma.items():
+                if value:
+                    above = '✓' if price_vs_sma.get(f'above_{key}', False) else '✗'
+                    report += f"│     {key.upper()}: ${value:.2f} ({above} 價格{'在上' if price_vs_sma.get(f'above_{key}', False) else '在下'})\n"
+        
+        # MACD
+        macd = daily.get('macd', {})
+        if macd.get('macd') is not None:
+            report += "│\n"
+            report += f"│   MACD: {macd.get('macd', 0):.4f}\n"
+            report += f"│   Signal: {macd.get('signal', 0):.4f}\n"
+            report += f"│   Histogram: {macd.get('histogram', 0):.4f}"
+            if macd.get('histogram', 0) > 0:
+                report += " (金叉)\n"
+            else:
+                report += " (死叉)\n"
+        
+        # RSI
+        rsi = daily.get('rsi')
+        if rsi:
+            report += f"│   RSI (14): {rsi:.1f}"
+            if rsi > 70:
+                report += " (超買)\n"
+            elif rsi < 30:
+                report += " (超賣)\n"
+            else:
+                report += "\n"
+        
+        # ADX
+        adx = daily.get('adx')
+        if adx:
+            report += f"│   ADX: {adx:.1f}"
+            if adx > 25:
+                report += " (趨勢明確)\n"
+            else:
+                report += " (趨勢不明確)\n"
+        
+        # 日線信號
+        signals = daily.get('signals', [])
+        if signals:
+            report += "│\n"
+            report += "│   📋 日線信號:\n"
+            for sig in signals[:5]:  # 最多顯示5個
+                report += f"│     • {sig}\n"
+        
+        # 15分鐘入場信號
+        intraday = results.get('intraday_signal', {})
+        if intraday.get('available', False):
+            report += "│\n"
+            report += "│ 🎯 15分鐘入場信號:\n"
+            
+            signal = intraday.get('signal', 'N/A')
+            signal_emoji = {
+                'Enter': '✅ 可以入場',
+                'Wait_Pullback': '⏳ 等待回調',
+                'Wait_Breakout': '⏳ 等待突破',
+                'Hold': '⏸️ 觀望'
+            }.get(signal, signal)
+            
+            report += f"│   入場信號: {signal_emoji}\n"
+            
+            # 15分鐘指標
+            intraday_rsi = intraday.get('rsi')
+            if intraday_rsi:
+                report += f"│   RSI (9): {intraday_rsi:.1f}"
+                if intraday_rsi > 70:
+                    report += " (短線超買)\n"
+                elif intraday_rsi < 30:
+                    report += " (短線超賣)\n"
+                else:
+                    report += "\n"
+            
+            stoch = intraday.get('stochastic', {})
+            if stoch.get('k'):
+                report += f"│   Stochastic: K={stoch.get('k', 0):.1f}, D={stoch.get('d', 0):.1f}\n"
+            
+            # 15分鐘信號
+            intraday_signals = intraday.get('signals', [])
+            if intraday_signals:
+                report += "│\n"
+                report += "│   📋 15分鐘信號:\n"
+                for sig in intraday_signals[:3]:
+                    report += f"│     • {sig}\n"
+        else:
+            report += "│\n"
+            report += "│ 🎯 15分鐘入場信號: 數據不可用\n"
+        
+        # 綜合方向
+        report += "│\n"
+        report += "│ ═══════════════════════════════════════════════\n"
+        
+        direction = results.get('combined_direction', 'N/A')
+        confidence = results.get('confidence', 'N/A')
+        direction_emoji = {'Call': '📈 Call (看漲)', 'Put': '📉 Put (看跌)', 'Neutral': '➖ 中性'}.get(direction, direction)
+        confidence_emoji = {'High': '🟢', 'Medium': '🟡', 'Low': '🔴'}.get(confidence, '')
+        
+        report += f"│ 🎯 綜合方向: {direction_emoji}\n"
+        report += f"│ 📊 信心度: {confidence_emoji} {confidence}\n"
+        
+        entry_timing = results.get('entry_timing', '')
+        if entry_timing:
+            report += f"│ ⏰ 入場時機: {entry_timing}\n"
+        
+        recommendation = results.get('recommendation', '')
+        if recommendation:
+            report += "│\n"
+            report += f"│ 💡 建議: {recommendation}\n"
+        
+        report += "│\n"
+        report += f"│ 📌 數據來源: {results.get('data_source', 'N/A')}\n"
+        report += "└────────────────────────────────────────────────┘\n"
+        return report
+    
+    def _format_consolidated_recommendation(self, calculation_results: dict) -> str:
+        """
+        格式化綜合建議區塊
+        
+        Requirements: 8.1, 8.2, 8.3, 8.4
+        - 在報告末尾添加「綜合建議」區塊
+        - 標示矛盾並提供解釋
+        - 說明採納的建議及原因
+        
+        參數:
+            calculation_results: 所有模塊的計算結果
+            
+        返回:
+            str: 格式化的綜合建議報告
+        """
+        try:
+            # 執行一致性檢查
+            consistency_result = self.consistency_checker.check_consistency(calculation_results)
+            
+            # 使用一致性檢查器的格式化方法生成報告
+            return self.consistency_checker.format_consolidated_recommendation(consistency_result)
+        except Exception as e:
+            logger.warning(f"! 綜合建議生成失敗: {e}")
+            # 返回簡單的錯誤提示
+            report = "\n" + "=" * 70 + "\n"
+            report += "綜合建議\n"
+            report += "=" * 70 + "\n\n"
+            report += f"⚠️ 無法生成綜合建議: {str(e)}\n\n"
+            return report
+    
+    def _format_data_source_summary(self, raw_data: dict, calculation_results: dict, api_status: dict = None) -> str:
+        """
+        格式化數據來源摘要（增強版）
+        
+        Requirements: 14.1, 14.2, 14.3, 14.4, 14.5
+        - 14.1: 列出每個模塊使用的實際數據源
+        - 14.2: 標示降級原因和影響
+        - 14.3: 說明 API 故障對報告的具體影響
+        - 14.4: 警告數據一致性問題
+        - 14.5: 提供關鍵數據點的來源和時間戳
+        """
+        from datetime import datetime
+        
         report = "\n" + "=" * 70 + "\n"
         report += "數據來源摘要\n"
         report += "=" * 70 + "\n\n"
         
-        # Finviz 數據可用性
+        # ===== 1. 各模塊實際數據源 (Requirement 14.1) =====
+        report += "📊 各模塊數據來源:\n"
+        report += "─" * 70 + "\n"
+        
+        # 定義模塊與數據源的映射
+        module_data_sources = self._get_module_data_sources(raw_data, calculation_results, api_status)
+        
+        for module_name, source_info in module_data_sources.items():
+            status_icon = "✓" if source_info.get('available', False) else "✗"
+            source = source_info.get('source', 'N/A')
+            degraded = source_info.get('degraded', False)
+            
+            if degraded:
+                report += f"  {status_icon} {module_name}: {source} ⚠️ (降級)\n"
+            else:
+                report += f"  {status_icon} {module_name}: {source}\n"
+        
+        report += "\n"
+        
+        # ===== 2. 降級使用情況 (Requirement 14.2) =====
+        if api_status and api_status.get('fallback_used'):
+            report += "⚠️ 數據源降級記錄:\n"
+            report += "─" * 70 + "\n"
+            
+            fallback_used = api_status.get('fallback_used', {})
+            for data_type, sources in fallback_used.items():
+                # 獲取降級原因
+                reason = self._get_degradation_reason(data_type, api_status)
+                impact = self._get_degradation_impact(data_type)
+                
+                report += f"  • {data_type}:\n"
+                report += f"    使用來源: {', '.join(sources) if isinstance(sources, list) else sources}\n"
+                report += f"    降級原因: {reason}\n"
+                report += f"    影響: {impact}\n"
+            
+            report += "\n"
+        
+        # ===== 3. API 故障記錄及影響 (Requirement 14.3) =====
+        if api_status and api_status.get('api_failures'):
+            report += "❌ API 故障記錄及影響:\n"
+            report += "─" * 70 + "\n"
+            
+            api_failures = api_status.get('api_failures', {})
+            for api_name, failures in api_failures.items():
+                failure_count = len(failures) if isinstance(failures, list) else failures
+                impact = self._get_api_failure_impact(api_name)
+                
+                report += f"  • {api_name}: {failure_count} 次故障\n"
+                report += f"    對報告影響: {impact}\n"
+            
+            report += "\n"
+        
+        # ===== 4. 數據一致性檢查 (Requirement 14.4) =====
+        consistency_warnings = self._check_data_consistency(raw_data, calculation_results, api_status)
+        
+        if consistency_warnings:
+            report += "⚠️ 數據一致性警告:\n"
+            report += "─" * 70 + "\n"
+            for warning in consistency_warnings:
+                report += f"  • {warning}\n"
+            report += "\n"
+        else:
+            report += "✓ 數據一致性: 無異常\n\n"
+        
+        # ===== Requirements 5.2, 5.3: IV 差異警告顯示 =====
+        iv_comparison = calculation_results.get('iv_comparison', {})
+        iv_warning = calculation_results.get('iv_warning')
+        
+        report += "📊 IV (隱含波動率) 比較:\n"
+        report += "─" * 70 + "\n"
+        
+        if iv_comparison:
+            market_iv = iv_comparison.get('market_iv', 0)
+            atm_iv = iv_comparison.get('atm_iv', 0)
+            diff_pct = iv_comparison.get('difference_pct', 0)
+            has_warning = iv_comparison.get('has_warning', False)
+            
+            report += f"  • Market IV (數據源): {market_iv:.2f}%\n"
+            report += f"  • ATM IV (Module 17 計算): {atm_iv:.2f}%\n"
+            report += f"  • 差異: {diff_pct:.1f}%\n"
+            
+            if has_warning:
+                report += f"\n  ⚠️ IV 差異警告:\n"
+                report += f"    {iv_warning}\n"
+                report += f"    可能原因:\n"
+                report += f"      - 數據源 IV 可能不準確或過時\n"
+                report += f"      - 市場存在異常波動\n"
+                report += f"      - 波動率微笑/偏斜效應\n"
+                report += f"    建議: 優先使用 ATM IV (Module 17) 進行分析\n"
+            else:
+                report += f"\n  ✓ IV 一致性: 正常 (差異 < 20%)\n"
+        else:
+            report += "  • 無 IV 比較數據 (Module 17 可能未執行或未收斂)\n"
+        
+        report += "\n"
+        
+        # ===== 5. 關鍵數據點來源和時間戳 (Requirement 14.5) =====
+        report += "📋 關鍵數據點來源:\n"
+        report += "─" * 70 + "\n"
+        
+        key_data_points = self._get_key_data_points(raw_data, calculation_results, api_status)
+        
+        for data_point in key_data_points:
+            report += f"  • {data_point['name']}:\n"
+            report += f"    數值: {data_point['value']}\n"
+            report += f"    來源: {data_point['source']}\n"
+            if data_point.get('timestamp'):
+                report += f"    時間: {data_point['timestamp']}\n"
+        
+        report += "\n"
+        
+        # ===== Finviz 數據可用性 (保留原有功能) =====
         report += "📊 Finviz 數據狀態:\n"
         report += "─" * 70 + "\n"
         
@@ -1758,6 +3846,285 @@ class ReportGenerator:
         
         return report
     
+    def _get_module_data_sources(self, raw_data: dict, calculation_results: dict, api_status: dict = None) -> dict:
+        """
+        獲取各模塊的實際數據來源
+        
+        Requirements: 14.1
+        """
+        fallback_used = api_status.get('fallback_used', {}) if api_status else {}
+        
+        # 定義模塊與數據類型的映射
+        module_sources = {
+            'Module 1 (支撐阻力)': {
+                'source': self._determine_source('stock_info', fallback_used, 'Yahoo Finance'),
+                'available': raw_data.get('current_price') is not None,
+                'degraded': 'stock_info' in fallback_used
+            },
+            'Module 3 (套戥水位)': {
+                'source': calculation_results.get('module3_arbitrage_spread', {}).get('theoretical_price_source', 'Module 15 (Black-Scholes)'),
+                'available': calculation_results.get('module3_arbitrage_spread', {}).get('status') != 'skipped',
+                'degraded': False
+            },
+            'Module 13 (倉位分析)': {
+                'source': self._determine_source('option_chain', fallback_used, 'Yahoo Finance'),
+                'available': calculation_results.get('module13_position_analysis') is not None,
+                'degraded': 'option_chain' in fallback_used
+            },
+            'Module 14 (監察崗位)': {
+                'source': 'Finviz' if raw_data.get('rsi') is not None else 'N/A',
+                'available': raw_data.get('rsi') is not None,
+                'degraded': False
+            },
+            'Module 15 (Black-Scholes)': {
+                'source': '自主計算 (BS Calculator)',
+                'available': calculation_results.get('module15_black_scholes') is not None,
+                'degraded': False
+            },
+            'Module 16 (Greeks)': {
+                'source': self._determine_source('option_greeks', fallback_used, '自主計算'),
+                'available': calculation_results.get('module16_greeks') is not None,
+                'degraded': 'option_greeks' in fallback_used
+            },
+            'Module 17 (隱含波動率)': {
+                'source': '自主計算 (IV Calculator)',
+                'available': calculation_results.get('module17_implied_volatility') is not None,
+                'degraded': False
+            },
+            'Module 18 (歷史波動率)': {
+                'source': self._determine_source('historical_data', fallback_used, 'yfinance'),
+                'available': calculation_results.get('module18_historical_volatility') is not None,
+                'degraded': 'historical_data' in fallback_used
+            },
+            'Module 20 (基本面)': {
+                'source': calculation_results.get('module20_fundamental_health', {}).get('data_source', 'Finviz'),
+                'available': calculation_results.get('module20_fundamental_health', {}).get('status') != 'skipped',
+                'degraded': False
+            },
+            'Module 21 (動量過濾)': {
+                'source': self._determine_source('historical_data', fallback_used, 'yfinance'),
+                'available': calculation_results.get('module21_momentum_filter') is not None,
+                'degraded': 'historical_data' in fallback_used
+            },
+            'Module 22 (最佳行使價)': {
+                'source': self._determine_source('option_chain', fallback_used, 'Yahoo Finance'),
+                'available': calculation_results.get('module22_optimal_strike') is not None,
+                'degraded': 'option_chain' in fallback_used
+            },
+            'Module 24 (技術方向)': {
+                'source': self._determine_source('historical_data', fallback_used, 'yfinance'),
+                'available': calculation_results.get('module24_technical_direction') is not None,
+                'degraded': 'historical_data' in fallback_used
+            }
+        }
+        
+        return module_sources
+    
+    def _determine_source(self, data_type: str, fallback_used: dict, default: str) -> str:
+        """確定數據來源"""
+        if data_type in fallback_used:
+            sources = fallback_used[data_type]
+            if isinstance(sources, list) and sources:
+                return sources[-1]  # 返回最後使用的來源
+            return str(sources)
+        return default
+    
+    def _get_degradation_reason(self, data_type: str, api_status: dict) -> str:
+        """
+        獲取降級原因
+        
+        Requirements: 14.2
+        """
+        api_failures = api_status.get('api_failures', {})
+        
+        # 根據數據類型和故障記錄推斷原因
+        reason_map = {
+            'stock_info': '主要數據源 (IBKR/Yahoo) 無法獲取股票信息',
+            'option_chain': '期權鏈數據獲取失敗，使用備用來源',
+            'historical_data': '歷史數據 API 響應超時或數據不完整',
+            'risk_free_rate': '聯邦儲備數據 API 不可用',
+            'vix': 'VIX 數據獲取失敗',
+            'option_greeks': 'Greeks 數據不可用，使用自主計算',
+            'earnings_calendar': '財報日曆 API 不可用',
+            'dividend_calendar': '股息日曆數據獲取失敗'
+        }
+        
+        # 檢查是否有相關 API 故障
+        for api_name, failures in api_failures.items():
+            if api_name.lower() in data_type.lower() or data_type.lower() in api_name.lower():
+                if isinstance(failures, list) and failures:
+                    return f"{api_name} 故障: {failures[-1] if isinstance(failures[-1], str) else '連接失敗'}"
+        
+        return reason_map.get(data_type, '主要數據源不可用')
+    
+    def _get_degradation_impact(self, data_type: str) -> str:
+        """
+        獲取降級對報告的影響
+        
+        Requirements: 14.2
+        """
+        impact_map = {
+            'stock_info': '股價數據可能有延遲，影響即時分析準確性',
+            'option_chain': '期權數據可能不完整，影響行使價推薦',
+            'historical_data': '歷史波動率計算可能受影響',
+            'risk_free_rate': '使用預設利率，可能影響期權定價',
+            'vix': 'VIX 數據可能不是最新，影響市場情緒判斷',
+            'option_greeks': 'Greeks 為自主計算值，可能與市場報價略有差異',
+            'earnings_calendar': '財報日期可能不準確',
+            'dividend_calendar': '股息數據可能不完整'
+        }
+        
+        return impact_map.get(data_type, '可能影響相關模塊的分析準確性')
+    
+    def _get_api_failure_impact(self, api_name: str) -> str:
+        """
+        獲取 API 故障對報告的具體影響
+        
+        Requirements: 14.3
+        """
+        impact_map = {
+            'IBKR': '無法獲取即時市場數據，已使用備用數據源',
+            'Yahoo Finance': '股票和期權數據可能有延遲',
+            'Finnhub': '基本面數據可能不完整',
+            'Alpha Vantage': '技術指標數據可能受影響',
+            'FRED': '無風險利率使用預設值',
+            'Finviz': '基本面健康檢查數據可能不完整',
+            'yfinance': '歷史數據和股息信息可能受影響'
+        }
+        
+        return impact_map.get(api_name, '相關數據可能不完整或使用備用來源')
+    
+    def _check_data_consistency(self, raw_data: dict, calculation_results: dict, api_status: dict = None) -> list:
+        """
+        檢查數據一致性問題
+        
+        Requirements: 14.4
+        """
+        warnings = []
+        
+        # 1. 檢查 IV 數據一致性
+        market_iv = raw_data.get('implied_volatility')
+        module17 = calculation_results.get('module17_implied_volatility', {})
+        atm_iv = None
+        
+        if module17:
+            call_iv = module17.get('call', {}).get('implied_volatility')
+            put_iv = module17.get('put', {}).get('implied_volatility')
+            if call_iv and put_iv:
+                atm_iv = (call_iv + put_iv) / 2
+        
+        if market_iv and atm_iv:
+            iv_diff = abs(market_iv - atm_iv * 100) / max(market_iv, 0.01)
+            if iv_diff > 0.3:  # 差異超過 30%
+                warnings.append(f"Market IV ({market_iv:.1f}%) 與 ATM IV ({atm_iv*100:.1f}%) 差異較大，可能影響分析準確性")
+        
+        # 2. 檢查多數據源一致性
+        if api_status and api_status.get('fallback_used'):
+            fallback_count = len(api_status['fallback_used'])
+            if fallback_count >= 3:
+                warnings.append(f"使用了 {fallback_count} 個降級數據源，數據可能來自不同時間點")
+        
+        # 3. 檢查 IBKR 連接狀態
+        if api_status:
+            ibkr_enabled = api_status.get('ibkr_enabled', False)
+            ibkr_connected = api_status.get('ibkr_connected', False)
+            if ibkr_enabled and not ibkr_connected:
+                warnings.append("IBKR 已啟用但未連接，即時數據不可用")
+        
+        # 4. 檢查關鍵數據缺失
+        if raw_data.get('current_price') is None:
+            warnings.append("當前股價數據缺失，報告可能不準確")
+        
+        if raw_data.get('risk_free_rate') is None:
+            warnings.append("無風險利率數據缺失，使用預設值")
+        
+        # 5. 檢查期權數據完整性
+        module22 = calculation_results.get('module22_optimal_strike', {})
+        for strategy in ['long_call', 'long_put', 'short_call', 'short_put']:
+            strategy_data = module22.get(strategy, {})
+            if strategy_data.get('total_analyzed', 0) < 5:
+                warnings.append(f"{strategy} 分析的行使價數量不足，推薦可能不可靠")
+                break  # 只報告一次
+        
+        return warnings
+    
+    def _get_key_data_points(self, raw_data: dict, calculation_results: dict, api_status: dict = None) -> list:
+        """
+        獲取關鍵數據點的來源和時間戳
+        
+        Requirements: 14.5
+        """
+        from datetime import datetime
+        
+        fallback_used = api_status.get('fallback_used', {}) if api_status else {}
+        current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        key_points = []
+        
+        # 1. 當前股價
+        current_price = raw_data.get('current_price')
+        if current_price is not None:
+            key_points.append({
+                'name': '當前股價',
+                'value': f"${current_price:.2f}",
+                'source': self._determine_source('stock_info', fallback_used, 'Yahoo Finance'),
+                'timestamp': current_time
+            })
+        
+        # 2. 隱含波動率
+        iv = raw_data.get('implied_volatility')
+        if iv is not None:
+            key_points.append({
+                'name': '市場隱含波動率',
+                'value': f"{iv:.2f}%",
+                'source': self._determine_source('stock_info', fallback_used, 'Yahoo Finance'),
+                'timestamp': current_time
+            })
+        
+        # 3. ATM IV (Module 17)
+        module17 = calculation_results.get('module17_implied_volatility', {})
+        call_iv = module17.get('call', {}).get('implied_volatility')
+        if call_iv:
+            key_points.append({
+                'name': 'ATM Call IV',
+                'value': f"{call_iv*100:.2f}%",
+                'source': '自主計算 (Module 17)',
+                'timestamp': current_time
+            })
+        
+        # 4. IV Rank
+        module18 = calculation_results.get('module18_historical_volatility', {})
+        iv_rank = module18.get('iv_rank')
+        if iv_rank is not None:
+            key_points.append({
+                'name': 'IV Rank',
+                'value': f"{iv_rank:.2f}%",
+                'source': self._determine_source('historical_data', fallback_used, 'yfinance') + ' + 自主計算',
+                'timestamp': current_time
+            })
+        
+        # 5. 無風險利率
+        risk_free_rate = raw_data.get('risk_free_rate')
+        if risk_free_rate is not None:
+            key_points.append({
+                'name': '無風險利率',
+                'value': f"{risk_free_rate:.2f}%",
+                'source': self._determine_source('risk_free_rate', fallback_used, 'FRED'),
+                'timestamp': current_time
+            })
+        
+        # 6. VIX
+        vix = raw_data.get('vix')
+        if vix is not None:
+            key_points.append({
+                'name': 'VIX',
+                'value': f"{vix:.2f}",
+                'source': self._determine_source('vix', fallback_used, 'Yahoo Finance'),
+                'timestamp': current_time
+            })
+        
+        return key_points
+    
     def _format_strike_selection(self, data: dict) -> str:
         """格式化行使價選擇說明"""
         report = "\n" + "=" * 70 + "\n"
@@ -1786,7 +4153,13 @@ class ReportGenerator:
         return report
     
     def _format_strategy_results(self, module_name: str, results: list) -> str:
-        """格式化策略損益結果（Module 7-10）- 增強版"""
+        """
+        格式化策略損益結果（Module 7-10）- 增強版
+        
+        整合 StrategyScenarioGenerator，為每個策略使用不同的場景。
+        
+        Requirements: 1.1, 1.2, 1.3, 1.4, 1.5
+        """
         strategy_names = {
             'module7_long_call': ('Long Call', '📈'),
             'module8_long_put': ('Long Put', '📉'),
@@ -1812,11 +4185,21 @@ class ReportGenerator:
                 report += f"│ 盈虧平衡點: ${breakeven:.2f}\n"
             report += "│\n"
         
-        report += "│ 到期股價 | 行使價  | 權利金  | 損益    | 收益率\n"
-        report += "│ ─────────┼─────────┼─────────┼─────────┼────────\n"
+        report += "│ 場景       | 到期股價 | 行使價  | 權利金  | 損益    | 收益率\n"
+        report += "│ ───────────┼──────────┼─────────┼─────────┼─────────┼────────\n"
+        
+        # 獲取策略特定的場景標籤
+        try:
+            scenario_labels = StrategyScenarioGenerator.get_scenario_labels(module_name)
+        except ValueError:
+            # 如果無法獲取場景標籤，使用默認標籤
+            scenario_labels = [f"場景 {i+1}" for i in range(4)]
         
         if isinstance(results, list) and len(results) > 0:
             for i, result in enumerate(results):
+                # 獲取場景標籤
+                label = scenario_labels[i] if i < len(scenario_labels) else f"場景 {i+1}"
+                
                 # ✅ 改進：添加數據驗證和日誌
                 stock_price = result.get('stock_price_at_expiry')
                 strike = result.get('strike_price')
@@ -1843,7 +4226,11 @@ class ReportGenerator:
                 profit_symbol = '+' if profit >= 0 else ''
                 return_symbol = '+' if return_pct >= 0 else ''
                 
-                report += f"│ ${stock_price:7.2f} | "
+                # 格式化場景標籤（固定寬度）
+                label_display = f"{label:<8}"
+                
+                report += f"│ {label_display} | "
+                report += f"${stock_price:7.2f} | "
                 report += f"${strike:7.2f} | "
                 report += f"${premium:7.2f} | "
                 report += f"{profit_symbol}${profit:6.2f} | "
@@ -1852,10 +4239,12 @@ class ReportGenerator:
             report += "│ （無數據）\n"
         
         report += "│\n"
-        report += "│ 💡 說明:\n"
-        report += "│   - 場景 1: 股價下跌 10%\n"
-        report += "│   - 場景 2: 股價維持不變\n"
-        report += "│   - 場景 3: 股價上漲 10%\n"
+        
+        # 使用 StrategyScenarioGenerator 生成策略特定的場景說明
+        report += "│ 💡 場景說明:\n"
+        for i, label in enumerate(scenario_labels):
+            report += f"│   - 場景 {i+1}: {label}\n"
+        
         report += "└────────────────────────────────────────────────┘\n"
         return report
     
