@@ -403,12 +403,13 @@ class GreeksCalculator:
             )
             
             # 計算 Vega
-            # ν = S × N'(d1) × √T
+            # ν = S × N'(d1) × √T / 100
+            # 除以 100 是因為 Vega 表示 IV 變化 1 個百分點（如 31% → 32%）的期權價格變化
             sqrt_t = math.sqrt(time_to_expiration)
-            vega = stock_price * self.bs_calculator.normal_pdf(d1) * sqrt_t
+            vega = stock_price * self.bs_calculator.normal_pdf(d1) * sqrt_t / 100
             
-            # 注: 標準 Vega 是對 1% 波動率變化的敏感度
-            # 有些定義會除以 100，這裡保持原始值
+            # 標準 Vega 定義：IV 上升 1 個百分點，期權價格變化多少美元
+            # 例如：Vega = 0.25 表示 IV 從 31% 升到 32%，期權價格上升 $0.25
             
             logger.debug(f"  Vega: {vega:.6f}")
             
@@ -581,6 +582,28 @@ class GreeksCalculator:
             logger.info(f"    Theta = {theta:.6f} ($/天)")
             logger.info(f"    Vega = {vega:.6f}")
             logger.info(f"    Rho = {rho:.6f}")
+            
+            # 驗證 Greeks 值是否在合理範圍
+            try:
+                from utils.validation import GreeksValidator
+                greeks_to_validate = {
+                    'delta': delta,
+                    'gamma': gamma,
+                    'theta': theta,
+                    'vega': vega,
+                    'rho': rho
+                }
+                validation_result = GreeksValidator.validate_greeks(greeks_to_validate)
+                
+                if not validation_result['is_valid']:
+                    logger.warning(f"⚠ Greeks 驗證警告: {validation_result['invalid_greeks']}")
+                    for greek_name in validation_result['invalid_greeks']:
+                        detail = validation_result['details'].get(greek_name, {})
+                        logger.warning(f"    {greek_name}: {detail.get('message', 'Unknown error')}")
+            except ImportError:
+                logger.debug("  Greeks 驗證模塊未安裝，跳過驗證")
+            except Exception as e:
+                logger.debug(f"  Greeks 驗證失敗: {e}")
             
             # 建立結果對象
             result = GreeksResult(

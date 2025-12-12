@@ -53,6 +53,17 @@ except ImportError:
             return False
         return True
 
+# 導入 bid/ask 估算工具
+try:
+    from utils.validation import BidAskEstimator, process_option_with_fallback
+    BID_ASK_ESTIMATOR_AVAILABLE = True
+except ImportError:
+    BID_ASK_ESTIMATOR_AVAILABLE = False
+    BidAskEstimator = None
+    process_option_with_fallback = None
+    logger_init = logging.getLogger(__name__)
+    logger_init.debug("Bid/Ask 估算工具不可用")
+
 # 尝试导入 Yahoo Finance 客户端（简化版）
 try:
     from data_layer.yahoo_finance_v2_client import YahooFinanceV2Client, YahooDataParser
@@ -844,6 +855,62 @@ class DataFetcher:
         
         return summary
     
+    def _fill_missing_bid_ask(self, option_df: pd.DataFrame, option_type: str = 'call') -> pd.DataFrame:
+        """
+        填補缺失的 bid/ask 數據
+        
+        當期權數據缺失 bid/ask 時，使用估算值填補
+        
+        參數:
+            option_df: 期權 DataFrame
+            option_type: 'call' 或 'put'
+        
+        返回:
+            DataFrame: 填補後的期權數據
+        
+        Requirements: Code_Fix_Plan.md - 問題3
+        """
+        if option_df.empty:
+            return option_df
+        
+        if not BID_ASK_ESTIMATOR_AVAILABLE or BidAskEstimator is None:
+            return option_df
+        
+        result_df = option_df.copy()
+        filled_count = 0
+        
+        for idx, row in result_df.iterrows():
+            bid = row.get('bid')
+            ask = row.get('ask')
+            
+            # 檢查是否需要估算
+            needs_estimation = (
+                pd.isna(bid) or pd.isna(ask) or
+                bid <= 0 or ask <= 0
+            )
+            
+            if needs_estimation:
+                market_price = row.get('lastPrice') or row.get('last')
+                
+                if market_price and market_price > 0:
+                    estimated = BidAskEstimator.estimate_bid_ask(
+                        market_price=market_price,
+                        open_interest=int(row.get('openInterest', 0) or 0),
+                        volume=int(row.get('volume', 0) or 0),
+                        option_type=option_type
+                    )
+                    
+                    if estimated:
+                        result_df.at[idx, 'bid'] = estimated['bid']
+                        result_df.at[idx, 'ask'] = estimated['ask']
+                        result_df.at[idx, 'bid_ask_estimated'] = True
+                        filled_count += 1
+        
+        if filled_count > 0:
+            logger.info(f"  填補了 {filled_count} 個 {option_type} 期權的 bid/ask 數據")
+        
+        return result_df
+
     def _record_fallback(
         self, 
         data_type: str, 
@@ -2192,6 +2259,10 @@ class DataFetcher:
                         logger.info(f"  Put期權: {len(puts_df)} 個")
                         self._record_fallback('option_chain', 'Yahoo Finance')
                         
+                        # 填補缺失的 bid/ask 數據
+                        calls_df = self._fill_missing_bid_ask(calls_df, 'call')
+                        puts_df = self._fill_missing_bid_ask(puts_df, 'put')
+                        
                         return {
                             'calls': calls_df,
                             'puts': puts_df,
@@ -2252,6 +2323,10 @@ class DataFetcher:
                 logger.info(f"  Call期權: {len(calls)} 個")
                 logger.info(f"  Put期權: {len(puts)} 個")
                 self._record_fallback('option_chain', 'yfinance')
+                
+                # 填補缺失的 bid/ask 數據
+                calls = self._fill_missing_bid_ask(calls, 'call')
+                puts = self._fill_missing_bid_ask(puts, 'put')
                 
                 return {
                     'calls': calls,
