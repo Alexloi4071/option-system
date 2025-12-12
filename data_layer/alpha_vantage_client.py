@@ -19,10 +19,19 @@ import requests
 import pandas as pd
 import logging
 import time
+import json
+import os
 from datetime import datetime, timedelta
 from typing import Dict, Optional, Any, List
 
 logger = logging.getLogger(__name__)
+
+# 計數器持久化文件路徑
+ALPHA_VANTAGE_COUNT_FILE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    'cache',
+    'alpha_vantage_count.json'
+)
 
 
 class AlphaVantageClient:
@@ -56,14 +65,67 @@ class AlphaVantageClient:
         self.api_key = api_key
         self.request_delay = max(request_delay, self.MIN_REQUEST_INTERVAL)
         self.last_request_time = 0
-        self.daily_request_count = 0
-        self.daily_request_reset = datetime.now().date()
+        
+        # 從持久化文件加載每日計數
+        self.daily_request_count, self.daily_request_reset = self._load_daily_count()
         
         if not api_key:
             logger.warning("! Alpha Vantage API Key 未設置")
         else:
             logger.info(f"* Alpha Vantage 客戶端已初始化")
             logger.info(f"  請求間隔: {self.request_delay}秒")
+            logger.info(f"  今日已用請求: {self.daily_request_count}/500")
+    
+    def _load_daily_count(self) -> tuple:
+        """
+        從持久化文件加載每日請求計數
+        
+        返回:
+            tuple: (daily_count, reset_date)
+        """
+        try:
+            if os.path.exists(ALPHA_VANTAGE_COUNT_FILE):
+                with open(ALPHA_VANTAGE_COUNT_FILE, 'r') as f:
+                    data = json.load(f)
+                    saved_date = datetime.strptime(data.get('date', ''), '%Y-%m-%d').date()
+                    today = datetime.now().date()
+                    
+                    # 如果是同一天，使用保存的計數
+                    if saved_date == today:
+                        count = data.get('count', 0)
+                        logger.debug(f"  從緩存加載 Alpha Vantage 計數: {count}")
+                        return count, today
+                    else:
+                        # 新的一天，重置計數
+                        logger.debug(f"  新的一天，重置 Alpha Vantage 計數")
+                        return 0, today
+        except Exception as e:
+            logger.debug(f"  加載 Alpha Vantage 計數失敗: {e}")
+        
+        return 0, datetime.now().date()
+    
+    def _save_daily_count(self):
+        """
+        保存每日請求計數到持久化文件
+        """
+        try:
+            # 確保 cache 目錄存在
+            cache_dir = os.path.dirname(ALPHA_VANTAGE_COUNT_FILE)
+            if not os.path.exists(cache_dir):
+                os.makedirs(cache_dir)
+            
+            data = {
+                'date': self.daily_request_reset.strftime('%Y-%m-%d'),
+                'count': self.daily_request_count,
+                'updated_at': datetime.now().isoformat()
+            }
+            
+            with open(ALPHA_VANTAGE_COUNT_FILE, 'w') as f:
+                json.dump(data, f, indent=2)
+            
+            logger.debug(f"  保存 Alpha Vantage 計數: {self.daily_request_count}")
+        except Exception as e:
+            logger.warning(f"! 保存 Alpha Vantage 計數失敗: {e}")
     
     def _rate_limit(self):
         """速率限制"""
@@ -72,6 +134,7 @@ class AlphaVantageClient:
         if today > self.daily_request_reset:
             self.daily_request_count = 0
             self.daily_request_reset = today
+            self._save_daily_count()  # 保存重置後的計數
         
         # 檢查每日限制
         if self.daily_request_count >= 500:
@@ -87,6 +150,9 @@ class AlphaVantageClient:
         
         self.last_request_time = time.time()
         self.daily_request_count += 1
+        
+        # 每次請求後保存計數（確保持久化）
+        self._save_daily_count()
     
     def _make_request(self, params: Dict[str, str]) -> Optional[Dict]:
         """

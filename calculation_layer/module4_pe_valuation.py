@@ -151,7 +151,12 @@ class PEValuationCalculator:
             return False
         
         if eps <= 0:
-            logger.error(f"x EPS必須大於0")
+            logger.warning(f"⚠️ EPS為負或零 ({eps:.2f})，PE估值法不適用於虧損企業")
+            logger.info("  建議替代方案:")
+            logger.info("    - 使用 Price-to-Sales (P/S) 比率")
+            logger.info("    - 使用 Price-to-Book (P/B) 比率")
+            logger.info("    - 使用 EV/EBITDA 倍數")
+            logger.info("    - 等待公司恢復盈利後再使用 PE 估值")
             return False
         
         if not isinstance(pe_multiple, (int, float)):

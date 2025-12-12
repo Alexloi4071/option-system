@@ -33,6 +33,26 @@ except ImportError:
     logger_init = logging.getLogger(__name__)
     logger_init.warning("交易日计算器不可用（缺少 pandas_market_calendars），将使用日历日计算")
 
+# 導入統一的數據標準化工具
+try:
+    from utils.data_normalization import normalize_numeric_value, is_valid_numeric
+    DATA_NORMALIZATION_AVAILABLE = True
+except ImportError:
+    DATA_NORMALIZATION_AVAILABLE = False
+    # 提供回退實現
+    def normalize_numeric_value(value, default=None):
+        if value is None:
+            return default
+        if isinstance(value, float) and (np.isnan(value) or np.isinf(value)):
+            return default
+        return value
+    def is_valid_numeric(value):
+        if value is None:
+            return False
+        if isinstance(value, float) and (np.isnan(value) or np.isinf(value)):
+            return False
+        return True
+
 # 尝试导入 Yahoo Finance 客户端（简化版）
 try:
     from data_layer.yahoo_finance_v2_client import YahooFinanceV2Client, YahooDataParser
@@ -2061,6 +2081,8 @@ class DataFetcher:
         logger.info(f"開始獲取 {ticker} {expiration} 期權鏈...")
         
         # 方案1: 嘗試使用 IBKR（如果啟用）
+        # 注意: IBKR 只返回合約基本信息，不包含市場數據（IV, bid, ask）
+        # 因此即使 IBKR 連接成功，我們仍需要從 Yahoo Finance 獲取市場數據
         if self.ibkr_client and self.ibkr_client.is_connected():
             try:
                 logger.info("  使用 IBKR...")
@@ -2073,17 +2095,26 @@ class DataFetcher:
                     
                     # 檢查是否真的有數據（不只是空 DataFrame）
                     if len(calls_df) > 0 or len(puts_df) > 0:
-                        logger.info(f"* 成功獲取 {ticker} {expiration} 期權鏈 (IBKR)")
-                        logger.info(f"  Call期權: {len(calls_df)} 個")
-                        logger.info(f"  Put期權: {len(puts_df)} 個")
-                        self._record_fallback('option_chain', 'ibkr')
+                        # 檢查是否有 IV 數據（IBKR 通常不返回 IV，需要額外訂閱）
+                        has_iv = 'impliedVolatility' in calls_df.columns and calls_df['impliedVolatility'].notna().any()
                         
-                        return {
-                            'calls': calls_df,
-                            'puts': puts_df,
-                            'expiration': expiration,
-                            'data_source': 'ibkr'
-                        }
+                        if has_iv:
+                            logger.info(f"* 成功獲取 {ticker} {expiration} 期權鏈 (IBKR - 含IV)")
+                            logger.info(f"  Call期權: {len(calls_df)} 個")
+                            logger.info(f"  Put期權: {len(puts_df)} 個")
+                            self._record_fallback('option_chain', 'ibkr')
+                            
+                            return {
+                                'calls': calls_df,
+                                'puts': puts_df,
+                                'expiration': expiration,
+                                'data_source': 'ibkr'
+                            }
+                        else:
+                            # IBKR 返回了合約但沒有 IV，需要降級到 Yahoo Finance 獲取市場數據
+                            logger.info(f"  IBKR 返回 {len(calls_df)} calls, {len(puts_df)} puts (僅合約信息，無IV)")
+                            logger.info(f"  降級到 Yahoo Finance 獲取市場數據...")
+                            self._record_fallback_failure('option_chain', 'IBKR', '無IV數據，需要市場數據訂閱')
                     else:
                         logger.warning(f"! IBKR 返回 0 個期權合約，降級到 Yahoo Finance")
                         self._record_fallback_failure('option_chain', 'IBKR', '返回0個合約')
@@ -2144,17 +2175,33 @@ class DataFetcher:
                             lambda x: IVNormalizer.normalize_iv(x, 'yahoo_finance')['normalized_iv'] if pd.notna(x) else None
                         )
                     
-                    logger.info(f"* 成功獲取 {ticker} {actual_expiration} 期權鏈 (Yahoo Finance)")
-                    logger.info(f"  Call期權: {len(calls_df)} 個")
-                    logger.info(f"  Put期權: {len(puts_df)} 個")
-                    self._record_fallback('option_chain', 'Yahoo Finance')
+                    # 檢查數據有效性：lastPrice 不能全為 0
+                    has_valid_call_price = False
+                    has_valid_put_price = False
                     
-                    return {
-                        'calls': calls_df,
-                        'puts': puts_df,
-                        'expiration': actual_expiration,
-                        'data_source': 'yahoo_finance'
-                    }
+                    if not calls_df.empty and 'lastPrice' in calls_df.columns:
+                        # 檢查 ATM 附近的期權是否有有效價格
+                        has_valid_call_price = (calls_df['lastPrice'] > 0).sum() > len(calls_df) * 0.3
+                    
+                    if not puts_df.empty and 'lastPrice' in puts_df.columns:
+                        has_valid_put_price = (puts_df['lastPrice'] > 0).sum() > len(puts_df) * 0.3
+                    
+                    if has_valid_call_price or has_valid_put_price:
+                        logger.info(f"* 成功獲取 {ticker} {actual_expiration} 期權鏈 (Yahoo Finance)")
+                        logger.info(f"  Call期權: {len(calls_df)} 個")
+                        logger.info(f"  Put期權: {len(puts_df)} 個")
+                        self._record_fallback('option_chain', 'Yahoo Finance')
+                        
+                        return {
+                            'calls': calls_df,
+                            'puts': puts_df,
+                            'expiration': actual_expiration,
+                            'data_source': 'yahoo_finance'
+                        }
+                    else:
+                        # 數據不完整，嘗試其他數據源
+                        logger.warning("! Yahoo Finance 返回的期權數據 lastPrice 大部分為 0，嘗試其他數據源")
+                        self._record_fallback_failure('option_chain', 'Yahoo Finance', 'lastPrice 大部分為 0')
                 else:
                     logger.warning("! Yahoo Finance 返回空期權數據，降級到 yfinance")
                     self._record_fallback_failure('option_chain', 'Yahoo Finance', '返回空數據')
@@ -2190,79 +2237,86 @@ class DataFetcher:
                     lambda x: IVNormalizer.normalize_iv(x, 'yfinance')['normalized_iv'] if pd.notna(x) else None
                 )
             
-            logger.info(f"* 成功獲取 {ticker} {expiration} 期權鏈 (yfinance)")
-            logger.info(f"  Call期權: {len(calls)} 個")
-            logger.info(f"  Put期權: {len(puts)} 個")
-            self._record_fallback('option_chain', 'yfinance')
+            # 檢查數據有效性：lastPrice 不能全為 0
+            has_valid_call_price = False
+            has_valid_put_price = False
             
-            return {
-                'calls': calls,
-                'puts': puts,
-                'expiration': expiration,
-                'data_source': 'yfinance'
-            }
+            if not calls.empty and 'lastPrice' in calls.columns:
+                has_valid_call_price = (calls['lastPrice'] > 0).sum() > len(calls) * 0.3
+            
+            if not puts.empty and 'lastPrice' in puts.columns:
+                has_valid_put_price = (puts['lastPrice'] > 0).sum() > len(puts) * 0.3
+            
+            if has_valid_call_price or has_valid_put_price:
+                logger.info(f"* 成功獲取 {ticker} {expiration} 期權鏈 (yfinance)")
+                logger.info(f"  Call期權: {len(calls)} 個")
+                logger.info(f"  Put期權: {len(puts)} 個")
+                self._record_fallback('option_chain', 'yfinance')
+                
+                return {
+                    'calls': calls,
+                    'puts': puts,
+                    'expiration': expiration,
+                    'data_source': 'yfinance'
+                }
+            else:
+                # 數據不完整，嘗試 RapidAPI
+                logger.warning("! yfinance 返回的期權數據 lastPrice 大部分為 0，嘗試 RapidAPI")
+                self._record_fallback_failure('option_chain', 'yfinance', 'lastPrice 大部分為 0')
             
         except Exception as e:
             logger.error(f"x yfinance 獲取期權鏈失敗: {e}")
             self._record_api_failure('yfinance', f"get_option_chain: {str(e)}")
             self._record_fallback_failure('option_chain', 'yfinance', str(e))
         
-        # 方案4: 嘗試 RapidAPI（如果啟用）
+        # 方案4: 嘗試 RapidAPI 增強版（如果啟用）
         if hasattr(self, 'rapidapi_client') and self.rapidapi_client:
             try:
-                logger.info("  使用 RapidAPI...")
-                response = self.rapidapi_client.get_options(ticker, expiration)
+                logger.info("  使用 RapidAPI (增強版)...")
                 
-                if response and response.get('body'):
-                    body = response['body']
+                # 使用增強版方法獲取更完整的期權數據
+                result = self.rapidapi_client.get_option_chain_enhanced(ticker, expiration)
+                
+                if result:
+                    calls_df = result.get('calls', pd.DataFrame())
+                    puts_df = result.get('puts', pd.DataFrame())
                     
-                    # 解析 RapidAPI 期權數據
-                    calls_data = body.get('calls', [])
-                    puts_data = body.get('puts', [])
+                    # 驗證數據有效性
+                    has_valid_data = False
+                    if not calls_df.empty and 'lastPrice' in calls_df.columns:
+                        has_valid_data = (calls_df['lastPrice'] > 0).any()
+                    if not has_valid_data and not puts_df.empty and 'lastPrice' in puts_df.columns:
+                        has_valid_data = (puts_df['lastPrice'] > 0).any()
                     
-                    if calls_data or puts_data:
-                        calls_df = pd.DataFrame(calls_data) if calls_data else pd.DataFrame()
-                        puts_df = pd.DataFrame(puts_data) if puts_data else pd.DataFrame()
+                    if has_valid_data:
+                        # 使用 IVNormalizer 標準化 IV（確保百分比格式）
+                        if 'impliedVolatility' in calls_df.columns:
+                            calls_df['impliedVolatility'] = calls_df['impliedVolatility'].apply(
+                                lambda x: IVNormalizer.normalize_iv(x, 'rapidapi')['normalized_iv'] if pd.notna(x) else None
+                            )
+                        if 'impliedVolatility' in puts_df.columns:
+                            puts_df['impliedVolatility'] = puts_df['impliedVolatility'].apply(
+                                lambda x: IVNormalizer.normalize_iv(x, 'rapidapi')['normalized_iv'] if pd.notna(x) else None
+                            )
                         
-                        # 標準化列名（如果需要）
-                        column_mapping = {
-                            'strike': 'strike',
-                            'lastPrice': 'lastPrice',
-                            'bid': 'bid',
-                            'ask': 'ask',
-                            'volume': 'volume',
-                            'openInterest': 'openInterest',
-                            'impliedVolatility': 'impliedVolatility'
-                        }
-                        
-                        for df in [calls_df, puts_df]:
-                            if not df.empty:
-                                # 重命名列（如果存在）
-                                for old_name, new_name in column_mapping.items():
-                                    if old_name in df.columns and old_name != new_name:
-                                        df.rename(columns={old_name: new_name}, inplace=True)
-                                
-                                # 轉換 IV 為百分比形式
-                                if 'impliedVolatility' in df.columns:
-                                    df['impliedVolatility'] = df['impliedVolatility'] * 100
-                        
-                        logger.info(f"* 成功獲取 {ticker} {expiration} 期權鏈 (RapidAPI)")
+                        logger.info(f"* 成功獲取 {ticker} {expiration} 期權鏈 (RapidAPI 增強版)")
                         logger.info(f"  Call期權: {len(calls_df)} 個")
                         logger.info(f"  Put期權: {len(puts_df)} 個")
+                        logger.info(f"  數據來源: {result.get('data_source', 'RapidAPI')}")
                         self._record_fallback('option_chain', 'RapidAPI')
                         
                         return {
                             'calls': calls_df,
                             'puts': puts_df,
-                            'expiration': expiration,
-                            'data_source': 'rapidapi'
+                            'expiration': result.get('expiration', expiration),
+                            'data_source': result.get('data_source', 'rapidapi')
                         }
                     else:
-                        logger.warning("! RapidAPI 返回空期權數據")
-                        self._record_fallback_failure('option_chain', 'RapidAPI', '返回空數據')
+                        logger.warning("! RapidAPI 返回的期權數據 lastPrice 全為 0")
+                        self._record_fallback_failure('option_chain', 'RapidAPI', 'lastPrice 全為 0')
                 else:
-                    logger.warning("! RapidAPI 返回無效響應")
-                    self._record_fallback_failure('option_chain', 'RapidAPI', '無效響應')
+                    logger.warning("! RapidAPI 返回空期權數據")
+                    self._record_fallback_failure('option_chain', 'RapidAPI', '返回空數據')
             except Exception as e:
                 logger.error(f"x RapidAPI 獲取期權鏈失敗: {e}")
                 self._record_api_failure('RapidAPI', f"get_option_chain: {str(e)}")
@@ -3851,8 +3905,14 @@ class DataFetcher:
                 logger.warning(f"! 缺失字段 ({len(missing_finviz_fields)}/{len(finviz_fields)}):")
                 for field in missing_finviz_fields:
                     logger.warning(f"  x {field}: 數據不可用")
-                    # 記錄到 API 故障報告
-                    self._record_api_failure('Finviz', f"Missing field: {field}")
+                # 只記錄一次 Finviz 數據不完整的故障，而不是每個字段都記錄
+                # 這樣可以避免故障計數膨脹
+                if len(missing_finviz_fields) == len(finviz_fields):
+                    # 所有字段都缺失，說明 Finviz 連接可能失敗
+                    self._record_api_failure('Finviz', f"連接失敗: 所有 {len(finviz_fields)} 個字段都無法獲取")
+                elif len(missing_finviz_fields) > len(finviz_fields) * 0.5:
+                    # 超過一半字段缺失，記錄一次警告
+                    self._record_api_failure('Finviz', f"數據不完整: {len(missing_finviz_fields)}/{len(finviz_fields)} 字段缺失")
             
             # 記錄降級使用情況
             if missing_finviz_fields:
@@ -4037,6 +4097,175 @@ class DataFetcher:
                 'source': result.get('rsi_source', '')
             }
         return None
+
+    # ==================== Finnhub K線數據 (Module 24 技術方向分析) ====================
+    
+    def get_finnhub_candles(self, ticker: str, resolution: str = 'D',
+                           days: int = 200) -> Optional[pd.DataFrame]:
+        """
+        從 Finnhub 獲取 K 線數據
+        
+        參數:
+            ticker: 股票代碼
+            resolution: 時間框架 ('1', '5', '15', '30', '60', 'D', 'W', 'M')
+            days: 回看天數
+        
+        返回:
+            pd.DataFrame: 包含 Open, High, Low, Close, Volume 的 DataFrame
+        
+        Requirements: 1.1, 2.1
+        """
+        try:
+            logger.info(f"從 Finnhub 獲取 {ticker} K線數據 (resolution={resolution}, days={days})...")
+            
+            if not self.finnhub_client:
+                logger.warning("Finnhub 客戶端未初始化")
+                return None
+            
+            # 計算時間範圍
+            to_time = int(datetime.now().timestamp())
+            from_time = int((datetime.now() - timedelta(days=days)).timestamp())
+            
+            # 調用 Finnhub API
+            candles = self.finnhub_client.stock_candles(
+                ticker.upper(),
+                resolution,
+                from_time,
+                to_time
+            )
+            
+            if candles and candles.get('s') == 'ok':
+                df = pd.DataFrame({
+                    'Open': candles['o'],
+                    'High': candles['h'],
+                    'Low': candles['l'],
+                    'Close': candles['c'],
+                    'Volume': candles['v'],
+                    'Timestamp': candles['t']
+                })
+                
+                # 轉換時間戳為日期索引
+                df['Date'] = pd.to_datetime(df['Timestamp'], unit='s')
+                df.set_index('Date', inplace=True)
+                df.drop('Timestamp', axis=1, inplace=True)
+                
+                logger.info(f"  * 成功獲取 {len(df)} 根 K 線")
+                self._record_fallback(f'candles_{resolution}', 'Finnhub')
+                return df
+            else:
+                logger.warning(f"  ! Finnhub 返回無效數據: {candles.get('s', 'unknown')}")
+                return None
+                
+        except Exception as e:
+            logger.warning(f"  ! Finnhub K線獲取失敗: {e}")
+            self._record_api_failure('Finnhub', f"stock_candles: {e}")
+            return None
+    
+    def get_daily_candles(self, ticker: str, days: int = 200) -> Optional[pd.DataFrame]:
+        """
+        獲取日線 K 線數據（支持降級）
+        
+        降級順序: Finnhub → Yahoo Finance
+        
+        Requirements: 1.1, 1.4
+        """
+        # 方案1: Finnhub
+        df = self.get_finnhub_candles(ticker, 'D', days)
+        if df is not None and len(df) >= 50:
+            return df
+        
+        # 方案2: 降級到 Yahoo Finance
+        logger.info(f"  降級到 Yahoo Finance 獲取日線數據...")
+        try:
+            hist = self.get_historical_data(ticker, period=f'{days}d', interval='1d')
+            if hist is not None and len(hist) >= 50:
+                self._record_fallback('candles_D', 'Yahoo Finance')
+                return hist
+        except Exception as e:
+            logger.warning(f"  ! Yahoo Finance 日線獲取失敗: {e}")
+        
+        return None
+    
+    def get_intraday_candles(self, ticker: str, resolution: str = '15',
+                            days: int = 5) -> Optional[pd.DataFrame]:
+        """
+        獲取日內 K 線數據（支持降級）
+        
+        降級順序: Finnhub → Yahoo Finance
+        
+        參數:
+            ticker: 股票代碼
+            resolution: 時間框架 ('1', '5', '15', '30', '60')
+            days: 回看天數
+        
+        Requirements: 2.1, 2.4
+        """
+        # 方案1: Finnhub
+        df = self.get_finnhub_candles(ticker, resolution, days)
+        if df is not None and len(df) >= 20:
+            return df
+        
+        # 方案2: 降級到 Yahoo Finance
+        logger.info(f"  降級到 Yahoo Finance 獲取 {resolution} 分鐘數據...")
+        try:
+            # Yahoo Finance 的 interval 格式
+            yf_interval = f'{resolution}m'
+            hist = self.get_historical_data(ticker, period=f'{days}d', interval=yf_interval)
+            if hist is not None and len(hist) >= 20:
+                self._record_fallback(f'candles_{resolution}', 'Yahoo Finance')
+                return hist
+        except Exception as e:
+            logger.warning(f"  ! Yahoo Finance {resolution}分鐘數據獲取失敗: {e}")
+        
+        return None
+    
+    def get_finnhub_aggregate_indicator(self, ticker: str, 
+                                        resolution: str = 'D') -> Optional[Dict]:
+        """
+        從 Finnhub 獲取綜合技術分析信號
+        
+        返回:
+            {
+                'signal': 'buy' | 'sell' | 'neutral',
+                'buy_count': int,
+                'sell_count': int,
+                'neutral_count': int,
+                'adx': float,
+                'trending': bool
+            }
+        
+        Requirements: 1.1
+        """
+        try:
+            logger.info(f"從 Finnhub 獲取 {ticker} 綜合技術分析...")
+            
+            if not self.finnhub_client:
+                logger.warning("Finnhub 客戶端未初始化")
+                return None
+            
+            result = self.finnhub_client.aggregate_indicator(ticker.upper(), resolution)
+            
+            if result:
+                tech_analysis = result.get('technicalAnalysis', {})
+                trend = result.get('trend', {})
+                
+                output = {
+                    'signal': tech_analysis.get('signal', 'neutral'),
+                    'buy_count': tech_analysis.get('count', {}).get('buy', 0),
+                    'sell_count': tech_analysis.get('count', {}).get('sell', 0),
+                    'neutral_count': tech_analysis.get('count', {}).get('neutral', 0),
+                    'adx': trend.get('adx'),
+                    'trending': trend.get('trending', False)
+                }
+                
+                logger.info(f"  * 綜合信號: {output['signal']} (買:{output['buy_count']}, 賣:{output['sell_count']})")
+                return output
+            
+            return None
+            
+        except Exception as e:
+            logger.warning(f"  ! Finnhub 綜合指標獲取失敗: {e}")
+            return None
 
 
 # 使用示例

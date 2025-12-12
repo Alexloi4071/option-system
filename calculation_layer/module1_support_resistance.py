@@ -90,19 +90,27 @@ class SupportResistanceCalculator:
                   implied_volatility: float,
                   days_to_expiration: int,
                   z_score: float = 1.0,
-                  calculation_date: str = None) -> SupportResistanceResult:
+                  calculation_date: str = None,
+                  is_calendar_days: bool = True) -> SupportResistanceResult:
         """
         計算支持位和阻力位
         
         參數:
             stock_price: 當前股票價格 (美元)
             implied_volatility: 隱含波動率 (百分比 0-100)
-            days_to_expiration: 到期天數 (日曆日)
+            days_to_expiration: 到期天數
             z_score: 信心度 Z 值 (1.0, 1.28, 1.645等)
             calculation_date: 計算日期 (格式 YYYY-MM-DD)
+            is_calendar_days: 是否為日曆日 (默認 True)
+                - True: 輸入為日曆日，內部自動轉換為交易日 (× 252/365)
+                - False: 輸入已經是交易日，直接使用
         
         返回:
             SupportResistanceResult: 包含完整結果的對象
+        
+        注意:
+            時間因子計算使用交易日標準 (252天/年)
+            如果輸入日曆日，會自動轉換: trading_days = calendar_days × (252/365)
         """
         try:
             logger.info(f"開始計算支持/阻力位...")
@@ -126,7 +134,14 @@ class SupportResistanceCalculator:
             iv_decimal = implied_volatility / 100
             
             # 第4步: 計算時間因子 (Time Factor) - 使用交易日標準
-            time_factor = math.sqrt(days_to_expiration / self.TRADING_DAYS_PER_YEAR)
+            # 如果輸入是日曆日，先轉換為交易日
+            if is_calendar_days:
+                trading_days = days_to_expiration * (self.TRADING_DAYS_PER_YEAR / 365.0)
+                logger.info(f"    日曆日轉交易日: {days_to_expiration} → {trading_days:.1f}")
+            else:
+                trading_days = days_to_expiration
+            
+            time_factor = math.sqrt(trading_days / self.TRADING_DAYS_PER_YEAR)
             
             # 第5步: 計算價格波動幅度
             price_move = stock_price * iv_decimal * time_factor * z_score

@@ -164,40 +164,70 @@ class APIConfig:
     }
     
     # 數據優先級（按順序嘗試，第一個失敗時自動嘗試下一個）
-    # IBKR 是最高優先級，其他都是降級備選
     # 
     # 降級策略說明:
     # - 每個數據類型都有預定義的降級順序
     # - 當主要數據源失敗時，系統會自動嘗試下一個數據源
     # - 所有降級操作都會被記錄，可通過 get_api_status_report() 查看
     # - 如果所有數據源都失敗，返回 None（不拋出異常）
+    #
+    # 2024-12-12 更新: 根據用戶訂閱情況優化
+    # 用戶已訂閱: IBKR OPRA (期權即時報價)
+    # 
+    # 優先級原則:
+    # 1. IBKR - 最高優先 (已付費，期權數據最準確)
+    # 2. Finnhub - 第二優先 (免費60次/分鐘，股價/基本面)
+    # 3. Finviz - 第三優先 (免費無限制，基本面指標)
+    # 4. yfinance - 備用 (免費無限制，期權鏈備用)
+    # 5. Alpha Vantage - 最後備用 (免費5次/分鐘限制嚴格)
+    # 6. RapidAPI - 保護配額 (免費500次/月，僅緊急備用)
+    #
     DATA_PRIORITY = {
-        'stock_price': ['ibkr', 'finviz', 'alpha_vantage', 'yfinance', 'yahoo_v2', 'finnhub', 'rapidapi'],
-        'option_chain': ['ibkr', 'yfinance', 'yahoo_v2'],
-        'implied_volatility': ['ibkr', 'yfinance', 'yahoo_v2'],
-        'option_greeks': ['ibkr', 'yfinance'],  # IBKR提供真實Greeks，yfinance可估算
+        # ========== 股價/即時報價 ==========
+        # IBKR(付費) > Finnhub(免費60/分) > Finviz(免費) > yfinance(備用)
+        'stock_price': ['ibkr', 'finnhub', 'finviz', 'yfinance', 'yahoo_v2', 'alpha_vantage'],
+        'real_time_quote': ['ibkr', 'finnhub', 'finviz', 'yfinance', 'yahoo_v2'],
+        
+        # ========== 期權數據 (IBKR OPRA 訂閱) ==========
+        # IBKR(OPRA付費) > yfinance(免費) > RapidAPI(保護配額)
+        'option_chain': ['ibkr', 'yfinance', 'yahoo_v2', 'rapidapi'],
+        'implied_volatility': ['ibkr', 'yfinance', 'yahoo_v2', 'rapidapi'],
+        'option_greeks': ['ibkr', 'yfinance', 'rapidapi'],
         'bid_ask_spread': ['ibkr', 'yfinance', 'yahoo_v2'],
+        'open_interest': ['ibkr', 'yfinance', 'rapidapi'],
+        'volume': ['ibkr', 'finnhub', 'yfinance', 'yahoo_v2'],
+        
+        # ========== 基本面數據 ==========
+        # Finviz(免費無限) > Finnhub(免費60/分) > Alpha Vantage(限制嚴格)
+        'eps': ['finviz', 'finnhub', 'alpha_vantage', 'yfinance', 'yahoo_v2'],
+        'pe_ratio': ['finviz', 'finnhub', 'alpha_vantage', 'yfinance', 'yahoo_v2'],
+        'dividends': ['finnhub', 'yfinance', 'alpha_vantage', 'yahoo_v2'],
+        'company_overview': ['finviz', 'finnhub', 'alpha_vantage', 'yfinance'],
+        
+        # ========== 技術分析數據 ==========
+        # Finviz(免費有ATR/RSI) > Finnhub > Alpha Vantage(限制嚴格)
+        'atr': ['finviz', 'finnhub', 'alpha_vantage'],
+        'rsi': ['finviz', 'finnhub', 'alpha_vantage'],
+        'sma': ['finnhub', 'alpha_vantage'],
+        'ema': ['finnhub', 'alpha_vantage'],
+        'beta': ['finviz', 'finnhub', 'alpha_vantage', 'yfinance'],
+        
+        # ========== 宏觀數據 ==========
+        # FRED(專用免費) > Finnhub > yfinance
         'risk_free_rate': ['FRED'],
-        'eps': ['finviz', 'alpha_vantage', 'yfinance', 'yahoo_v2', 'finnhub'],
-        'pe_ratio': ['finviz', 'alpha_vantage', 'yfinance', 'yahoo_v2'],
-        'dividends': ['yfinance', 'alpha_vantage', 'yahoo_v2', 'finnhub'],
-        'vix': ['FRED', 'yfinance'],
-        # 業績日曆降級鏈: Finnhub → yfinance → 歷史推測
+        'vix': ['FRED', 'finnhub', 'yfinance'],
+        
+        # ========== 日曆數據 ==========
+        # Finnhub(免費) > yfinance(備用)
         'earnings_date': ['finnhub', 'yfinance', 'estimated'],
-        # 派息日期降級鏈
-        'dividend_date': ['yfinance', 'alpha_vantage', 'finnhub'],
-        'historical_data': ['ibkr', 'alpha_vantage', 'yfinance', 'yahoo_v2', 'rapidapi'],
-        'real_time_quote': ['ibkr', 'alpha_vantage', 'yahoo_v2', 'finnhub', 'rapidapi'],
-        'company_news': ['finnhub', 'rapidapi'],
-        'open_interest': ['ibkr', 'yfinance'],
-        'volume': ['ibkr', 'yfinance', 'yahoo_v2'],
-        # 技術指標 - Alpha Vantage 專長
-        'atr': ['finviz', 'alpha_vantage'],
-        'rsi': ['finviz', 'alpha_vantage'],
-        'sma': ['alpha_vantage'],
-        'ema': ['alpha_vantage'],
-        'beta': ['finviz', 'alpha_vantage', 'yfinance'],
-        'company_overview': ['finviz', 'alpha_vantage', 'yfinance']
+        'dividend_date': ['finnhub', 'yfinance', 'alpha_vantage'],
+        
+        # ========== 歷史數據 ==========
+        # IBKR(付費) > Finnhub > yfinance(免費無限)
+        'historical_data': ['ibkr', 'finnhub', 'yfinance', 'yahoo_v2', 'alpha_vantage'],
+        
+        # ========== 新聞 ==========
+        'company_news': ['finnhub', 'rapidapi']
     }
 
 

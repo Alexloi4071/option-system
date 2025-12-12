@@ -100,6 +100,7 @@ class RatePERelationCalculator:
     def calculate(self,
                   long_term_rate: float,
                   current_pe: float,
+                  sector: str = None,
                   calculation_date: str = None) -> RatePERelationResult:
         """
         計算合理PE和估值
@@ -107,6 +108,10 @@ class RatePERelationCalculator:
         參數:
             long_term_rate: 長期債息 (百分比 0-20)
             current_pe: 當前PE倍數
+            sector: 行業類別 (可選，用於行業PE範圍判斷)
+                    可選值: Technology, Communication Services, Consumer Discretionary,
+                           Consumer Staples, Healthcare, Financials, Industrials,
+                           Energy, Utilities, Real Estate, Materials
             calculation_date: 計算日期
         
         返回:
@@ -151,6 +156,14 @@ class RatePERelationCalculator:
             else:
                 valuation = "低於利率基準 (<-2倍)"
             
+            # 第4.5步: 如果提供了行業，進行行業PE範圍判斷
+            sector_analysis = None
+            if sector:
+                sector_analysis = self._analyze_sector_pe(current_pe, sector)
+                if sector_analysis:
+                    valuation = f"{valuation}; {sector_analysis}"
+                    logger.info(f"    行業分析: {sector_analysis}")
+            
             # 第5步: 分析利率變化影響
             rate_change_impact = self._analyze_rate_impact(long_term_rate)
             
@@ -188,6 +201,42 @@ class RatePERelationCalculator:
             return "利率上升，PE應該下降"
         else:
             return "利率較高，PE應明顯下降"
+    
+    def _analyze_sector_pe(self, current_pe: float, sector: str) -> str:
+        """
+        分析當前PE是否在行業合理範圍內
+        
+        參數:
+            current_pe: 當前PE倍數
+            sector: 行業類別
+        
+        返回:
+            str: 行業PE分析結果
+        """
+        # 獲取行業PE範圍
+        sector_range = self.US_SECTOR_PE_RANGES.get(sector)
+        
+        if sector_range is None:
+            # 嘗試模糊匹配
+            sector_lower = sector.lower()
+            for key in self.US_SECTOR_PE_RANGES:
+                if sector_lower in key.lower() or key.lower() in sector_lower:
+                    sector_range = self.US_SECTOR_PE_RANGES[key]
+                    sector = key  # 使用標準名稱
+                    break
+        
+        if sector_range is None:
+            sector_range = self.US_SECTOR_PE_RANGES['Unknown']
+            logger.warning(f"⚠️ 未知行業 '{sector}'，使用默認PE範圍 {sector_range}")
+        
+        sector_min, sector_max = sector_range
+        
+        if current_pe > sector_max:
+            return f"高於{sector}行業範圍 (>{sector_max}倍，當前{current_pe:.1f}倍)"
+        elif current_pe < sector_min:
+            return f"低於{sector}行業範圍 (<{sector_min}倍，當前{current_pe:.1f}倍)"
+        else:
+            return f"符合{sector}行業範圍 ({sector_min}-{sector_max}倍)"
     
     @staticmethod
     def _validate_inputs(long_term_rate: float, current_pe: float) -> bool:
@@ -272,6 +321,37 @@ if __name__ == "__main__":
     print(f"  當前PE: {result3.current_pe:.2f}倍")
     print(f"  估值: {result3.valuation}")
     
+    # 例子4: 帶行業分析
+    print("\n【例子4】科技股行業分析")
+    print("-" * 70)
+    
+    result4 = calculator.calculate(
+        long_term_rate=4.5,
+        current_pe=35.0,
+        sector='Technology'
+    )
+    
+    print(f"\n計算結果:")
+    print(f"  長期債息: {result4.long_term_rate:.2f}%")
+    print(f"  合理PE (利率基準): {result4.reasonable_pe:.2f}倍")
+    print(f"  當前PE: {result4.current_pe:.2f}倍")
+    print(f"  估值: {result4.valuation}")
+    
+    # 例子5: 金融股行業分析
+    print("\n【例子5】金融股行業分析")
+    print("-" * 70)
+    
+    result5 = calculator.calculate(
+        long_term_rate=4.5,
+        current_pe=12.0,
+        sector='Financials'
+    )
+    
+    print(f"\n計算結果:")
+    print(f"  當前PE: {result5.current_pe:.2f}倍")
+    print(f"  估值: {result5.valuation}")
+    
     print("\n" + "=" * 70)
     print("注: PE與利率呈反向關係 (書籍理論)")
+    print("    行業PE範圍提供額外參考 (美國市場2024-2025標準)")
     print("=" * 70)

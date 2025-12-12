@@ -4,13 +4,22 @@ Finviz 數據抓取器（優化版）
 用於獲取準確的股票基本面數據（EPS, PE, 財務報表等）
 
 優化功能:
+- curl_cffi: 使用 TLS 指紋模擬真實瀏覽器，繞過反爬蟲檢測
 - UserAgentRotator: 每次請求使用不同的 User-Agent
 - 隨機延遲: 1-3 秒隨機延遲避免被封禁
 - 封鎖檢測: 檢測 CAPTCHA 和 403/429 響應
 - 多重選擇器: 多個 CSS 選擇器容錯
 """
 
-import requests
+# 優先使用 curl_cffi（可以繞過 Cloudflare 等反爬蟲）
+try:
+    from curl_cffi import requests as curl_requests
+    USE_CURL_CFFI = True
+except ImportError:
+    import requests as curl_requests
+    USE_CURL_CFFI = False
+
+import requests  # 保留原始 requests 用於其他用途
 from bs4 import BeautifulSoup
 import logging
 import time
@@ -24,6 +33,9 @@ import re
 from .utils.user_agent_rotator import UserAgentRotator
 from .utils.retry_handler import RetryHandler, RetryConfig
 from .utils import ConnectionConfig, FINVIZ_CONNECTION_CONFIG
+
+# 導入統一的數據標準化工具
+from utils.data_normalization import normalize_numeric_value, safe_format_value, is_valid_numeric
 
 logger = logging.getLogger(__name__)
 
@@ -42,106 +54,33 @@ class SafeFormatter:
     """
     安全的數值格式化工具
     
-    處理 None, NaN 和無效類型，避免格式化異常
+    使用統一的 data_normalization 模塊處理 None, NaN 和無效類型
     """
     
     @staticmethod
     def format_number(value: Any, format_spec: str = '.2f', 
                       default: str = 'N/A') -> str:
-        """
-        安全格式化數值，處理 None 和無效值
-        
-        參數:
-            value: 要格式化的值
-            format_spec: 格式規格（如 '.2f', '.0f'）
-            default: 當值為 None 或無效時的默認顯示
-        
-        返回:
-            格式化後的字符串
-        """
-        if value is None:
-            return default
-        
-        try:
-            # 檢查是否為 NaN
-            if isinstance(value, float) and math.isnan(value):
-                return default
-            
-            # 嘗試轉換為 float 並格式化
-            num_value = float(value)
-            return f"{num_value:{format_spec}}"
-        except (ValueError, TypeError):
-            return default
+        """安全格式化數值，處理 None 和無效值"""
+        return safe_format_value(value, fmt=format_spec, na_value=default)
     
     @staticmethod
     def format_currency(value: Any, default: str = 'N/A') -> str:
-        """
-        安全格式化貨幣值
-        
-        參數:
-            value: 要格式化的值
-            default: 當值為 None 或無效時的默認顯示
-        
-        返回:
-            格式化後的字符串（如 "$123.45"）
-        """
-        if value is None:
-            return default
-        
-        try:
-            if isinstance(value, float) and math.isnan(value):
-                return default
-            
-            num_value = float(value)
-            return f"${num_value:.2f}"
-        except (ValueError, TypeError):
-            return default
+        """安全格式化貨幣值（如 "$123.45"）"""
+        return safe_format_value(value, fmt='.2f', prefix='$', na_value=default)
     
     @staticmethod
     def format_percent(value: Any, default: str = 'N/A') -> str:
-        """
-        安全格式化百分比值
-        
-        參數:
-            value: 要格式化的值
-            default: 當值為 None 或無效時的默認顯示
-        
-        返回:
-            格式化後的字符串（如 "12.34%"）
-        """
-        if value is None:
-            return default
-        
-        try:
-            if isinstance(value, float) and math.isnan(value):
-                return default
-            
-            num_value = float(value)
-            return f"{num_value:.2f}%"
-        except (ValueError, TypeError):
-            return default
+        """安全格式化百分比值（如 "12.34%"）"""
+        return safe_format_value(value, fmt='.2f', suffix='%', na_value=default)
     
     @staticmethod
     def format_large_number(value: Any, default: str = 'N/A') -> str:
-        """
-        安全格式化大數字（帶千位分隔符）
-        
-        參數:
-            value: 要格式化的值
-            default: 當值為 None 或無效時的默認顯示
-        
-        返回:
-            格式化後的字符串（如 "1,234,567"）
-        """
-        if value is None:
+        """安全格式化大數字（帶千位分隔符，如 "1,234,567"）"""
+        normalized = normalize_numeric_value(value, default=None)
+        if normalized is None:
             return default
-        
         try:
-            if isinstance(value, float) and math.isnan(value):
-                return default
-            
-            num_value = float(value)
-            return f"{num_value:,.0f}"
+            return f"{normalized:,.0f}"
         except (ValueError, TypeError):
             return default
 
@@ -540,16 +479,40 @@ class FinvizScraper:
             current_ua = self._rotate_user_agent()
             
             logger.info(f"開始從 Finviz 獲取 {ticker} 基本面數據...")
-            logger.debug(f"  User-Agent: {current_ua[:50]}...")
+            if USE_CURL_CFFI:
+                logger.debug(f"  使用 curl_cffi (Chrome TLS 指紋)")
+            else:
+                logger.debug(f"  User-Agent: {current_ua[:50]}...")
             
             # 構建 URL（根據是否使用 Elite 版本）
             base_url = self.ELITE_BASE_URL if self.use_elite else self.BASE_URL
             url = f"{base_url}?t={ticker.upper()}"
             
-            # 發送請求（使用配置的超時）
-            response = self.session.get(url, headers=self.headers, timeout=self.connection_config.timeout)
+            # 發送請求（優先使用 curl_cffi 繞過反爬蟲）
+            if USE_CURL_CFFI:
+                # 使用 curl_cffi 模擬 Chrome 瀏覽器的 TLS 指紋
+                try:
+                    response = curl_requests.get(
+                        url, 
+                        impersonate='chrome',
+                        timeout=self.connection_config.timeout
+                    )
+                except Exception as curl_error:
+                    # curl_cffi 請求失敗時的重試邏輯
+                    logger.warning(f"! curl_cffi 請求失敗: {curl_error}")
+                    if self.retry_handler.should_retry(0, retry_count):
+                        wait_time = self.retry_handler.calculate_delay(retry_count + 1, 'exponential')
+                        logger.warning(f"  重試 {retry_count + 1}，等待 {wait_time:.1f}s...")
+                        time.sleep(wait_time)
+                        return self.get_stock_fundamentals(ticker, retry_count + 1)
+                    else:
+                        logger.error(f"x curl_cffi 請求失敗，已達最大重試次數")
+                        return None
+            else:
+                # 回退到普通 requests
+                response = self.session.get(url, headers=self.headers, timeout=self.connection_config.timeout)
             
-            # 檢測封鎖
+            # 檢測封鎖（curl_cffi 和 requests 都需要檢查）
             if self._detect_block(response):
                 if self.retry_handler.should_retry(response.status_code, retry_count):
                     wait_time = self.retry_handler.calculate_delay(retry_count + 1, 'exponential')
@@ -696,8 +659,25 @@ class FinvizScraper:
             
             return result
             
+        except requests.exceptions.Timeout as e:
+            # 超時重試邏輯
+            logger.warning(f"! Finviz 請求超時: {e}")
+            if self.retry_handler.should_retry(0, retry_count):
+                wait_time = self.retry_handler.calculate_delay(retry_count + 1, 'linear')
+                logger.warning(f"  重試 {retry_count + 1}，等待 {wait_time:.1f}s...")
+                time.sleep(wait_time)
+                return self.get_stock_fundamentals(ticker, retry_count + 1)
+            else:
+                logger.error(f"x Finviz 請求超時，已達最大重試次數")
+                return None
         except requests.exceptions.RequestException as e:
             logger.error(f"x Finviz 請求失敗: {e}")
+            # 連接錯誤也可以重試
+            if self.retry_handler.should_retry(0, retry_count):
+                wait_time = self.retry_handler.calculate_delay(retry_count + 1, 'exponential')
+                logger.warning(f"  重試 {retry_count + 1}，等待 {wait_time:.1f}s...")
+                time.sleep(wait_time)
+                return self.get_stock_fundamentals(ticker, retry_count + 1)
             return None
         except Exception as e:
             logger.error(f"x Finviz 數據解析失敗: {e}")
@@ -737,8 +717,15 @@ class FinvizScraper:
             # 構建 URL（包含 statements 參數）
             url = f"{self.STATEMENTS_URL}?t={ticker.upper()}&p=d#statements"
             
-            # 發送請求（使用配置的超時）
-            response = self.session.get(url, headers=self.headers, timeout=self.connection_config.timeout)
+            # 發送請求（優先使用 curl_cffi 繞過反爬蟲）
+            if USE_CURL_CFFI:
+                response = curl_requests.get(
+                    url, 
+                    impersonate='chrome',
+                    timeout=self.connection_config.timeout
+                )
+            else:
+                response = self.session.get(url, headers=self.headers, timeout=self.connection_config.timeout)
             response.raise_for_status()
             
             # 解析 HTML

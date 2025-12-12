@@ -105,7 +105,9 @@ class HedgeQuantityCalculator:
             hedge_contracts = int(portfolio_value / (stock_price * self.OPTION_MULTIPLIER))
             
             # 計算覆蓋率
-            coverage_percentage = (hedge_contracts * self.OPTION_MULTIPLIER * 100) / (stock_quantity * 100)
+            # 公式: 覆蓋率 = (對沖合約數 × 100) / 正股數量 × 100%
+            covered_shares = hedge_contracts * self.OPTION_MULTIPLIER
+            coverage_percentage = (covered_shares / stock_quantity) * 100
             
             logger.info(f"  計算結果:")
             logger.info(f"    對沖合約數: {hedge_contracts}張")
@@ -126,6 +128,92 @@ class HedgeQuantityCalculator:
             
         except Exception as e:
             logger.error(f"x 對沖量計算失敗: {e}")
+            raise
+    
+    def calculate_with_delta(
+        self,
+        stock_quantity: int,
+        stock_price: float,
+        option_delta: float,
+        calculation_date: str = None
+    ) -> HedgeQuantityResult:
+        """
+        計算對沖量（考慮 Delta 值）
+        
+        參數:
+            stock_quantity: 正股數量 (股)
+            stock_price: 股價 (美元)
+            option_delta: 期權 Delta 值 (0-1 之間，絕對值)
+                - ATM Call/Put: Delta ≈ 0.5
+                - ITM Call: Delta ≈ 0.7-0.9
+                - OTM Call: Delta ≈ 0.1-0.3
+                - Put 的 Delta 為負，但這裡使用絕對值
+            calculation_date: 計算日期
+        
+        返回:
+            HedgeQuantityResult: 完整計算結果
+        
+        公式:
+            對沖份數 = 正股數量 / (期權合約乘數 × Delta)
+        
+        例子:
+            - 1000 股, Delta = 1.0 → 需要 10 張合約
+            - 1000 股, Delta = 0.5 → 需要 20 張合約 (ATM 期權)
+            - 1000 股, Delta = 0.25 → 需要 40 張合約 (OTM 期權)
+        """
+        try:
+            logger.info(f"開始計算對沖量（含 Delta）...")
+            logger.info(f"  正股數量: {stock_quantity}股")
+            logger.info(f"  股價: ${stock_price:.2f}")
+            logger.info(f"  期權 Delta: {option_delta:.4f}")
+            
+            # 驗證輸入
+            if not self._validate_inputs(stock_quantity, stock_price):
+                raise ValueError("輸入參數無效")
+            
+            # 驗證 Delta
+            if not isinstance(option_delta, (int, float)):
+                raise ValueError(f"Delta 必須是數字: {option_delta}")
+            if option_delta <= 0 or option_delta > 1:
+                raise ValueError(f"Delta 必須在 0-1 之間: {option_delta}")
+            
+            if calculation_date is None:
+                calculation_date = datetime.now().strftime('%Y-%m-%d')
+            
+            # 計算持倉市值
+            portfolio_value = stock_quantity * stock_price
+            
+            # 考慮 Delta 的對沖份數計算
+            # 公式: 對沖份數 = 股數 / (100 × Delta)
+            hedge_contracts = int(stock_quantity / (self.OPTION_MULTIPLIER * option_delta))
+            
+            # 實際對沖的等效股數
+            equivalent_shares = hedge_contracts * self.OPTION_MULTIPLIER * option_delta
+            
+            # 覆蓋率（基於等效股數）
+            coverage_percentage = (equivalent_shares / stock_quantity) * 100
+            
+            logger.info(f"  計算結果:")
+            logger.info(f"    持倉市值: ${portfolio_value:.2f}")
+            logger.info(f"    對沖合約數: {hedge_contracts}張")
+            logger.info(f"    等效對沖股數: {equivalent_shares:.0f}股")
+            logger.info(f"    覆蓋率: {coverage_percentage:.2f}%")
+            
+            result = HedgeQuantityResult(
+                stock_quantity=stock_quantity,
+                stock_price=stock_price,
+                portfolio_value=portfolio_value,
+                option_multiplier=self.OPTION_MULTIPLIER,
+                hedge_contracts=hedge_contracts,
+                coverage_percentage=coverage_percentage,
+                calculation_date=calculation_date
+            )
+            
+            logger.info(f"* 對沖量計算完成（含 Delta）")
+            return result
+            
+        except Exception as e:
+            logger.error(f"x 對沖量計算失敗（含 Delta）: {e}")
             raise
     
     @staticmethod

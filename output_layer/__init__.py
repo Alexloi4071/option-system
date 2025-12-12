@@ -4,5 +4,14 @@
 """
 
 from .report_generator import ReportGenerator
+from .strategy_scenario_generator import StrategyScenarioGenerator, StrategyScenario
+from .module_consistency_checker import ModuleConsistencyChecker, ConsistencyResult, ModuleSignal
 
-__all__ = ['ReportGenerator']
+__all__ = [
+    'ReportGenerator', 
+    'StrategyScenarioGenerator', 
+    'StrategyScenario',
+    'ModuleConsistencyChecker',
+    'ConsistencyResult',
+    'ModuleSignal'
+]

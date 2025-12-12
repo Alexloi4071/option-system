@@ -1,12 +1,16 @@
 from dataclasses import dataclass
-from typing import Dict
+from typing import Dict, Optional
+from datetime import datetime
 import logging
 
 logger = logging.getLogger(__name__)
 
 @dataclass
 class PositionAnalysisResult:
-    """倉位分析結果"""
+    """倉位分析結果
+    
+    Requirements: 2.1, 2.2, 2.3 - 支持 Call/Put 分離顯示
+    """
     volume: int
     open_interest: int
     price_change: float
@@ -15,9 +19,16 @@ class PositionAnalysisResult:
     position_strength: str
     trend_analysis: str
     calculation_date: str
+    # 新增 Call/Put 分離字段 (Requirements: 2.1, 2.2)
+    call_volume: Optional[int] = None
+    call_open_interest: Optional[int] = None
+    put_volume: Optional[int] = None
+    put_open_interest: Optional[int] = None
+    # 新增 Put/Call 比率 (Requirements: 2.3)
+    put_call_ratio: Optional[float] = None
     
     def to_dict(self) -> Dict:
-        return {
+        result = {
             'volume': self.volume,
             'open_interest': self.open_interest,
             'price_change': round(self.price_change, 2),
@@ -25,8 +36,15 @@ class PositionAnalysisResult:
             'market_sentiment': self.market_sentiment,
             'position_strength': self.position_strength,
             'trend_analysis': self.trend_analysis,
-            'calculation_date': self.calculation_date
+            'calculation_date': self.calculation_date,
+            # Call/Put 分離數據
+            'call_volume': self.call_volume,
+            'call_open_interest': self.call_open_interest,
+            'put_volume': self.put_volume,
+            'put_open_interest': self.put_open_interest,
+            'put_call_ratio': round(self.put_call_ratio, 4) if self.put_call_ratio is not None else None
         }
+        return result
 
 
 class PositionAnalysisCalculator:
@@ -56,12 +74,42 @@ class PositionAnalysisCalculator:
                   volume: int,
                   open_interest: int,
                   price_change: float,
-                  calculation_date: str = None) -> PositionAnalysisResult:
+                  calculation_date: str = None,
+                  call_volume: Optional[int] = None,
+                  call_open_interest: Optional[int] = None,
+                  put_volume: Optional[int] = None,
+                  put_open_interest: Optional[int] = None) -> PositionAnalysisResult:
+        """
+        計算倉位分析
+        
+        參數:
+            volume: 總成交量（向後兼容）
+            open_interest: 總未平倉量（向後兼容）
+            price_change: 價格變化百分比
+            calculation_date: 計算日期
+            call_volume: Call 期權成交量 (Requirements: 2.1)
+            call_open_interest: Call 期權未平倉量 (Requirements: 2.2)
+            put_volume: Put 期權成交量 (Requirements: 2.1)
+            put_open_interest: Put 期權未平倉量 (Requirements: 2.2)
+        
+        返回:
+            PositionAnalysisResult: 包含 Call/Put 分離數據和 Put/Call 比率
+        """
         try:
             logger.info(f"開始倉位分析...")
             logger.info(f"  成交量: {volume:,}")
             logger.info(f"  未平倉: {open_interest:,}")
             logger.info(f"  價格變化: {price_change:.2f}%")
+            
+            # 記錄 Call/Put 分離數據
+            if call_volume is not None:
+                logger.info(f"  Call 成交量: {call_volume:,}")
+            if call_open_interest is not None:
+                logger.info(f"  Call 未平倉量: {call_open_interest:,}")
+            if put_volume is not None:
+                logger.info(f"  Put 成交量: {put_volume:,}")
+            if put_open_interest is not None:
+                logger.info(f"  Put 未平倉量: {put_open_interest:,}")
             
             if not self._validate_inputs(volume, open_interest, price_change):
                 raise ValueError("輸入參數無效")
@@ -71,6 +119,13 @@ class PositionAnalysisCalculator:
             
             # 計算成交量/未平倉比率
             volume_oi_ratio = volume / open_interest if open_interest > 0 else 0
+            
+            # 計算 Put/Call 比率 (Requirements: 2.3)
+            put_call_ratio = self._calculate_put_call_ratio(
+                call_open_interest, put_open_interest
+            )
+            if put_call_ratio is not None:
+                logger.info(f"  Put/Call 比率: {put_call_ratio:.4f}")
             
             # 分析市場情緒
             if volume > 100000 and price_change > 0:
@@ -114,7 +169,13 @@ class PositionAnalysisCalculator:
                 market_sentiment=market_sentiment,
                 position_strength=position_strength,
                 trend_analysis=trend_analysis,
-                calculation_date=calculation_date
+                calculation_date=calculation_date,
+                # Call/Put 分離數據
+                call_volume=call_volume,
+                call_open_interest=call_open_interest,
+                put_volume=put_volume,
+                put_open_interest=put_open_interest,
+                put_call_ratio=put_call_ratio
             )
             
             logger.info(f"* 倉位分析完成")
@@ -123,6 +184,24 @@ class PositionAnalysisCalculator:
         except Exception as e:
             logger.error(f"x 倉位分析失敗: {e}")
             raise
+    
+    def _calculate_put_call_ratio(self, 
+                                   call_open_interest: Optional[int], 
+                                   put_open_interest: Optional[int]) -> Optional[float]:
+        """
+        計算 Put/Call 未平倉量比率
+        
+        Requirements: 2.3 - WHEN 未平倉量數據可用 THEN Report_Generator SHALL 
+                           計算並顯示 Put/Call 未平倉量比率
+        
+        返回:
+            Put/Call 比率，如果數據不可用則返回 None
+        """
+        if call_open_interest is None or put_open_interest is None:
+            return None
+        if call_open_interest <= 0:
+            return None
+        return put_open_interest / call_open_interest
     
     @staticmethod
     def _validate_inputs(volume: int, open_interest: int, price_change: float) -> bool:

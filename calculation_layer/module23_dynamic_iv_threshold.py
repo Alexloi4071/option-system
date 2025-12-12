@@ -23,6 +23,24 @@ from dataclasses import dataclass
 from typing import Dict, Optional, Union, List
 from datetime import datetime
 
+# 導入統一的數據標準化工具
+try:
+    from utils.data_normalization import normalize_numeric_value, is_valid_numeric
+except ImportError:
+    # 回退實現
+    def normalize_numeric_value(value, default=None):
+        if value is None:
+            return default
+        if isinstance(value, float) and (np.isnan(value) or np.isinf(value)):
+            return default
+        return value
+    def is_valid_numeric(value):
+        if value is None:
+            return False
+        if isinstance(value, float) and (np.isnan(value) or np.isinf(value)):
+            return False
+        return True
+
 logger = logging.getLogger(__name__)
 
 

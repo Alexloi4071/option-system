@@ -58,6 +58,8 @@ from calculation_layer.module20_fundamental_health import FundamentalHealthCalcu
 from calculation_layer.module22_optimal_strike import OptimalStrikeCalculator
 # Module 23: 動態IV閾值
 from calculation_layer.module23_dynamic_iv_threshold import DynamicIVThresholdCalculator
+# Module 24: 技術方向分析
+from calculation_layer.module24_technical_direction import TechnicalDirectionAnalyzer
 # 新增: 策略推薦
 from calculation_layer.strategy_recommendation import StrategyRecommender
 from output_layer.report_generator import ReportGenerator
@@ -182,6 +184,10 @@ class OptionsAnalysisSystem:
                     raise ValueError("缺少到期天數資訊")
             
             # 新增: 使用多信心度計算
+            # 注意: days_to_expiration 來自 DataFetcher，可能是交易日或日曆日
+            # 如果使用了交易日計算器，則為交易日；否則為日曆日
+            is_calendar_days = not getattr(self.fetcher, 'trading_days_calc', None)
+            
             sr_results_multi = sr_calc.calculate_multi_confidence(
                 stock_price=analysis_data['current_price'],
                 implied_volatility=analysis_data['implied_volatility'],
@@ -193,15 +199,17 @@ class OptionsAnalysisSystem:
             self.analysis_results['module1_support_resistance_multi'] = sr_results_multi
             
             # 兼容性: 保留單一信心度計算 (使用90%作為默認)
+            # 新增: is_calendar_days 參數，自動將日曆日轉換為交易日
             sr_result_single = sr_calc.calculate(
                 stock_price=analysis_data['current_price'],
                 implied_volatility=analysis_data['implied_volatility'],
                 days_to_expiration=int(days_to_expiration),
-                z_score=1.645  # 90%信心度
+                z_score=1.645,  # 90%信心度
+                is_calendar_days=is_calendar_days  # 新增: 日曆日/交易日標識
             )
             self.analysis_results['module1_support_resistance'] = sr_result_single.to_dict()
             
-            logger.info("* 模塊1完成: 多信心度計算 + 單一信心度 (90%)")
+            logger.info(f"* 模塊1完成: 多信心度計算 + 單一信心度 (90%), 日曆日模式: {is_calendar_days}")
             
             # 模塊2: 公允值 / 遠期理論價
             analysis_date_str = analysis_data.get('analysis_date')
@@ -233,6 +241,9 @@ class OptionsAnalysisSystem:
             put_last_price = float(atm_put.get('lastPrice', 0) or 0)
             call_volume = int(atm_call.get('volume', 0) or 0)
             call_open_interest = int(atm_call.get('openInterest', 0) or 0)
+            # 新增 Put 成交量和未平倉量 (Requirements: 2.1, 2.2)
+            put_volume = int(atm_put.get('volume', 0) or 0)
+            put_open_interest = int(atm_put.get('openInterest', 0) or 0)
             call_delta = atm_call.get('delta')
             if call_delta is not None:
                 try:
@@ -306,17 +317,21 @@ class OptionsAnalysisSystem:
             except Exception as exc:
                 logger.warning("! 模塊4執行失敗: %s", exc)
             
-            # 模塊5: 利率與PE關係（使用真實 PE）
+            # 模塊5: 利率與PE關係（使用真實 PE + 行業分析）
             try:
                 long_term_rate = analysis_data.get('risk_free_rate')
                 # ✅ 優先使用 Forward PE
                 current_pe = analysis_data.get('forward_pe') or analysis_data.get('pe_ratio')
+                # 新增: 獲取行業信息用於行業PE範圍判斷
+                sector = analysis_data.get('sector')
                 
                 if long_term_rate and current_pe and long_term_rate > 0 and current_pe > 0:
                     rate_pe_calc = RatePERelationCalculator()
+                    # 新增: 傳遞 sector 參數進行行業PE範圍判斷
                     rate_pe_result = rate_pe_calc.calculate(
                         long_term_rate=long_term_rate,
                         current_pe=current_pe,
+                        sector=sector,  # 新增: 行業參數
                         calculation_date=analysis_date_str
                     )
                     
@@ -458,31 +473,55 @@ class OptionsAnalysisSystem:
             except Exception as exc:
                 logger.warning("! 模塊5執行失敗: %s", exc)
             
-            # 模塊6: 對沖量
+            # 模塊6: 對沖量（支持 Delta 對沖）
             try:
                 hedge_calc = HedgeQuantityCalculator()
+                
+                # 基本對沖計算
                 hedge_result = hedge_calc.calculate(
                     stock_quantity=default_stock_quantity,
                     stock_price=current_price,
                     calculation_date=analysis_date_str
                 )
-                self.analysis_results['module6_hedge_quantity'] = hedge_result.to_dict()
+                hedge_result_dict = hedge_result.to_dict()
+                
+                # 新增: 如果有 Delta 值，計算 Delta 對沖
+                if call_delta is not None and call_delta > 0:
+                    hedge_result_delta = hedge_calc.calculate_with_delta(
+                        stock_quantity=default_stock_quantity,
+                        stock_price=current_price,
+                        option_delta=abs(call_delta),  # 使用絕對值
+                        calculation_date=analysis_date_str
+                    )
+                    hedge_result_dict['delta_hedge'] = {
+                        'delta_used': round(abs(call_delta), 4),
+                        'hedge_contracts': hedge_result_delta.hedge_contracts,
+                        'coverage_percentage': round(hedge_result_delta.coverage_percentage, 2),
+                        'note': f'使用 Delta={abs(call_delta):.4f} 計算對沖量'
+                    }
+                    logger.info(f"  Delta 對沖: {hedge_result_delta.hedge_contracts}張 (Delta={abs(call_delta):.4f})")
+                
+                self.analysis_results['module6_hedge_quantity'] = hedge_result_dict
                 logger.info("* 模塊6完成: 對沖量")
             except Exception as exc:
                 logger.warning("! 模塊6執行失敗: %s", exc)
             
-            # 模塊7-10: 單腿策略損益
+            # 模塊7-10: 單腿策略損益（支持多張合約和持倉期損益）
             price_scenarios = [
                 round(current_price * 0.9, 2),
                 round(current_price, 2),
                 round(current_price * 1.1, 2)
             ]
             
+            # 默認合約數量（可從用戶輸入獲取）
+            default_num_contracts = 1
+            
             if strike_price and strike_price > 0:
                 # 模塊7: Long Call
                 try:
                     if call_last_price > 0:
                         long_call_calc = LongCallCalculator()
+                        # 基本損益計算（到期情境）
                         long_call_results = [
                             long_call_calc.calculate(
                                 strike_price=strike_price,
@@ -492,8 +531,32 @@ class OptionsAnalysisSystem:
                             ).to_dict()
                             for price in price_scenarios
                         ]
-                        self.analysis_results['module7_long_call'] = long_call_results
-                        logger.info("* 模塊7完成: Long Call 損益")
+                        
+                        # 新增: 多張合約損益計算
+                        long_call_multi = long_call_calc.calculate_with_contracts(
+                            strike_price=strike_price,
+                            option_premium=call_last_price,
+                            stock_price_at_expiry=current_price,
+                            num_contracts=default_num_contracts,
+                            calculation_date=analysis_date_str
+                        )
+                        
+                        # 新增: 當前持倉損益（假設當前期權價格 = 市場價格）
+                        long_call_current_pnl = long_call_calc.calculate_current_pnl(
+                            strike_price=strike_price,
+                            option_premium=call_last_price,
+                            current_stock_price=current_price,
+                            current_option_price=call_last_price,  # 使用當前市場價
+                            num_contracts=default_num_contracts,
+                            calculation_date=analysis_date_str
+                        )
+                        
+                        self.analysis_results['module7_long_call'] = {
+                            'scenarios': long_call_results,
+                            'multi_contract': long_call_multi,
+                            'current_pnl': long_call_current_pnl
+                        }
+                        logger.info("* 模塊7完成: Long Call 損益（含多合約和持倉期損益）")
                 except Exception as exc:
                     logger.warning("! 模塊7執行失敗: %s", exc)
                 
@@ -510,8 +573,32 @@ class OptionsAnalysisSystem:
                             ).to_dict()
                             for price in price_scenarios
                         ]
-                        self.analysis_results['module8_long_put'] = long_put_results
-                        logger.info("* 模塊8完成: Long Put 損益")
+                        
+                        # 新增: 多張合約損益計算
+                        long_put_multi = long_put_calc.calculate_with_contracts(
+                            strike_price=strike_price,
+                            option_premium=put_last_price,
+                            stock_price_at_expiry=current_price,
+                            num_contracts=default_num_contracts,
+                            calculation_date=analysis_date_str
+                        )
+                        
+                        # 新增: 當前持倉損益
+                        long_put_current_pnl = long_put_calc.calculate_current_pnl(
+                            strike_price=strike_price,
+                            option_premium=put_last_price,
+                            current_stock_price=current_price,
+                            current_option_price=put_last_price,
+                            num_contracts=default_num_contracts,
+                            calculation_date=analysis_date_str
+                        )
+                        
+                        self.analysis_results['module8_long_put'] = {
+                            'scenarios': long_put_results,
+                            'multi_contract': long_put_multi,
+                            'current_pnl': long_put_current_pnl
+                        }
+                        logger.info("* 模塊8完成: Long Put 損益（含多合約和持倉期損益）")
                 except Exception as exc:
                     logger.warning("! 模塊8執行失敗: %s", exc)
                 
@@ -528,8 +615,32 @@ class OptionsAnalysisSystem:
                             ).to_dict()
                             for price in price_scenarios
                         ]
-                        self.analysis_results['module9_short_call'] = short_call_results
-                        logger.info("* 模塊9完成: Short Call 損益")
+                        
+                        # 新增: 多張合約損益計算
+                        short_call_multi = short_call_calc.calculate_with_contracts(
+                            strike_price=strike_price,
+                            option_premium=call_last_price,
+                            stock_price_at_expiry=current_price,
+                            num_contracts=default_num_contracts,
+                            calculation_date=analysis_date_str
+                        )
+                        
+                        # 新增: 當前持倉損益
+                        short_call_current_pnl = short_call_calc.calculate_current_pnl(
+                            strike_price=strike_price,
+                            option_premium=call_last_price,
+                            current_stock_price=current_price,
+                            current_option_price=call_last_price,
+                            num_contracts=default_num_contracts,
+                            calculation_date=analysis_date_str
+                        )
+                        
+                        self.analysis_results['module9_short_call'] = {
+                            'scenarios': short_call_results,
+                            'multi_contract': short_call_multi,
+                            'current_pnl': short_call_current_pnl
+                        }
+                        logger.info("* 模塊9完成: Short Call 損益（含多合約和持倉期損益）")
                 except Exception as exc:
                     logger.warning("! 模塊9執行失敗: %s", exc)
                 
@@ -546,12 +657,36 @@ class OptionsAnalysisSystem:
                             ).to_dict()
                             for price in price_scenarios
                         ]
-                        self.analysis_results['module10_short_put'] = short_put_results
-                        logger.info("* 模塊10完成: Short Put 損益")
+                        
+                        # 新增: 多張合約損益計算
+                        short_put_multi = short_put_calc.calculate_with_contracts(
+                            strike_price=strike_price,
+                            option_premium=put_last_price,
+                            stock_price_at_expiry=current_price,
+                            num_contracts=default_num_contracts,
+                            calculation_date=analysis_date_str
+                        )
+                        
+                        # 新增: 當前持倉損益
+                        short_put_current_pnl = short_put_calc.calculate_current_pnl(
+                            strike_price=strike_price,
+                            option_premium=put_last_price,
+                            current_stock_price=current_price,
+                            current_option_price=put_last_price,
+                            num_contracts=default_num_contracts,
+                            calculation_date=analysis_date_str
+                        )
+                        
+                        self.analysis_results['module10_short_put'] = {
+                            'scenarios': short_put_results,
+                            'multi_contract': short_put_multi,
+                            'current_pnl': short_put_current_pnl
+                        }
+                        logger.info("* 模塊10完成: Short Put 損益（含多合約和持倉期損益）")
                 except Exception as exc:
                     logger.warning("! 模塊10執行失敗: %s", exc)
             
-            # 模塊11: 合成正股
+            # 模塊11: 合成正股（支持股息調整）
             try:
                 if strike_price and call_last_price >= 0 and put_last_price >= 0:
                     # 獲取無風險利率和到期時間
@@ -561,17 +696,43 @@ class OptionsAnalysisSystem:
                     m11_time_to_expiration = m11_days_to_exp / 252  # 使用交易日標準
                     
                     synthetic_calc = SyntheticStockCalculator()
-                    synthetic_result = synthetic_calc.calculate(
-                        strike_price=strike_price,
-                        call_premium=call_last_price,
-                        put_premium=put_last_price,
-                        current_stock_price=current_price,
-                        risk_free_rate=m11_risk_free_rate,
-                        time_to_expiration=m11_time_to_expiration,
-                        calculation_date=analysis_date_str
-                    )
-                    self.analysis_results['module11_synthetic_stock'] = synthetic_result.to_dict()
-                    logger.info("* 模塊11完成: 合成正股")
+                    
+                    # 新增: 獲取股息收益率（從 Finviz/Yahoo Finance 降級獲取）
+                    # 數據來源優先級: Finviz → Alpha Vantage → Massive API → Yahoo Finance
+                    dividend_yield = analysis_data.get('dividend_yield', 0) or 0
+                    
+                    if dividend_yield and dividend_yield > 0:
+                        # 使用股息收益率計算合成正股
+                        logger.info(f"  使用股息收益率: {dividend_yield:.2f}%")
+                        synthetic_result = synthetic_calc.calculate_with_dividend_yield(
+                            strike_price=strike_price,
+                            call_premium=call_last_price,
+                            put_premium=put_last_price,
+                            current_stock_price=current_price,
+                            risk_free_rate=m11_risk_free_rate,
+                            time_to_expiration=m11_time_to_expiration,
+                            dividend_yield=dividend_yield,  # 新增: 股息收益率
+                            calculation_date=analysis_date_str
+                        )
+                    else:
+                        # 無股息數據，使用基本計算
+                        logger.info("  無股息數據，使用基本計算")
+                        synthetic_result = synthetic_calc.calculate(
+                            strike_price=strike_price,
+                            call_premium=call_last_price,
+                            put_premium=put_last_price,
+                            current_stock_price=current_price,
+                            risk_free_rate=m11_risk_free_rate,
+                            time_to_expiration=m11_time_to_expiration,
+                            calculation_date=analysis_date_str
+                        )
+                    
+                    result_dict = synthetic_result.to_dict()
+                    result_dict['dividend_yield_used'] = dividend_yield if dividend_yield else 0
+                    result_dict['data_source'] = 'Finviz/Yahoo Finance (降級模式)'
+                    
+                    self.analysis_results['module11_synthetic_stock'] = result_dict
+                    logger.info("* 模塊11完成: 合成正股（含股息調整）")
             except Exception as exc:
                 logger.warning("! 模塊11執行失敗: %s", exc)
             
@@ -594,7 +755,8 @@ class OptionsAnalysisSystem:
             except Exception as exc:
                 logger.warning("! 模塊12執行失敗: %s", exc)
             
-            # 模塊13: 倉位分析（增強版 - 包含 Finviz 數據）
+            # 模塊13: 倉位分析（增強版 - 包含 Finviz 數據和 Call/Put 分離）
+            # Requirements: 2.1, 2.2, 2.3 - 分別顯示 Call 和 Put 的成交量和未平倉量
             try:
                 if call_volume >= 0 and call_open_interest >= 0:
                     price_change_pct = 0.0
@@ -602,12 +764,21 @@ class OptionsAnalysisSystem:
                     if stock_open and stock_open > 0:
                         price_change_pct = ((current_price - stock_open) / stock_open) * 100
                     
+                    # 計算總成交量和總未平倉量
+                    total_volume = call_volume + put_volume
+                    total_open_interest = call_open_interest + put_open_interest
+                    
                     position_calc = PositionAnalysisCalculator()
                     position_result = position_calc.calculate(
-                        volume=call_volume,
-                        open_interest=call_open_interest,
+                        volume=total_volume,
+                        open_interest=total_open_interest,
                         price_change=price_change_pct,
-                        calculation_date=analysis_date_str
+                        calculation_date=analysis_date_str,
+                        # 傳遞 Call/Put 分離數據 (Requirements: 2.1, 2.2)
+                        call_volume=call_volume if call_volume > 0 else None,
+                        call_open_interest=call_open_interest if call_open_interest > 0 else None,
+                        put_volume=put_volume if put_volume > 0 else None,
+                        put_open_interest=put_open_interest if put_open_interest > 0 else None
                     )
                     
                     result_dict = position_result.to_dict()
@@ -744,6 +915,10 @@ class OptionsAnalysisSystem:
             
             volatility_raw = analysis_data.get('implied_volatility', 25.0) or 25.0
             volatility_estimate = volatility_raw / 100.0  # 轉換: 25.5% → 0.255
+            
+            # IV 來源追蹤變量（初始使用 Market IV）
+            atm_iv_available = False
+            iv_source = "Market IV (initial)"
             
             logger.info(f"共同參數: risk_free_rate={risk_free_rate:.4f}, "
                        f"time_to_expiration={time_to_expiration_years:.4f}年, "
@@ -965,9 +1140,42 @@ class OptionsAnalysisSystem:
                     if call_iv_result.converged:
                         logger.info(f"* 模塊17完成: 隱含波動率計算 (Call IV={call_iv_result.implied_volatility*100:.2f}%, {call_iv_result.iterations}次迭代)")
                         
+                        # ========== 核心修復: 更新 volatility_estimate 為 ATM IV ==========
+                        # Requirements 1.1, 6.2: Module 17 成功後更新 volatility_estimate
+                        atm_iv = call_iv_result.implied_volatility  # 從 Module 17 提取 ATM IV
+                        
+                        # ★ 核心修復：更新 volatility_estimate 為 ATM IV
+                        volatility_estimate = atm_iv
+                        atm_iv_available = True
+                        iv_source = "ATM IV (Module 17)"
+                        
+                        # 記錄 ATM IV 與 Market IV 的差異百分比
+                        iv_diff_pct = abs(atm_iv * 100 - volatility_raw) / volatility_raw * 100 if volatility_raw > 0 else 0
+                        logger.info(f"  ★ volatility_estimate 已更新為 ATM IV: {atm_iv*100:.2f}%")
+                        logger.info(f"    原始 Market IV: {volatility_raw:.2f}%")
+                        logger.info(f"    差異: {iv_diff_pct:.1f}%")
+                        
+                        # ========== Requirements 5.1: IV 差異警告邏輯 ==========
+                        # 如果 ATM IV 與 Market IV 差異超過 20%，記錄警告日誌並添加 iv_warning 字段
+                        iv_warning = None
+                        if iv_diff_pct > 20:
+                            iv_warning = f"ATM IV ({atm_iv*100:.2f}%) 與 Market IV ({volatility_raw:.2f}%) 差異 {iv_diff_pct:.1f}%，超過 20% 閾值"
+                            logger.warning(f"  ⚠️ IV 差異警告: {iv_warning}")
+                            logger.warning(f"    可能原因: 數據源問題、市場異常波動或波動率微笑/偏斜")
+                        
+                        # 將 IV 警告添加到 analysis_results 中
+                        self.analysis_results['iv_warning'] = iv_warning
+                        self.analysis_results['iv_comparison'] = {
+                            'market_iv': round(volatility_raw, 2),
+                            'atm_iv': round(atm_iv * 100, 2),
+                            'difference_pct': round(iv_diff_pct, 1),
+                            'warning_threshold': 20,
+                            'has_warning': iv_diff_pct > 20
+                        }
+                        # ========== IV 差異警告邏輯結束 ==========
+                        
                         # ========== ATM IV 集成: 更新 Module 15 使用 ATM IV ==========
                         # Requirements 3.1, 3.2, 3.3: 使用 ATM IV 優先計算期權理論價格
-                        atm_iv = call_iv_result.implied_volatility  # 從 Module 17 提取 ATM IV
                         logger.info(f"\n→ ATM IV 集成: 使用 ATM IV ({atm_iv*100:.2f}%) 更新 Module 15 計算...")
                         
                         try:
@@ -1013,10 +1221,125 @@ class OptionsAnalysisSystem:
                             logger.warning(f"! ATM IV 更新失敗: {atm_exc}，保留原始 Module 15 結果")
                         # ========== ATM IV 集成結束 ==========
                         
+                        # ========== Module 16 ATM IV 更新: 使用 ATM IV 重新計算 Greeks ==========
+                        # Requirements 2.1, 2.3: 使用 ATM IV 更新 Greeks 計算並添加 IV 來源標記
+                        try:
+                            logger.info(f"\n→ Module 16 ATM IV 更新: 使用 ATM IV ({atm_iv*100:.2f}%) 重新計算 Greeks...")
+                            
+                            greeks_calc_atm = GreeksCalculator()
+                            
+                            # 使用 ATM IV 重新計算 Call Greeks
+                            call_greeks_atm = greeks_calc_atm.calculate_all_greeks(
+                                stock_price=current_price,
+                                strike_price=strike_price,
+                                risk_free_rate=risk_free_rate,
+                                time_to_expiration=time_to_expiration_years,
+                                volatility=atm_iv,  # 使用 ATM IV
+                                option_type='call'
+                            )
+                            
+                            # 使用 ATM IV 重新計算 Put Greeks
+                            put_greeks_atm = greeks_calc_atm.calculate_all_greeks(
+                                stock_price=current_price,
+                                strike_price=strike_price,
+                                risk_free_rate=risk_free_rate,
+                                time_to_expiration=time_to_expiration_years,
+                                volatility=atm_iv,  # 使用 ATM IV
+                                option_type='put'
+                            )
+                            
+                            # 更新 Module 16 結果，添加 IV 來源標記
+                            if 'module16_greeks' in self.analysis_results:
+                                self.analysis_results['module16_greeks']['call'] = call_greeks_atm.to_dict()
+                                self.analysis_results['module16_greeks']['put'] = put_greeks_atm.to_dict()
+                                self.analysis_results['module16_greeks']['iv_source'] = iv_source
+                                self.analysis_results['module16_greeks']['iv_used'] = round(atm_iv, 6)
+                                self.analysis_results['module16_greeks']['iv_used_pct'] = round(atm_iv * 100, 2)
+                                self.analysis_results['module16_greeks']['market_iv'] = round(volatility_raw / 100, 6)
+                                self.analysis_results['module16_greeks']['market_iv_pct'] = round(volatility_raw, 2)
+                                self.analysis_results['module16_greeks']['data_source'] = 'Self-Calculated (ATM IV)'
+                            
+                            logger.info(f"  * Module 16 ATM IV 更新完成:")
+                            logger.info(f"    Call Delta: {call_greeks_atm.delta:.4f}, Gamma: {call_greeks_atm.gamma:.6f}")
+                            logger.info(f"    Put Delta: {put_greeks_atm.delta:.4f}, Gamma: {put_greeks_atm.gamma:.6f}")
+                            logger.info(f"    IV 來源: {iv_source}, IV 使用: {atm_iv*100:.2f}%")
+                        except Exception as m16_exc:
+                            logger.warning(f"! Module 16 ATM IV 更新失敗: {m16_exc}，保留原始結果")
+                            # 即使更新失敗，也添加 IV 來源標記（使用原始 Market IV）
+                            if 'module16_greeks' in self.analysis_results:
+                                self.analysis_results['module16_greeks']['iv_source'] = "Market IV (ATM IV update failed)"
+                                self.analysis_results['module16_greeks']['iv_used'] = round(volatility_estimate, 6)
+                                self.analysis_results['module16_greeks']['iv_used_pct'] = round(volatility_estimate * 100, 2)
+                        # ========== Module 16 ATM IV 更新結束 ==========
+                        
+                        # ========== Module 1 ATM IV 更新: 使用 ATM IV 重新計算支持/阻力位 ==========
+                        # 優先使用 Module 17 計算的 ATM IV，而非 Yahoo Finance 的市場 IV
+                        try:
+                            atm_iv_pct = atm_iv * 100  # 轉換為百分比格式
+                            market_iv_pct = analysis_data['implied_volatility']
+                            
+                            # 只有當 ATM IV 與市場 IV 差異超過 10% 時才更新
+                            iv_diff_pct = abs(atm_iv_pct - market_iv_pct) / market_iv_pct * 100 if market_iv_pct > 0 else 0
+                            
+                            if iv_diff_pct > 10:
+                                logger.info(f"\n→ Module 1 ATM IV 更新: ATM IV ({atm_iv_pct:.2f}%) vs 市場 IV ({market_iv_pct:.2f}%), 差異 {iv_diff_pct:.1f}%")
+                                
+                                # 使用 ATM IV 重新計算多信心度支持/阻力位
+                                sr_results_multi_atm = sr_calc.calculate_multi_confidence(
+                                    stock_price=analysis_data['current_price'],
+                                    implied_volatility=atm_iv_pct,  # 使用 ATM IV
+                                    days_to_expiration=int(days_to_expiration),
+                                    confidence_levels=['68%', '80%', '90%', '95%', '99%']
+                                )
+                                
+                                # 使用 ATM IV 重新計算單一信心度 (90%)
+                                sr_result_single_atm = sr_calc.calculate(
+                                    stock_price=analysis_data['current_price'],
+                                    implied_volatility=atm_iv_pct,  # 使用 ATM IV
+                                    days_to_expiration=int(days_to_expiration),
+                                    z_score=1.645  # 90%信心度
+                                )
+                                
+                                # 更新 Module 1 結果
+                                self.analysis_results['module1_support_resistance_multi'] = sr_results_multi_atm
+                                self.analysis_results['module1_support_resistance'] = sr_result_single_atm.to_dict()
+                                
+                                # 添加 IV 來源標記
+                                self.analysis_results['module1_support_resistance']['iv_source'] = 'ATM IV (Module 17)'
+                                self.analysis_results['module1_support_resistance']['market_iv'] = market_iv_pct
+                                self.analysis_results['module1_support_resistance']['atm_iv'] = atm_iv_pct
+                                
+                                logger.info(f"  * Module 1 已更新: 使用 ATM IV ({atm_iv_pct:.2f}%) 替代市場 IV ({market_iv_pct:.2f}%)")
+                                logger.info(f"    90% 信心度區間: ${sr_result_single_atm.support_level:.2f} - ${sr_result_single_atm.resistance_level:.2f}")
+                            else:
+                                logger.info(f"  Module 1 保持不變: ATM IV ({atm_iv_pct:.2f}%) 與市場 IV ({market_iv_pct:.2f}%) 差異小於 10%")
+                        except Exception as m1_exc:
+                            logger.warning(f"! Module 1 ATM IV 更新失敗: {m1_exc}，保留原始結果")
+                        # ========== Module 1 ATM IV 更新結束 ==========
+                        
                     else:
+                        # Requirements 1.2: Module 17 不收斂時的回退邏輯
+                        atm_iv_available = False
+                        iv_source = "Market IV (fallback)"
                         logger.warning(f"! 模塊17: Call IV 未收斂 ({call_iv_result.iterations}次迭代)")
+                        logger.warning(f"  保持使用 Market IV: {volatility_raw:.2f}%")
+                        
+                        # Requirements 2.3: 在 Module 16 結果中添加 IV 來源標記（回退情況）
+                        if 'module16_greeks' in self.analysis_results:
+                            self.analysis_results['module16_greeks']['iv_source'] = iv_source
+                            self.analysis_results['module16_greeks']['iv_used'] = round(volatility_estimate, 6)
+                            self.analysis_results['module16_greeks']['iv_used_pct'] = round(volatility_estimate * 100, 2)
             except Exception as exc:
+                # Module 17 執行失敗時也設置回退狀態
+                atm_iv_available = False
+                iv_source = "Market IV (fallback - Module 17 error)"
                 logger.warning("! 模塊17執行失敗: %s", exc)
+                
+                # Requirements 2.3: 在 Module 16 結果中添加 IV 來源標記（錯誤情況）
+                if 'module16_greeks' in self.analysis_results:
+                    self.analysis_results['module16_greeks']['iv_source'] = iv_source
+                    self.analysis_results['module16_greeks']['iv_used'] = round(volatility_estimate, 6)
+                    self.analysis_results['module16_greeks']['iv_used_pct'] = round(volatility_estimate * 100, 2)
             
             # 模塊18: 歷史波動率計算 + IV Rank/Percentile（增強版）
             try:
@@ -1044,8 +1367,14 @@ class OptionsAnalysisSystem:
                             'iv_hv_comparison': iv_hv_ratio.to_dict()
                         }
                         
+                        # ★ Requirements 3.1, 3.2, 3.3: 添加 IV 來源追蹤到 iv_hv_comparison
+                        result_dict['iv_hv_comparison']['iv_source'] = iv_source
+                        result_dict['iv_hv_comparison']['iv_used'] = round(volatility_estimate, 6)
+                        result_dict['iv_hv_comparison']['iv_used_pct'] = round(volatility_estimate * 100, 2)
+                        
                         # ✅ 新增: IV Rank 和 IV Percentile 計算（如果有足夠的歷史數據）
                         # 需要至少 200 天數據（約 10 個月），理想是 252 天（1年）
+                        # Requirements 7.1: 使用 ATM IV 而非 Market IV 計算 IV Rank
                         if len(historical_data) >= 200:
                             logger.info("  計算 IV Rank 和 IV Percentile (52週基準)...")
                             
@@ -1055,17 +1384,63 @@ class OptionsAnalysisSystem:
                                 
                                 # 接受至少 200 天的數據
                                 if historical_iv is not None and len(historical_iv) >= 200:
+                                    # Requirements 7.1: 優先使用 ATM IV（來自 Module 17）
+                                    # 如果 ATM IV 不可用，則使用 Market IV 作為備選
+                                    atm_iv_for_rank = None
+                                    iv_source_for_rank = 'Market IV'
+                                    
+                                    # 嘗試從 Module 17 結果獲取 ATM IV
+                                    if 'module17_implied_volatility' in self.analysis_results:
+                                        m17_result = self.analysis_results['module17_implied_volatility']
+                                        if m17_result.get('call', {}).get('converged', False):
+                                            atm_iv_for_rank = m17_result['call'].get('implied_volatility')
+                                            iv_source_for_rank = 'ATM IV (Module 17)'
+                                            logger.info(f"  使用 ATM IV ({atm_iv_for_rank*100:.2f}%) 計算 IV Rank")
+                                    
+                                    # 如果 ATM IV 不可用，使用 Market IV
+                                    if atm_iv_for_rank is None:
+                                        atm_iv_for_rank = volatility_estimate
+                                        iv_source_for_rank = 'Market IV (備選)'
+                                        logger.info(f"  ATM IV 不可用，使用 Market IV ({atm_iv_for_rank*100:.2f}%) 計算 IV Rank")
+                                    
                                     # 計算 IV Rank
                                     iv_rank = hv_calc.calculate_iv_rank(
-                                        current_iv=volatility_estimate,
+                                        current_iv=atm_iv_for_rank,
                                         historical_iv_series=historical_iv
                                     )
                                     
                                     # 計算 IV Percentile
                                     iv_percentile = hv_calc.calculate_iv_percentile(
-                                        current_iv=volatility_estimate,
+                                        current_iv=atm_iv_for_rank,
                                         historical_iv_series=historical_iv
                                     )
+                                    
+                                    # Requirements 7.3: 計算歷史 IV 範圍
+                                    iv_min = float(historical_iv.min())
+                                    iv_max = float(historical_iv.max())
+                                    
+                                    # Requirements 7.2: IV Rank 為 0% 時的數據驗證
+                                    iv_rank_validation = {
+                                        'is_valid': True,
+                                        'warnings': []
+                                    }
+                                    
+                                    if iv_rank == 0.0:
+                                        # 檢查當前 IV 是否真的等於歷史最低
+                                        if abs(atm_iv_for_rank - iv_min) > 0.001:
+                                            iv_rank_validation['is_valid'] = False
+                                            iv_rank_validation['warnings'].append(
+                                                f"IV Rank 為 0% 但當前 IV ({atm_iv_for_rank*100:.2f}%) 不等於歷史最低 ({iv_min*100:.2f}%)"
+                                            )
+                                        # 檢查歷史數據是否有足夠變化
+                                        if iv_max - iv_min < 0.01:  # 歷史範圍小於 1%
+                                            iv_rank_validation['is_valid'] = False
+                                            iv_rank_validation['warnings'].append(
+                                                f"歷史 IV 範圍過小 ({iv_min*100:.2f}% - {iv_max*100:.2f}%)，數據可能不準確"
+                                            )
+                                        logger.warning(f"  ! IV Rank 為 0%，進行數據驗證...")
+                                        for warning in iv_rank_validation['warnings']:
+                                            logger.warning(f"    {warning}")
                                     
                                     # 獲取交易建議
                                     iv_recommendation = hv_calc.get_iv_recommendation(iv_rank, iv_percentile)
@@ -1077,12 +1452,35 @@ class OptionsAnalysisSystem:
                                     # 修復 (2025-12-07): 保存 historical_iv 供 Module 23 使用
                                     result_dict['historical_iv'] = historical_iv
                                     
+                                    # Requirements 7.1, 7.3: 記錄 IV 來源和歷史範圍
+                                    result_dict['iv_rank_details'] = {
+                                        'current_iv': round(atm_iv_for_rank, 6),
+                                        'current_iv_percent': round(atm_iv_for_rank * 100, 2),
+                                        'iv_source': iv_source_for_rank,
+                                        'historical_iv_min': round(iv_min, 6),
+                                        'historical_iv_max': round(iv_max, 6),
+                                        'historical_iv_min_percent': round(iv_min * 100, 2),
+                                        'historical_iv_max_percent': round(iv_max * 100, 2),
+                                        'historical_data_points': len(historical_iv),
+                                        'validation': iv_rank_validation
+                                    }
+                                    
                                     logger.info(f"  IV Rank: {iv_rank:.2f}%, IV Percentile: {iv_percentile:.2f}%")
+                                    logger.info(f"  IV 來源: {iv_source_for_rank}, 當前 IV: {atm_iv_for_rank*100:.2f}%")
+                                    logger.info(f"  歷史 IV 範圍: {iv_min*100:.2f}% - {iv_max*100:.2f}%")
                                     logger.info(f"  建議: {iv_recommendation['action']} - {iv_recommendation['reason']}")
                                 else:
                                     logger.info("  ! 無法獲取歷史IV數據，跳過IV Rank/Percentile計算")
+                                    result_dict['iv_rank_details'] = {
+                                        'error': '歷史 IV 數據不足',
+                                        'data_points_available': len(historical_iv) if historical_iv is not None else 0,
+                                        'data_points_required': 200
+                                    }
                             except Exception as e:
                                 logger.debug(f"  ! 獲取歷史IV失敗: {e}")
+                                result_dict['iv_rank_details'] = {
+                                    'error': f'獲取歷史 IV 失敗: {str(e)}'
+                                }
                         
                         self.analysis_results['module18_historical_volatility'] = result_dict
                         logger.info(f"* 模塊18完成: 歷史波動率計算 (HV30={hv_30.historical_volatility*100:.2f}%, IV/HV={iv_hv_ratio.iv_hv_ratio:.2f})")
@@ -1467,14 +1865,25 @@ class OptionsAnalysisSystem:
                 if 'historical_iv' in hv_data:
                     historical_iv = hv_data['historical_iv']
                 
+                # ★ 修復 (Requirements 4.1, 4.2, 4.3): 使用 ATM IV (volatility_estimate) 而非 Market IV
+                # volatility_estimate 在 Module 17 成功後已更新為 ATM IV
+                current_iv_for_threshold = volatility_estimate * 100  # 轉換為百分比格式
+                
                 # 計算動態閾值
                 iv_threshold_result = dynamic_iv_calc.calculate_thresholds(
-                    current_iv=analysis_data.get('implied_volatility', 25.0),
+                    current_iv=current_iv_for_threshold,  # 使用 ATM IV (如果可用)
                     historical_iv=historical_iv,
                     vix=vix_value
                 )
                 
                 self.analysis_results['module23_dynamic_iv_threshold'] = iv_threshold_result.to_dict()
+                
+                # ★ 添加 IV 來源標記 (Requirements 4.3)
+                self.analysis_results['module23_dynamic_iv_threshold']['iv_source'] = iv_source
+                self.analysis_results['module23_dynamic_iv_threshold']['iv_used'] = round(current_iv_for_threshold, 2)
+                self.analysis_results['module23_dynamic_iv_threshold']['iv_used_decimal'] = round(volatility_estimate, 6)
+                self.analysis_results['module23_dynamic_iv_threshold']['market_iv'] = analysis_data.get('implied_volatility', 25.0)
+                self.analysis_results['module23_dynamic_iv_threshold']['atm_iv_available'] = atm_iv_available
                 
                 # 獲取交易建議
                 trading_suggestion = dynamic_iv_calc.get_trading_suggestion(iv_threshold_result)
@@ -1490,7 +1899,7 @@ class OptionsAnalysisSystem:
                     iv_environment = 'neutral'
                 
                 logger.info(f"* 模塊23完成: 動態IV閾值計算")
-                logger.info(f"  當前IV: {iv_threshold_result.current_iv:.2f}%")
+                logger.info(f"  當前IV: {iv_threshold_result.current_iv:.2f}% (來源: {iv_source})")
                 logger.info(f"  高閾值: {iv_threshold_result.high_threshold:.2f}%")
                 logger.info(f"  低閾值: {iv_threshold_result.low_threshold:.2f}%")
                 logger.info(f"  狀態: {iv_threshold_result.status}")
@@ -1498,6 +1907,10 @@ class OptionsAnalysisSystem:
                 logger.info(f"  數據質量: {iv_threshold_result.data_quality}")
                 logger.info(f"  歷史數據: {iv_threshold_result.historical_days} 天")
                 logger.info(f"  可靠性: {iv_threshold_result.reliability}")
+                # 顯示 Market IV 與 ATM IV 的差異（如果 ATM IV 可用）
+                if atm_iv_available:
+                    market_iv_val = analysis_data.get('implied_volatility', 25.0)
+                    logger.info(f"  Market IV: {market_iv_val:.2f}% (ATM IV 差異: {abs(current_iv_for_threshold - market_iv_val):.2f}%)")
                 if iv_threshold_result.warning:
                     logger.warning(f"  ⚠️ {iv_threshold_result.warning}")
             except Exception as exc:
@@ -1586,25 +1999,76 @@ class OptionsAnalysisSystem:
                     'reason': str(exc)
                 }
             
-            # 新增: 策略推薦引擎
+            # ========== 模塊24: 技術方向分析 ==========
+            logger.info("\n→ 運行 Module 24: 技術方向分析...")
+            technical_direction = None
+            try:
+                # 獲取日線數據
+                daily_data = self.fetcher.get_daily_candles(ticker, days=200)
+                
+                # 獲取 15 分鐘數據
+                intraday_data = self.fetcher.get_intraday_candles(ticker, resolution='15', days=5)
+                
+                if daily_data is not None and len(daily_data) >= 50:
+                    tech_analyzer = TechnicalDirectionAnalyzer()
+                    tech_result = tech_analyzer.analyze(
+                        ticker=ticker,
+                        daily_data=daily_data,
+                        intraday_data=intraday_data,
+                        current_price=current_price
+                    )
+                    
+                    self.analysis_results['module24_technical_direction'] = tech_result.to_dict()
+                    technical_direction = tech_result
+                    
+                    logger.info(f"  日線趨勢: {tech_result.daily_trend.trend}")
+                    logger.info(f"  綜合方向: {tech_result.combined_direction} ({tech_result.confidence})")
+                    logger.info("* 模塊24完成: 技術方向分析")
+                else:
+                    logger.warning("! 模塊24跳過: 日線數據不足")
+                    self.analysis_results['module24_technical_direction'] = {
+                        'status': 'skipped',
+                        'reason': '日線數據不足'
+                    }
+            except Exception as exc:
+                logger.warning(f"! 模塊24執行失敗: {exc}")
+                import traceback
+                traceback.print_exc()
+                self.analysis_results['module24_technical_direction'] = {
+                    'status': 'error',
+                    'reason': str(exc)
+                }
+            
+            # 新增: 策略推薦引擎（整合 Module 24 技術方向）
             logger.info("\n→ 運行策略推薦引擎...")
             try:
                 # 準備輸入數據
-                # 1. 趨勢判斷 (簡單版: 價格 > MA20 > MA50)
-                # 由於沒有 MA 數據，暫時使用價格與支持/阻力位關係
+                # 1. 趨勢判斷 - 優先使用 Module 24 技術方向
                 sr_data = self.analysis_results.get('module1_support_resistance')
                 trend = 'Sideways'
                 support = 0
                 resistance = 0
                 
+                # 始終從 Module 1 獲取支持/阻力位（用於策略推薦）
                 if sr_data:
                     support = sr_data.get('support_level', 0)
                     resistance = sr_data.get('resistance_level', 0)
+                
+                # 使用 Module 24 技術方向（如果可用）
+                if technical_direction and technical_direction.daily_trend:
+                    if technical_direction.daily_trend.trend == 'Bullish':
+                        trend = 'Up'
+                    elif technical_direction.daily_trend.trend == 'Bearish':
+                        trend = 'Down'
+                    logger.info(f"  趨勢來源: Module 24 技術分析 ({trend})")
+                elif sr_data and support > 0 and resistance > 0:
+                    # 降級: 使用支持/阻力位判斷
                     mid_point = (support + resistance) / 2
                     if current_price > mid_point * 1.05:
                         trend = 'Up'
                     elif current_price < mid_point * 0.95:
                         trend = 'Down'
+                    logger.info(f"  趨勢來源: 支持/阻力位分析 ({trend})")
                 
                 # 2. 估值判斷
                 pe_data = self.analysis_results.get('module4_pe_valuation')
@@ -1614,18 +2078,32 @@ class OptionsAnalysisSystem:
                     if '低估' in peg_val: valuation = 'Undervalued'
                     elif '高估' in peg_val: valuation = 'Overvalued'
                 
-                # 3. 波動率分析
+                # 3. 波動率分析 - 使用真實 IV Rank 和 IV/HV 比率
                 hv_data = self.analysis_results.get('module18_historical_volatility')
                 iv_hv_ratio = 1.0
-                if hv_data and 'iv_hv_comparison' in hv_data:
-                    iv_hv_ratio = hv_data['iv_hv_comparison'].get('ratio', 1.0)
+                iv_rank_value = 50.0  # 默認中位數
+                iv_percentile_value = 50.0
+                
+                if hv_data:
+                    # 獲取 IV/HV 比率
+                    if 'iv_hv_comparison' in hv_data:
+                        iv_hv_ratio = hv_data['iv_hv_comparison'].get('ratio', 1.0)
+                    # 獲取真實 IV Rank
+                    if 'iv_rank' in hv_data:
+                        iv_rank_value = hv_data.get('iv_rank', 50.0)
+                    # 獲取 IV Percentile
+                    if 'iv_percentile' in hv_data:
+                        iv_percentile_value = hv_data.get('iv_percentile', 50.0)
+                
+                logger.info(f"  IV Rank: {iv_rank_value:.1f}%, IV/HV: {iv_hv_ratio:.2f}, 估值: {valuation}")
+                logger.info(f"  支持位: ${support:.2f}, 阻力位: ${resistance:.2f}")
                 
                 # 執行推薦
                 recommender = StrategyRecommender()
                 recommendations = recommender.recommend(
                     current_price=current_price,
-                    iv_rank=50.0, # 暫時使用中位數，後續可從 API 獲取
-                    iv_percentile=50.0,
+                    iv_rank=iv_rank_value,
+                    iv_percentile=iv_percentile_value,
                     iv_hv_ratio=iv_hv_ratio,
                     support_level=support,
                     resistance_level=resistance,
@@ -1819,10 +2297,10 @@ class OptionsAnalysisSystem:
             # 模塊15: Black-Scholes 理論價
             bs_calc = BlackScholesCalculator()
             time_to_expiry = days_to_expiration / 365.0
-            bs_result = bs_calc.calculate(
+            bs_result = bs_calc.calculate_option_price(
                 stock_price=stock_price,
                 strike_price=strike,
-                time_to_expiry=time_to_expiry,
+                time_to_expiration=time_to_expiry,
                 risk_free_rate=0.045,
                 volatility=iv / 100.0,
                 option_type=option_type
@@ -1832,10 +2310,10 @@ class OptionsAnalysisSystem:
             
             # 模塊16: Greeks（如果用戶沒提供，使用計算值）
             greeks_calc = GreeksCalculator()
-            greeks_result = greeks_calc.calculate(
+            greeks_result = greeks_calc.calculate_all_greeks(
                 stock_price=stock_price,
                 strike_price=strike,
-                time_to_expiry=time_to_expiry,
+                time_to_expiration=time_to_expiry,
                 risk_free_rate=0.045,
                 volatility=iv / 100.0,
                 option_type=option_type
@@ -2155,10 +2633,10 @@ class OptionsAnalysisSystem:
             # 模塊15: Black-Scholes 理論價
             bs_calc = BlackScholesCalculator()
             time_to_expiry = days_to_expiration / 365.0
-            bs_result = bs_calc.calculate(
+            bs_result = bs_calc.calculate_option_price(
                 stock_price=stock_price,
                 strike_price=strike,
-                time_to_expiry=time_to_expiry,
+                time_to_expiration=time_to_expiry,
                 risk_free_rate=risk_free_rate / 100.0,
                 volatility=iv / 100.0,
                 option_type=option_type
@@ -2168,10 +2646,10 @@ class OptionsAnalysisSystem:
             
             # 模塊16: Greeks
             greeks_calc = GreeksCalculator()
-            greeks_result = greeks_calc.calculate(
+            greeks_result = greeks_calc.calculate_all_greeks(
                 stock_price=stock_price,
                 strike_price=strike,
-                time_to_expiry=time_to_expiry,
+                time_to_expiration=time_to_expiry,
                 risk_free_rate=risk_free_rate / 100.0,
                 volatility=iv / 100.0,
                 option_type=option_type

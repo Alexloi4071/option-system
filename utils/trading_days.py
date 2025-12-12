@@ -49,12 +49,20 @@ class TradingDaysCalculator:
             return trading_days
         except Exception as exc:
             logger.warning(
-                "⚠ 無法計算交易日，改用日曆日差: %s", exc
+                "⚠ 無法計算交易日，改用日曆日估算交易日: %s", exc
             )
             start_dt = self._to_datetime(start_date)
             end_dt = self._to_datetime(end_date)
             calendar_days = max(0, (end_dt.date() - start_dt.date()).days)
-            return calendar_days
+            # 使用 5/7 比例估算交易日（排除週末）
+            # 這比直接使用日曆日更準確
+            estimated_trading_days = int(calendar_days * 5 / 7)
+            logger.debug(
+                "日曆日 %d 天 → 估算交易日 %d 天 (5/7 比例)",
+                calendar_days,
+                estimated_trading_days
+            )
+            return estimated_trading_days
 
     @staticmethod
     def _to_datestr(value: Union[str, datetime]) -> str:

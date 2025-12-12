@@ -583,7 +583,13 @@ class YahooFinanceV2Client:
                     logger.warning(f"  Refreshing session and crumb for next request...")
                     self._refresh_session()
                     self.crumb_manager.invalidate()
-                    self.crumb_manager.get_crumb(force_refresh=True)
+                    new_crumb = self.crumb_manager.get_crumb(force_refresh=True)
+                    
+                    # 檢查 Crumb 獲取結果，如果失敗則降級到 query2 API
+                    if not new_crumb and not use_v2:
+                        logger.warning("! Crumb 獲取失敗，降級到 query2 API...")
+                        time.sleep(wait_time)
+                        return self._make_request(endpoint, params, retry_count + 1, use_v2=True)
                     
                 # 5xx: 服务器错误
                 elif 500 <= status_code < 600:

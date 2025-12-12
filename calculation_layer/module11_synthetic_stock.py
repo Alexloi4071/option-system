@@ -19,9 +19,13 @@ class SyntheticStockResult:
     arbitrage_opportunity: bool
     strategy: str
     calculation_date: str
+    # 新增字段：股息和折現信息
+    pv_strike: float = 0.0
+    pv_dividend: float = 0.0
+    expected_dividend: float = 0.0
     
     def to_dict(self) -> Dict:
-        return {
+        result = {
             'strike_price': round(self.strike_price, 2),
             'call_premium': round(self.call_premium, 2),
             'put_premium': round(self.put_premium, 2),
@@ -32,6 +36,13 @@ class SyntheticStockResult:
             'strategy': self.strategy,
             'calculation_date': self.calculation_date
         }
+        # 添加詳細折現信息
+        if self.pv_strike > 0:
+            result['pv_strike'] = round(self.pv_strike, 2)
+        if self.pv_dividend > 0:
+            result['pv_dividend'] = round(self.pv_dividend, 2)
+            result['expected_dividend'] = round(self.expected_dividend, 2)
+        return result
 
 
 class SyntheticStockCalculator:
@@ -69,9 +80,11 @@ class SyntheticStockCalculator:
                   current_stock_price: float,
                   risk_free_rate: float = 0.0,
                   time_to_expiration: float = 0.0,
+                  expected_dividend: float = 0.0,
+                  dividend_time: float = None,
                   calculation_date: str = None) -> SyntheticStockResult:
         """
-        計算合成正股價格
+        計算合成正股價格（支持股息調整）
         
         參數:
             strike_price: 行使價
@@ -80,10 +93,23 @@ class SyntheticStockCalculator:
             current_stock_price: 當前股價
             risk_free_rate: 無風險利率 (小數, e.g. 0.045)
             time_to_expiration: 到期時間 (年)
+            expected_dividend: 到期前預期股息 (美元, 默認 0)
+                - 可從 Finviz 的 dividend_yield 計算
+                - 公式: expected_dividend = stock_price × dividend_yield% × time_to_expiration
+            dividend_time: 股息支付時間 (年, 默認為 time_to_expiration/2)
             calculation_date: 計算日期
         
         返回:
             SyntheticStockResult: 完整計算結果
+        
+        完整 Put-Call Parity 公式:
+            C - P = S - K×e^(-r×T) + D×e^(-r×t_d)
+            合成價格 = (C - P) + K×e^(-r×T) - D×e^(-r×t_d)
+        
+        股息數據來源:
+            - Finviz: dividend_yield (年化百分比)
+            - Yahoo Finance: dividendRate (每股年度股息)
+            - Massive API: dividendYield
         """
         try:
             logger.info(f"開始計算合成正股...")
@@ -99,11 +125,23 @@ class SyntheticStockCalculator:
             if calculation_date is None:
                 calculation_date = datetime.now().strftime('%Y-%m-%d')
             
-            # 計算合成價格 (考慮利率成本)
-            # 公式: 合成價 = Call金 - Put金 + PV(行使價)
-            # PV(K) = K * e^(-rT)
+            # 計算行使價現值
+            # PV(K) = K × e^(-r×T)
             pv_strike = strike_price * math.exp(-risk_free_rate * time_to_expiration)
-            synthetic_price = call_premium - put_premium + pv_strike
+            
+            # 計算股息現值 (如果有)
+            pv_dividend = 0.0
+            if expected_dividend > 0:
+                # 如果未指定股息支付時間，假設在到期時間的一半
+                if dividend_time is None:
+                    dividend_time = time_to_expiration / 2.0
+                pv_dividend = expected_dividend * math.exp(-risk_free_rate * dividend_time)
+                logger.info(f"  預期股息: ${expected_dividend:.2f}")
+                logger.info(f"  股息現值: ${pv_dividend:.2f}")
+            
+            # 計算合成價格 (考慮利率和股息)
+            # 公式: 合成價 = (C - P) + PV(K) - PV(D)
+            synthetic_price = call_premium - put_premium + pv_strike - pv_dividend
             
             logger.info(f"  PV(行使價): ${pv_strike:.2f}")
             
@@ -137,7 +175,10 @@ class SyntheticStockCalculator:
                 difference=difference,
                 arbitrage_opportunity=arbitrage_opportunity,
                 strategy=strategy,
-                calculation_date=calculation_date
+                calculation_date=calculation_date,
+                pv_strike=pv_strike,
+                pv_dividend=pv_dividend,
+                expected_dividend=expected_dividend
             )
             
             logger.info(f"* 合成正股計算完成")
@@ -146,6 +187,73 @@ class SyntheticStockCalculator:
         except Exception as e:
             logger.error(f"x 合成正股計算失敗: {e}")
             raise
+    
+    def calculate_with_dividend_yield(
+        self,
+        strike_price: float,
+        call_premium: float,
+        put_premium: float,
+        current_stock_price: float,
+        risk_free_rate: float,
+        time_to_expiration: float,
+        dividend_yield: float,
+        calculation_date: str = None
+    ) -> SyntheticStockResult:
+        """
+        使用股息收益率計算合成正股價格
+        
+        此方法直接使用 Finviz/Yahoo Finance 提供的 dividend_yield 百分比，
+        自動計算到期前的預期股息。
+        
+        參數:
+            strike_price: 行使價
+            call_premium: Call期權金
+            put_premium: Put期權金
+            current_stock_price: 當前股價
+            risk_free_rate: 無風險利率 (小數, e.g. 0.045)
+            time_to_expiration: 到期時間 (年)
+            dividend_yield: 年化股息收益率 (百分比, e.g. 0.5 表示 0.5%)
+                - Finviz: data['dividend_yield']
+                - Yahoo Finance: info['dividendYield'] * 100
+            calculation_date: 計算日期
+        
+        返回:
+            SyntheticStockResult: 完整計算結果
+        
+        示例:
+            >>> calc = SyntheticStockCalculator()
+            >>> # 使用 Finviz 數據
+            >>> finviz_data = finviz_scraper.get_stock_fundamentals('AAPL')
+            >>> result = calc.calculate_with_dividend_yield(
+            ...     strike_price=180.0,
+            ...     call_premium=8.0,
+            ...     put_premium=6.5,
+            ...     current_stock_price=181.0,
+            ...     risk_free_rate=0.045,
+            ...     time_to_expiration=0.25,  # 3個月
+            ...     dividend_yield=finviz_data['dividend_yield'] or 0  # 0.5%
+            ... )
+        """
+        # 計算到期前預期股息
+        # 公式: expected_dividend = stock_price × (dividend_yield/100) × time_to_expiration
+        if dividend_yield and dividend_yield > 0:
+            expected_dividend = current_stock_price * (dividend_yield / 100) * time_to_expiration
+            logger.info(f"  股息收益率: {dividend_yield:.2f}%")
+            logger.info(f"  計算預期股息: ${expected_dividend:.4f}")
+        else:
+            expected_dividend = 0.0
+        
+        return self.calculate(
+            strike_price=strike_price,
+            call_premium=call_premium,
+            put_premium=put_premium,
+            current_stock_price=current_stock_price,
+            risk_free_rate=risk_free_rate,
+            time_to_expiration=time_to_expiration,
+            expected_dividend=expected_dividend,
+            dividend_time=time_to_expiration / 2.0,  # 假設股息在中間支付
+            calculation_date=calculation_date
+        )
     
     @staticmethod
     def _validate_inputs(strike_price: float, call_premium: float, 
