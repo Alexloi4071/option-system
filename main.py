@@ -64,6 +64,7 @@ from calculation_layer.module24_technical_direction import TechnicalDirectionAna
 from calculation_layer.strategy_recommendation import StrategyRecommender
 from output_layer.report_generator import ReportGenerator
 from output_layer.output_manager import OutputPathManager
+from output_layer.strategy_scenario_generator import StrategyScenarioGenerator
 
 
 class OptionsAnalysisSystem:
@@ -237,8 +238,36 @@ class OptionsAnalysisSystem:
             puts_df = option_chain.get('puts')
             call_bid = float(atm_call.get('bid', 0) or 0)
             call_ask = float(atm_call.get('ask', 0) or 0)
-            call_last_price = float(atm_call.get('lastPrice', 0) or 0)
-            put_last_price = float(atm_put.get('lastPrice', 0) or 0)
+            put_bid = float(atm_put.get('bid', 0) or 0)
+            put_ask = float(atm_put.get('ask', 0) or 0)
+            
+            # 使用 mid price（bid/ask 中間價）代替 lastPrice
+            # 原因：lastPrice 可能是舊的成交價，而 IV 是用 bid/ask 計算的
+            # 使用 mid price 可以確保期權價格與 IV 一致
+            call_last_price_raw = float(atm_call.get('lastPrice', 0) or 0)
+            put_last_price_raw = float(atm_put.get('lastPrice', 0) or 0)
+            
+            # 計算 mid price
+            if call_bid > 0 and call_ask > 0:
+                call_mid_price = (call_bid + call_ask) / 2
+                # 如果 mid price 與 lastPrice 差異超過 20%，使用 mid price
+                if call_last_price_raw > 0 and abs(call_mid_price - call_last_price_raw) / call_last_price_raw > 0.2:
+                    logger.info(f"  Call: 使用 mid price ${call_mid_price:.2f} (lastPrice ${call_last_price_raw:.2f} 差異過大)")
+                    call_last_price = call_mid_price
+                else:
+                    call_last_price = call_last_price_raw
+            else:
+                call_last_price = call_last_price_raw
+            
+            if put_bid > 0 and put_ask > 0:
+                put_mid_price = (put_bid + put_ask) / 2
+                if put_last_price_raw > 0 and abs(put_mid_price - put_last_price_raw) / put_last_price_raw > 0.2:
+                    logger.info(f"  Put: 使用 mid price ${put_mid_price:.2f} (lastPrice ${put_last_price_raw:.2f} 差異過大)")
+                    put_last_price = put_mid_price
+                else:
+                    put_last_price = put_last_price_raw
+            else:
+                put_last_price = put_last_price_raw
             call_volume = int(atm_call.get('volume', 0) or 0)
             call_open_interest = int(atm_call.get('openInterest', 0) or 0)
             # 新增 Put 成交量和未平倉量 (Requirements: 2.1, 2.2)
@@ -507,20 +536,20 @@ class OptionsAnalysisSystem:
                 logger.warning("! 模塊6執行失敗: %s", exc)
             
             # 模塊7-10: 單腿策略損益（支持多張合約和持倉期損益）
-            price_scenarios = [
-                round(current_price * 0.9, 2),
-                round(current_price, 2),
-                round(current_price * 1.1, 2)
-            ]
+            # 使用 StrategyScenarioGenerator 為每個策略生成正確的場景
+            # Requirements: 1.1, 1.2, 1.3, 1.4, 1.5
             
             # 默認合約數量（可從用戶輸入獲取）
             default_num_contracts = 1
             
             if strike_price and strike_price > 0:
                 # 模塊7: Long Call
+                # 場景: 下跌10%, 維持不變, 上漲10%, 上漲20%
                 try:
                     if call_last_price > 0:
                         long_call_calc = LongCallCalculator()
+                        # 使用 StrategyScenarioGenerator 獲取正確的場景價格
+                        long_call_scenarios = StrategyScenarioGenerator.get_scenario_prices('long_call', current_price)
                         # 基本損益計算（到期情境）
                         long_call_results = [
                             long_call_calc.calculate(
@@ -529,7 +558,7 @@ class OptionsAnalysisSystem:
                                 stock_price_at_expiry=price,
                                 calculation_date=analysis_date_str
                             ).to_dict()
-                            for price in price_scenarios
+                            for price in long_call_scenarios
                         ]
                         
                         # 新增: 多張合約損益計算
@@ -561,9 +590,12 @@ class OptionsAnalysisSystem:
                     logger.warning("! 模塊7執行失敗: %s", exc)
                 
                 # 模塊8: Long Put
+                # 場景: 下跌20%, 下跌10%, 維持不變, 上漲10%
                 try:
                     if put_last_price > 0:
                         long_put_calc = LongPutCalculator()
+                        # 使用 StrategyScenarioGenerator 獲取正確的場景價格
+                        long_put_scenarios = StrategyScenarioGenerator.get_scenario_prices('long_put', current_price)
                         long_put_results = [
                             long_put_calc.calculate(
                                 strike_price=strike_price,
@@ -571,7 +603,7 @@ class OptionsAnalysisSystem:
                                 stock_price_at_expiry=price,
                                 calculation_date=analysis_date_str
                             ).to_dict()
-                            for price in price_scenarios
+                            for price in long_put_scenarios
                         ]
                         
                         # 新增: 多張合約損益計算
@@ -603,9 +635,12 @@ class OptionsAnalysisSystem:
                     logger.warning("! 模塊8執行失敗: %s", exc)
                 
                 # 模塊9: Short Call
+                # 場景: 維持不變, 上漲5%, 上漲10%, 上漲20%
                 try:
                     if call_last_price > 0:
                         short_call_calc = ShortCallCalculator()
+                        # 使用 StrategyScenarioGenerator 獲取正確的場景價格
+                        short_call_scenarios = StrategyScenarioGenerator.get_scenario_prices('short_call', current_price)
                         short_call_results = [
                             short_call_calc.calculate(
                                 strike_price=strike_price,
@@ -613,7 +648,7 @@ class OptionsAnalysisSystem:
                                 stock_price_at_expiry=price,
                                 calculation_date=analysis_date_str
                             ).to_dict()
-                            for price in price_scenarios
+                            for price in short_call_scenarios
                         ]
                         
                         # 新增: 多張合約損益計算
@@ -645,9 +680,12 @@ class OptionsAnalysisSystem:
                     logger.warning("! 模塊9執行失敗: %s", exc)
                 
                 # 模塊10: Short Put
+                # 場景: 下跌20%, 下跌10%, 下跌5%, 維持不變
                 try:
                     if put_last_price > 0:
                         short_put_calc = ShortPutCalculator()
+                        # 使用 StrategyScenarioGenerator 獲取正確的場景價格
+                        short_put_scenarios = StrategyScenarioGenerator.get_scenario_prices('short_put', current_price)
                         short_put_results = [
                             short_put_calc.calculate(
                                 strike_price=strike_price,
@@ -655,7 +693,7 @@ class OptionsAnalysisSystem:
                                 stock_price_at_expiry=price,
                                 calculation_date=analysis_date_str
                             ).to_dict()
-                            for price in price_scenarios
+                            for price in short_put_scenarios
                         ]
                         
                         # 新增: 多張合約損益計算
@@ -736,24 +774,56 @@ class OptionsAnalysisSystem:
             except Exception as exc:
                 logger.warning("! 模塊11執行失敗: %s", exc)
             
-            # 模塊12: 年息收益率
+            # 模塊12: 年息收益率（Covered Call 策略）
+            # 計算賣出 Call 期權的年化收益率
             try:
-                cost_basis = current_price * default_stock_quantity
-                annual_dividend_per_share = analysis_data.get('annual_dividend', 0) or 0
-                annual_dividend_total = annual_dividend_per_share * default_stock_quantity
-                annual_option_income = call_last_price * option_multiplier * 12 if call_last_price > 0 else 0
-                if cost_basis > 0:
-                    annual_yield_calc = AnnualYieldCalculator()
-                    annual_yield_result = annual_yield_calc.calculate(
-                        cost_basis=cost_basis,
-                        annual_dividend=annual_dividend_total,
-                        annual_option_income=annual_option_income,
-                        calculation_date=analysis_date_str
-                    )
-                    self.analysis_results['module12_annual_yield'] = annual_yield_result.to_dict()
-                    logger.info("* 模塊12完成: 年息收益率")
+                if strike_price and strike_price > 0 and call_last_price > 0 and days_to_expiration > 0:
+                    # 計算年化收益率
+                    # 公式: (期權金 / 股價) * (365 / 到期天數) * 100
+                    annualized_return = (call_last_price / current_price) * (365 / days_to_expiration) * 100
+                    
+                    # 含股票增值的年化收益率（假設股票漲到行使價被行使）
+                    stock_gain = max(0, strike_price - current_price)
+                    total_return = call_last_price + stock_gain
+                    annualized_return_with_stock = (total_return / current_price) * (365 / days_to_expiration) * 100
+                    
+                    # 保本價格（收到期權金後的成本）
+                    break_even_price = current_price - call_last_price
+                    
+                    # 最大利潤（期權金 + 股票漲到行使價的收益）
+                    max_profit = call_last_price + max(0, strike_price - current_price)
+                    
+                    # 最大損失（股票跌到 0，但收到期權金）
+                    max_loss = current_price - call_last_price
+                    
+                    module12_result = {
+                        'initial_premium': call_last_price,
+                        'strike_price': strike_price,
+                        'stock_price': current_price,
+                        'days_to_expiration': int(days_to_expiration),
+                        'annualized_return': round(annualized_return, 2),
+                        'annualized_return_with_stock': round(annualized_return_with_stock, 2),
+                        'break_even_price': round(break_even_price, 2),
+                        'max_profit': round(max_profit, 2),
+                        'max_loss': round(max_loss, 2),
+                        'calculation_date': analysis_date_str
+                    }
+                    
+                    self.analysis_results['module12_annual_yield'] = module12_result
+                    logger.info(f"* 模塊12完成: 年化收益率 {annualized_return:.2f}%")
+                else:
+                    # 數據不足，記錄跳過原因
+                    self.analysis_results['module12_annual_yield'] = {
+                        'status': 'skipped',
+                        'reason': f'數據不足: strike={strike_price}, premium={call_last_price}, days={days_to_expiration}'
+                    }
+                    logger.warning("! 模塊12跳過: 數據不足")
             except Exception as exc:
                 logger.warning("! 模塊12執行失敗: %s", exc)
+                self.analysis_results['module12_annual_yield'] = {
+                    'status': 'error',
+                    'reason': str(exc)
+                }
             
             # 模塊13: 倉位分析（增強版 - 包含 Finviz 數據和 Call/Put 分離）
             # Requirements: 2.1, 2.2, 2.3 - 分別顯示 Call 和 Put 的成交量和未平倉量
@@ -1107,42 +1177,111 @@ class OptionsAnalysisSystem:
                 logger.warning("! 模塊16執行失敗: %s", exc)
             
             # 模塊17: 隱含波動率計算
+            # 修復：優先使用 Yahoo Finance 提供的 IV，而非自己計算
+            # 原因：Newton-Raphson 在市場價格與理論價差距大時會失敗
             try:
-                if strike_price and strike_price > 0 and call_last_price > 0:
-                    iv_calc = ImpliedVolatilityCalculator()
+                if strike_price and strike_price > 0:
+                    # 優先從 ATM 期權數據獲取 Yahoo Finance 的 IV
+                    yahoo_call_iv = atm_call.get('impliedVolatility')  # Yahoo Finance 提供的 IV
+                    yahoo_put_iv = atm_put.get('impliedVolatility')
                     
-                    # 從 Call 價格反推 IV
-                    call_iv_result = iv_calc.calculate_implied_volatility(
-                        market_price=call_last_price,
-                        stock_price=current_price,
-                        strike_price=strike_price,
-                        risk_free_rate=risk_free_rate,
-                        time_to_expiration=time_to_expiration_years,
-                        option_type='call'
-                    )
+                    iv_results = {}
+                    use_yahoo_iv = False
                     
-                    iv_results = {'call': call_iv_result.to_dict()}
+                    # 如果 Yahoo Finance 有提供 IV，直接使用
+                    if yahoo_call_iv and yahoo_call_iv > 0:
+                        iv_results['call'] = {
+                            'implied_volatility': yahoo_call_iv,
+                            'converged': True,
+                            'iterations': 0,
+                            'market_price': call_last_price,
+                            'source': 'Yahoo Finance (直接提供)',
+                            'note': '使用 Yahoo Finance 提供的 IV，基於 bid/ask mid price 計算'
+                        }
+                        use_yahoo_iv = True
+                        logger.info(f"  Call IV: {yahoo_call_iv*100:.2f}% (Yahoo Finance 直接提供)")
                     
-                    # 如果有 Put 價格，也計算 Put IV
-                    if put_last_price > 0:
-                        put_iv_result = iv_calc.calculate_implied_volatility(
-                            market_price=put_last_price,
-                            stock_price=current_price,
-                            strike_price=strike_price,
-                            risk_free_rate=risk_free_rate,
-                            time_to_expiration=time_to_expiration_years,
-                            option_type='put'
-                        )
-                        iv_results['put'] = put_iv_result.to_dict()
+                    if yahoo_put_iv and yahoo_put_iv > 0:
+                        iv_results['put'] = {
+                            'implied_volatility': yahoo_put_iv,
+                            'converged': True,
+                            'iterations': 0,
+                            'market_price': put_last_price,
+                            'source': 'Yahoo Finance (直接提供)',
+                            'note': '使用 Yahoo Finance 提供的 IV，基於 bid/ask mid price 計算'
+                        }
+                        use_yahoo_iv = True
+                        logger.info(f"  Put IV: {yahoo_put_iv*100:.2f}% (Yahoo Finance 直接提供)")
+                    
+                    # 如果 Yahoo Finance 沒有提供 IV，使用 Market IV（從 Finnhub 獲取）
+                    # 修復：不再嘗試 Newton-Raphson 計算，因為當市場價格與理論價差距大時會失敗
+                    if not use_yahoo_iv:
+                        # 使用 Market IV 作為備選（已經在 volatility_estimate 中）
+                        market_iv = volatility_estimate  # 這是從 Finnhub 獲取的 Market IV
+                        
+                        if market_iv and market_iv > 0:
+                            logger.info(f"  Yahoo Finance 未提供 IV，使用 Market IV: {market_iv*100:.2f}%")
+                            iv_results['call'] = {
+                                'implied_volatility': market_iv,
+                                'converged': True,
+                                'iterations': 0,
+                                'market_price': call_last_price,
+                                'source': 'Market IV (Finnhub)',
+                                'note': '使用 Finnhub 提供的 Market IV，因為 Yahoo Finance 未提供期權 IV'
+                            }
+                            use_yahoo_iv = True  # 標記為已獲取 IV
+                            
+                            if put_last_price > 0:
+                                iv_results['put'] = {
+                                    'implied_volatility': market_iv,
+                                    'converged': True,
+                                    'iterations': 0,
+                                    'market_price': put_last_price,
+                                    'source': 'Market IV (Finnhub)',
+                                    'note': '使用 Finnhub 提供的 Market IV'
+                                }
+                        else:
+                            # 最後備選：嘗試 Newton-Raphson 計算
+                            logger.info("  Market IV 不可用，嘗試 Newton-Raphson 計算...")
+                            iv_calc = ImpliedVolatilityCalculator()
+                            
+                            call_iv_result = iv_calc.calculate_implied_volatility(
+                                market_price=call_last_price,
+                                stock_price=current_price,
+                                strike_price=strike_price,
+                                risk_free_rate=risk_free_rate,
+                                time_to_expiration=time_to_expiration_years,
+                                option_type='call'
+                            )
+                            
+                            iv_results['call'] = call_iv_result.to_dict()
+                            iv_results['call']['source'] = '自行計算 (Newton-Raphson)'
+                            
+                            if put_last_price > 0:
+                                put_iv_result = iv_calc.calculate_implied_volatility(
+                                    market_price=put_last_price,
+                                    stock_price=current_price,
+                                    strike_price=strike_price,
+                                    risk_free_rate=risk_free_rate,
+                                    time_to_expiration=time_to_expiration_years,
+                                    option_type='put'
+                                )
+                                iv_results['put'] = put_iv_result.to_dict()
+                                iv_results['put']['source'] = '自行計算 (Newton-Raphson)'
                     
                     self.analysis_results['module17_implied_volatility'] = iv_results
                     
-                    if call_iv_result.converged:
-                        logger.info(f"* 模塊17完成: 隱含波動率計算 (Call IV={call_iv_result.implied_volatility*100:.2f}%, {call_iv_result.iterations}次迭代)")
+                    # 判斷 IV 是否成功獲取（Yahoo IV 或自行計算）
+                    call_iv_converged = iv_results.get('call', {}).get('converged', False)
+                    call_iv_value = iv_results.get('call', {}).get('implied_volatility', 0)
+                    iv_source_type = iv_results.get('call', {}).get('source', 'unknown')
+                    
+                    if call_iv_converged and call_iv_value > 0:
+                        logger.info(f"* 模塊17完成: 隱含波動率計算 (Call IV={call_iv_value*100:.2f}%, 來源: {iv_source_type})")
                         
                         # ========== 核心修復: 更新 volatility_estimate 為 ATM IV ==========
                         # Requirements 1.1, 6.2: Module 17 成功後更新 volatility_estimate
-                        atm_iv = call_iv_result.implied_volatility  # 從 Module 17 提取 ATM IV
+                        atm_iv = call_iv_value  # 從 Module 17 提取 ATM IV
                         
                         # ★ 核心修復：更新 volatility_estimate 為 ATM IV
                         volatility_estimate = atm_iv

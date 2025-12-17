@@ -568,6 +568,9 @@ class ReportGenerator:
             f.write(f"分析日期: {analysis_date}\n")
             f.write(f"生成時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
             
+            # 決策摘要 - 放在報告最前面
+            f.write(self._format_decision_summary(ticker, raw_data, calculation_results))
+            
             # API 狀態信息
             if api_status:
                 f.write("=" * 70 + "\n")
@@ -710,6 +713,379 @@ class ReportGenerator:
             f.write(self._format_data_source_summary(raw_data, calculation_results, api_status))
         
         logger.info(f"* 文本報告已保存: {filepath}")
+    
+    def _format_decision_summary(self, ticker: str, raw_data: dict, calculation_results: dict) -> str:
+        """
+        格式化決策摘要 - 放在報告最前面幫助用戶快速做出交易決策
+        
+        包含:
+        - 方向判斷 (看漲/看跌/中性)
+        - IV 環境 (高/低/正常)
+        - 推薦策略
+        - 推薦行使價
+        - 最大風險
+        - 盈虧平衡點
+        - 是否建議交易
+        """
+        report = "=" * 70 + "\n"
+        report += "📋 決策摘要 (Quick Decision Summary)\n"
+        report += "=" * 70 + "\n\n"
+        
+        # 確保 raw_data 不為 None
+        if raw_data is None:
+            raw_data = {}
+        
+        try:
+            # ===== 1. 方向判斷 =====
+            direction, direction_confidence, direction_reason = self._get_direction_judgment(calculation_results)
+            
+            direction_emoji = {'Bullish': '📈 看漲', 'Bearish': '📉 看跌', 'Neutral': '➖ 中性'}
+            confidence_emoji = {'High': '🟢 高', 'Medium': '🟡 中', 'Low': '🔴 低'}
+            
+            report += f"🎯 方向判斷: {direction_emoji.get(direction, direction)}\n"
+            report += f"   信心度: {confidence_emoji.get(direction_confidence, direction_confidence)}\n"
+            report += f"   依據: {direction_reason}\n\n"
+            
+            # ===== 2. IV 環境 =====
+            iv_env, iv_recommendation = self._get_iv_environment(calculation_results)
+            
+            iv_emoji = {'HIGH': '🔴 高IV環境', 'LOW': '🔵 低IV環境', 'NORMAL': '🟢 正常IV環境'}
+            report += f"📊 IV 環境: {iv_emoji.get(iv_env, iv_env)}\n"
+            report += f"   建議: {iv_recommendation}\n\n"
+            
+            # ===== 3. 推薦策略 =====
+            recommended_strategy, strategy_reason = self._get_recommended_strategy(
+                direction, direction_confidence, iv_env, calculation_results
+            )
+            
+            report += f"💡 推薦策略: {recommended_strategy}\n"
+            report += f"   理由: {strategy_reason}\n\n"
+            
+            # ===== 4. 推薦行使價 =====
+            strike_info = self._get_recommended_strike(recommended_strategy, calculation_results)
+            
+            if strike_info:
+                report += f"🎯 推薦行使價: ${strike_info['strike']:.2f}\n"
+                if strike_info.get('score'):
+                    report += f"   評分: {strike_info['score']:.1f}/100\n"
+                if strike_info.get('reason'):
+                    report += f"   理由: {strike_info['reason']}\n"
+                report += "\n"
+            
+            # ===== 5. 風險分析 =====
+            risk_info = self._get_risk_analysis(recommended_strategy, calculation_results, raw_data)
+            
+            if risk_info:
+                report += f"⚠️ 風險分析:\n"
+                if risk_info.get('max_loss'):
+                    report += f"   最大風險: {risk_info['max_loss']}\n"
+                if risk_info.get('breakeven'):
+                    report += f"   盈虧平衡點: ${risk_info['breakeven']:.2f}\n"
+                if risk_info.get('probability'):
+                    report += f"   獲利概率: {risk_info['probability']}\n"
+                report += "\n"
+            
+            # ===== 6. 交易建議 =====
+            trade_recommendation, trade_reason = self._get_trade_recommendation(
+                direction, direction_confidence, iv_env, calculation_results
+            )
+            
+            if trade_recommendation == 'NO_TRADE':
+                report += "🚫 交易建議: 【不建議交易】\n"
+                report += f"   原因: {trade_reason}\n\n"
+            elif trade_recommendation == 'CAUTION':
+                report += "⚠️ 交易建議: 【謹慎交易】\n"
+                report += f"   原因: {trade_reason}\n\n"
+            else:
+                report += "✅ 交易建議: 【可以交易】\n"
+                report += f"   說明: {trade_reason}\n\n"
+            
+            # ===== 7. 快速參考 =====
+            report += "─" * 70 + "\n"
+            report += "📌 快速參考:\n"
+            
+            current_price = raw_data.get('current_price', 0)
+            iv = raw_data.get('implied_volatility', 0)
+            
+            report += f"   當前股價: ${current_price:.2f}\n"
+            report += f"   當前 IV: {iv:.2f}%\n"
+            
+            # 支撐阻力位
+            module1 = calculation_results.get('module1_support_resistance_multi', {})
+            if module1 and module1.get('results', {}).get('90%'):
+                r90 = module1['results']['90%']
+                report += f"   90%信心區間: ${r90['support']:.2f} - ${r90['resistance']:.2f}\n"
+            
+            # 到期天數
+            days = raw_data.get('days_to_expiration') or module1.get('days_to_expiration', 'N/A')
+            report += f"   到期天數: {days}\n"
+            
+            report += "\n"
+            
+        except Exception as e:
+            logger.warning(f"! 決策摘要生成失敗: {e}")
+            report += f"⚠️ 無法生成完整決策摘要: {str(e)}\n\n"
+        
+        return report
+    
+    def _get_direction_judgment(self, calculation_results: dict) -> tuple:
+        """
+        獲取方向判斷
+        
+        返回: (direction, confidence, reason)
+        """
+        # 使用一致性檢查器獲取綜合方向
+        try:
+            consistency_result = self.consistency_checker.check_consistency(calculation_results)
+            direction = consistency_result.consolidated_direction
+            confidence = consistency_result.confidence
+            
+            # 生成原因說明
+            adopted = consistency_result.adopted_modules
+            if adopted:
+                reason = f"基於 {', '.join(adopted)} 的綜合分析"
+            else:
+                reason = consistency_result.adoption_reason
+            
+            return direction, confidence, reason
+        except Exception as e:
+            logger.warning(f"方向判斷失敗: {e}")
+            return 'Neutral', 'Low', '無法獲取方向判斷'
+    
+    def _get_iv_environment(self, calculation_results: dict) -> tuple:
+        """
+        獲取 IV 環境
+        
+        返回: (iv_status, recommendation)
+        """
+        # 優先使用 Module 23 動態 IV 閾值
+        module23 = calculation_results.get('module23_dynamic_iv_threshold', {})
+        if module23 and module23.get('iv_status'):
+            iv_status = module23.get('iv_status', 'NORMAL')
+            
+            if iv_status == 'HIGH':
+                recommendation = "考慮賣出期權策略 (Short Call/Put, Credit Spread)"
+            elif iv_status == 'LOW':
+                recommendation = "考慮買入期權策略 (Long Call/Put, Debit Spread)"
+            else:
+                recommendation = "可根據方向判斷選擇策略"
+            
+            return iv_status, recommendation
+        
+        # 備選: 使用 Module 18 IV Rank
+        module18 = calculation_results.get('module18_historical_volatility', {})
+        iv_rank = module18.get('iv_rank')
+        
+        if iv_rank is not None:
+            if iv_rank > 70:
+                return 'HIGH', "IV Rank 高，考慮賣出期權策略"
+            elif iv_rank < 30:
+                return 'LOW', "IV Rank 低，考慮買入期權策略"
+            else:
+                return 'NORMAL', "IV Rank 正常，可根據方向選擇策略"
+        
+        return 'NORMAL', "無 IV 數據，建議謹慎"
+    
+    def _get_recommended_strategy(self, direction: str, confidence: str, 
+                                   iv_env: str, calculation_results: dict) -> tuple:
+        """
+        根據方向和 IV 環境推薦策略
+        
+        返回: (strategy_name, reason)
+        """
+        # 策略推薦矩陣
+        strategy_matrix = {
+            ('Bullish', 'HIGH'): ('Short Put', '看漲 + 高IV = 賣出 Put 收取高權利金'),
+            ('Bullish', 'LOW'): ('Long Call', '看漲 + 低IV = 買入便宜的 Call'),
+            ('Bullish', 'NORMAL'): ('Bull Call Spread', '看漲 + 正常IV = 牛市價差控制成本'),
+            ('Bearish', 'HIGH'): ('Short Call', '看跌 + 高IV = 賣出 Call 收取高權利金'),
+            ('Bearish', 'LOW'): ('Long Put', '看跌 + 低IV = 買入便宜的 Put'),
+            ('Bearish', 'NORMAL'): ('Bear Put Spread', '看跌 + 正常IV = 熊市價差控制成本'),
+            ('Neutral', 'HIGH'): ('Iron Condor / Short Straddle', '中性 + 高IV = 賣出波動率'),
+            ('Neutral', 'LOW'): ('Long Straddle / Calendar Spread', '中性 + 低IV = 買入波動率'),
+            ('Neutral', 'NORMAL'): ('觀望或 Calendar Spread', '方向不明確，等待更好機會'),
+        }
+        
+        key = (direction, iv_env)
+        if key in strategy_matrix:
+            strategy, reason = strategy_matrix[key]
+            
+            # 如果信心度低，調整建議
+            if confidence == 'Low':
+                return f"{strategy} (小倉位)", f"{reason}；信心度低，建議小倉位試探"
+            
+            return strategy, reason
+        
+        return '觀望', '條件不明確，建議等待更好機會'
+    
+    def _get_recommended_strike(self, strategy: str, calculation_results: dict) -> dict:
+        """
+        獲取推薦行使價
+        
+        返回: {'strike': float, 'score': float, 'reason': str}
+        """
+        module22 = calculation_results.get('module22_optimal_strike', {})
+        
+        if not module22:
+            return None
+        
+        # 根據策略選擇對應的行使價推薦
+        strategy_mapping = {
+            'Long Call': 'long_call',
+            'Bull Call Spread': 'long_call',
+            'Long Put': 'long_put',
+            'Bear Put Spread': 'long_put',
+            'Short Put': 'short_put',
+            'Short Call': 'short_call',
+        }
+        
+        # 找到匹配的策略類型
+        strategy_key = None
+        for key, value in strategy_mapping.items():
+            if key in strategy:
+                strategy_key = value
+                break
+        
+        if not strategy_key:
+            # 默認使用 ATM
+            strike_selection = calculation_results.get('strike_selection', {})
+            if strike_selection:
+                return {
+                    'strike': strike_selection.get('strike_price', 0),
+                    'reason': 'ATM 行使價'
+                }
+            return None
+        
+        # 從 Module 22 獲取推薦
+        strategy_data = module22.get(strategy_key, {})
+        top_recommendations = strategy_data.get('top_recommendations', [])
+        
+        if top_recommendations:
+            best = top_recommendations[0]
+            return {
+                'strike': best.get('strike', 0),
+                'score': best.get('composite_score', 0),
+                'reason': best.get('reason', 'Module 22 最佳推薦')
+            }
+        
+        return None
+    
+    def _get_risk_analysis(self, strategy: str, calculation_results: dict, raw_data: dict) -> dict:
+        """
+        獲取風險分析
+        
+        返回: {'max_loss': str, 'breakeven': float, 'probability': str}
+        """
+        result = {}
+        
+        # 從策略模塊獲取風險數據
+        if 'Long Call' in strategy:
+            module7 = calculation_results.get('module7_long_call', {})
+            if module7:
+                scenarios = module7.get('scenarios', [])
+                if scenarios:
+                    # 最大損失 = 權利金
+                    premium = scenarios[0].get('option_premium', 0)
+                    result['max_loss'] = f"${premium * 100:.2f} (權利金)"
+                    
+                    # 盈虧平衡點
+                    strike = scenarios[0].get('strike_price', 0)
+                    result['breakeven'] = strike + premium
+        
+        elif 'Long Put' in strategy:
+            module8 = calculation_results.get('module8_long_put', {})
+            if module8:
+                scenarios = module8.get('scenarios', [])
+                if scenarios:
+                    premium = scenarios[0].get('option_premium', 0)
+                    result['max_loss'] = f"${premium * 100:.2f} (權利金)"
+                    
+                    strike = scenarios[0].get('strike_price', 0)
+                    result['breakeven'] = strike - premium
+        
+        elif 'Short Put' in strategy:
+            module10 = calculation_results.get('module10_short_put', {})
+            if module10:
+                scenarios = module10.get('scenarios', [])
+                if scenarios:
+                    strike = scenarios[0].get('strike_price', 0)
+                    premium = scenarios[0].get('option_premium', 0)
+                    result['max_loss'] = f"${(strike - premium) * 100:.2f} (股價歸零)"
+                    result['breakeven'] = strike - premium
+                    
+                    # 獲取安全概率
+                    module22 = calculation_results.get('module22_optimal_strike', {})
+                    short_put_data = module22.get('short_put', {})
+                    top_recs = short_put_data.get('top_recommendations', [])
+                    if top_recs:
+                        safety_prob = top_recs[0].get('safety_probability')
+                        if safety_prob:
+                            result['probability'] = f"{safety_prob:.1f}% 安全概率"
+        
+        elif 'Short Call' in strategy:
+            module9 = calculation_results.get('module9_short_call', {})
+            if module9:
+                scenarios = module9.get('scenarios', [])
+                if scenarios:
+                    premium = scenarios[0].get('option_premium', 0)
+                    strike = scenarios[0].get('strike_price', 0)
+                    result['max_loss'] = "無限 (裸賣 Call)"
+                    result['breakeven'] = strike + premium
+        
+        return result
+    
+    def _get_trade_recommendation(self, direction: str, confidence: str, 
+                                   iv_env: str, calculation_results: dict) -> tuple:
+        """
+        獲取交易建議
+        
+        返回: ('TRADE'/'NO_TRADE'/'CAUTION', reason)
+        """
+        reasons_no_trade = []
+        reasons_caution = []
+        
+        # 1. 檢查方向信心度
+        if confidence == 'Low' and direction == 'Neutral':
+            reasons_no_trade.append("方向不明確且信心度低")
+        elif confidence == 'Low':
+            reasons_caution.append("方向信心度低")
+        
+        # 2. 檢查模塊矛盾
+        try:
+            consistency_result = self.consistency_checker.check_consistency(calculation_results)
+            if consistency_result.conflicts:
+                reasons_caution.append(f"存在 {len(consistency_result.conflicts)} 個模塊信號矛盾")
+        except:
+            pass
+        
+        # 3. 檢查基本面
+        module20 = calculation_results.get('module20_fundamental_health', {})
+        health_score = module20.get('health_score', 100)
+        if health_score < 40:
+            reasons_no_trade.append(f"基本面健康分數過低 ({health_score}/100)")
+        elif health_score < 60:
+            reasons_caution.append(f"基本面健康分數偏低 ({health_score}/100)")
+        
+        # 4. 檢查動量
+        module21 = calculation_results.get('module21_momentum_filter', {})
+        momentum_score = module21.get('momentum_score', 0.5)
+        
+        # 如果方向與動量不一致
+        if direction == 'Bullish' and momentum_score < 0.3:
+            reasons_caution.append("看漲但動量轉弱")
+        elif direction == 'Bearish' and momentum_score > 0.7:
+            reasons_caution.append("看跌但動量強勁")
+        
+        # 5. 檢查 IV 環境與策略匹配
+        # (已在策略推薦中考慮)
+        
+        # 生成最終建議
+        if reasons_no_trade:
+            return 'NO_TRADE', '；'.join(reasons_no_trade)
+        elif reasons_caution:
+            return 'CAUTION', '；'.join(reasons_caution)
+        else:
+            return 'TRADE', "各項指標正常，可根據推薦策略進行交易"
     
     def _format_module1_multi_confidence(self, ticker: str, results: dict) -> str:
         """格式化Module 1多信心度結果"""
@@ -1331,15 +1707,22 @@ class ReportGenerator:
     
     def _format_module3_arbitrage_spread(self, results: dict) -> str:
         """
-        格式化 Module 3 套戥水位結果
+        格式化 Module 3 定價偏離分析結果
+        
+        注意：這是「定價偏離分析」而非真正的套利機會判斷
+        真正的套利需要同一時刻不同市場的價差，且會被高頻交易者瞬間抹平
         
         Requirements: 9.1, 9.2, 9.3, 9.4
         - 9.1: 清楚標示 IV 來源
         - 9.2: 添加 ATM IV 與 Market IV 差異解釋
-        - 9.3: 提供明確的套利結論
-        - 9.4: 存在套利機會時提供具體的套利策略建議
+        - 9.3: 提供明確的定價偏離結論
+        - 9.4: 存在顯著偏離時提供交易策略建議
         """
-        report = "\n┌─ Module 3: 套戥水位 ─────────────────────────┐\n"
+        report = "\n┌─ Module 3: 定價偏離分析 ─────────────────────┐\n"
+        report += "│\n"
+        report += "│ ⚠️ 重要說明：\n"
+        report += "│ 這是「定價偏離分析」，比較市場價與理論價的差異\n"
+        report += "│ 不代表真正的套利機會（真正套利會被瞬間抹平）\n"
         report += "│\n"
         
         # 檢查是否跳過或錯誤

@@ -1558,7 +1558,10 @@ class DataFetcher:
         """
         獲取股票基本信息（支持多数据源降级）
         
-        降級順序: IBKR → Finnhub → Alpha Vantage → Finviz → Yahoo Finance → yfinance
+        降級順序: Finnhub（實時） → Alpha Vantage → Finviz → Yahoo Finance → yfinance
+        
+        注意: IBKR 不用於股票價格獲取，只用於期權數據（OPRA 實時數據）
+              這樣可以避免 IBKR 延遲數據的問題，同時利用 Finnhub 的免費實時報價
         
         參數:
             ticker: 股票代碼
@@ -1579,27 +1582,8 @@ class DataFetcher:
         """
         logger.info(f"開始獲取 {ticker} 基本信息...")
         
-        # 方案0: 最高優先級 - IBKR（如果已連接）
-        if self.ibkr_client and self.ibkr_client.is_connected():
-            try:
-                self._rate_limit_delay()
-                logger.info("  使用 IBKR API (最高優先級)...")
-                stock_data = self.ibkr_client.get_stock_info(ticker)
-                
-                if stock_data and stock_data.get('current_price', 0) > 0:
-                    logger.info(f"* 成功獲取 {ticker} 基本信息 (IBKR)")
-                    logger.info(f"  當前股價: ${stock_data['current_price']:.2f}")
-                    self._record_fallback('stock_info', 'IBKR')
-                    return stock_data
-                else:
-                    logger.warning("! IBKR 返回無效數據，降級到 Finnhub")
-                    self._record_fallback_failure('stock_info', 'IBKR', '返回無效數據')
-            except Exception as e:
-                logger.warning(f"! IBKR 獲取失敗: {e}，降級到 Finnhub")
-                self._record_api_failure('IBKR', f"get_stock_info: {e}")
-                self._record_fallback_failure('stock_info', 'IBKR', str(e))
-        
-        # 方案1: Finnhub（實時股價，第二優先級）
+        # 方案1: Finnhub（實時股價，最高優先級）
+        # 注意: IBKR 只用於期權數據，股票價格優先使用 Finnhub 免費實時報價
         if self.finnhub_client:
             try:
                 logger.info("  使用 Finnhub API...")
@@ -2125,13 +2109,160 @@ class DataFetcher:
             logger.error(f"x 獲取 {ticker} 期權到期日期失敗: {e}")
             return []
     
+    def _merge_ibkr_opra_with_yahoo(self, yahoo_df: pd.DataFrame, ticker: str, 
+                                       expiration: str, option_type: str) -> pd.DataFrame:
+        """
+        整合 IBKR OPRA 實時 bid/ask 數據和 Yahoo Finance 的 IV 數據
+        
+        數據源分工:
+        - IBKR OPRA: bid, ask, volume, openInterest (實時)
+        - Yahoo Finance: impliedVolatility, lastPrice, 其他數據
+        
+        注意: 如果 IBKR 無法返回有效的 bid/ask 數據（例如沒有 OPRA 訂閱），
+              會自動跳過整合，保留 Yahoo Finance 的原始數據
+        
+        參數:
+            yahoo_df: Yahoo Finance 的期權 DataFrame
+            ticker: 股票代碼
+            expiration: 到期日期
+            option_type: 'call' 或 'put'
+        
+        返回:
+            DataFrame: 整合後的期權數據
+        """
+        if yahoo_df.empty or not self.ibkr_client or not self.ibkr_client.is_connected():
+            return yahoo_df
+        
+        logger.info(f"  嘗試整合 IBKR OPRA 實時數據 ({option_type})...")
+        
+        # 先測試一個期權，看 IBKR 是否能返回有效的 bid/ask
+        test_strike = yahoo_df['strike'].iloc[len(yahoo_df) // 2] if 'strike' in yahoo_df.columns else None
+        if test_strike is None:
+            logger.warning("    無法找到測試行使價，跳過 IBKR 整合")
+            return yahoo_df
+        
+        right = 'C' if option_type.lower() == 'call' else 'P'
+        
+        try:
+            test_quote = self.ibkr_client.get_option_quote(
+                ticker=ticker,
+                strike=float(test_strike),
+                expiration=expiration,
+                option_type=right
+            )
+            
+            # 檢查是否有有效的 bid/ask 數據
+            has_valid_bid_ask = (
+                test_quote and 
+                ('bid' in test_quote and test_quote['bid'] is not None and test_quote['bid'] > 0) or
+                ('ask' in test_quote and test_quote['ask'] is not None and test_quote['ask'] > 0)
+            )
+            
+            if not has_valid_bid_ask:
+                logger.info(f"    IBKR 未返回有效 bid/ask 數據（可能未訂閱 OPRA），跳過整合")
+                logger.info(f"    將使用 Yahoo Finance 的 bid/ask 數據")
+                return yahoo_df
+                
+        except Exception as e:
+            logger.warning(f"    IBKR OPRA 測試失敗: {e}，跳過整合")
+            return yahoo_df
+        
+        # IBKR 可以返回有效數據，繼續整合
+        logger.info(f"    IBKR OPRA 數據可用，開始整合...")
+        
+        # 限制更新數量，避免過多 API 請求（只更新 ATM 附近的期權）
+        max_updates = 10
+        updated_count = 0
+        failed_count = 0
+        
+        for idx, row in yahoo_df.iterrows():
+            if updated_count >= max_updates:
+                break
+            
+            # 如果連續失敗太多次，停止嘗試
+            if failed_count >= 3:
+                logger.info(f"    連續失敗 {failed_count} 次，停止 IBKR 整合")
+                break
+            
+            strike = row.get('strike')
+            if strike is None:
+                continue
+            
+            # 跳過已經測試過的行使價
+            if strike == test_strike:
+                # 使用測試結果
+                if 'bid' in test_quote and test_quote['bid'] is not None:
+                    yahoo_df.at[idx, 'bid'] = test_quote['bid']
+                if 'ask' in test_quote and test_quote['ask'] is not None:
+                    yahoo_df.at[idx, 'ask'] = test_quote['ask']
+                if 'volume' in test_quote and test_quote['volume'] is not None:
+                    yahoo_df.at[idx, 'volume'] = test_quote['volume']
+                if 'mid' in test_quote and test_quote['mid'] is not None:
+                    yahoo_df.at[idx, 'mid'] = test_quote['mid']
+                yahoo_df.at[idx, 'bid_ask_source'] = 'ibkr_opra'
+                updated_count += 1
+                continue
+            
+            try:
+                # 獲取 IBKR OPRA 實時報價
+                opra_quote = self.ibkr_client.get_option_quote(
+                    ticker=ticker,
+                    strike=float(strike),
+                    expiration=expiration,
+                    option_type=right
+                )
+                
+                if opra_quote:
+                    has_data = False
+                    # 用 IBKR OPRA 的實時數據覆蓋 Yahoo Finance 的數據
+                    if 'bid' in opra_quote and opra_quote['bid'] is not None and opra_quote['bid'] > 0:
+                        yahoo_df.at[idx, 'bid'] = opra_quote['bid']
+                        has_data = True
+                    if 'ask' in opra_quote and opra_quote['ask'] is not None and opra_quote['ask'] > 0:
+                        yahoo_df.at[idx, 'ask'] = opra_quote['ask']
+                        has_data = True
+                    if 'volume' in opra_quote and opra_quote['volume'] is not None:
+                        yahoo_df.at[idx, 'volume'] = opra_quote['volume']
+                    if 'mid' in opra_quote and opra_quote['mid'] is not None:
+                        yahoo_df.at[idx, 'mid'] = opra_quote['mid']
+                    
+                    if has_data:
+                        yahoo_df.at[idx, 'bid_ask_source'] = 'ibkr_opra'
+                        updated_count += 1
+                        failed_count = 0  # 重置失敗計數
+                    else:
+                        failed_count += 1
+                else:
+                    failed_count += 1
+                    
+            except Exception as e:
+                logger.debug(f"  獲取 {strike} {right} OPRA 報價失敗: {e}")
+                failed_count += 1
+                continue
+        
+        if updated_count > 0:
+            logger.info(f"    已更新 {updated_count} 個期權的 IBKR OPRA 實時 bid/ask")
+        else:
+            logger.info(f"    未能更新任何期權的 bid/ask，將使用 Yahoo Finance 數據")
+        
+        return yahoo_df
+    
     def get_option_chain(self, ticker, expiration):
         """
-        獲取完整期權鏈（支持多數據源降級）
+        獲取完整期權鏈（整合多數據源）
         
-        降級順序: IBKR → Yahoo Finance V2 → yfinance
+        數據整合策略:
+        1. 從 Yahoo Finance 獲取期權鏈（包含 IV、lastPrice）
+        2. 用 IBKR OPRA 的實時 bid/ask 覆蓋 Yahoo Finance 的數據
+        3. Greeks 由本地計算 (BlackScholesCalculator, GreeksCalculator)
         
-        注意: Finnhub 不提供期權數據，所以不在降級順序中
+        數據源分工:
+        - 股票價格: Finnhub (實時)
+        - 期權 IV/lastPrice: Yahoo Finance
+        - 期權 bid/ask: IBKR OPRA (實時) - 如果可用
+        - Greeks: 本地計算
+        
+        注意: Finnhub 不提供期權數據，所以不在期權數據源中
         
         參數:
             ticker: 股票代碼
@@ -2147,51 +2278,10 @@ class DataFetcher:
         """
         logger.info(f"開始獲取 {ticker} {expiration} 期權鏈...")
         
-        # 方案1: 嘗試使用 IBKR（如果啟用）
-        # 注意: IBKR 只返回合約基本信息，不包含市場數據（IV, bid, ask）
-        # 因此即使 IBKR 連接成功，我們仍需要從 Yahoo Finance 獲取市場數據
-        if self.ibkr_client and self.ibkr_client.is_connected():
-            try:
-                logger.info("  使用 IBKR...")
-                chain_data = self.ibkr_client.get_option_chain(ticker, expiration)
-                
-                if chain_data:
-                    # 轉換為 DataFrame
-                    calls_df = pd.DataFrame(chain_data['calls'])
-                    puts_df = pd.DataFrame(chain_data['puts'])
-                    
-                    # 檢查是否真的有數據（不只是空 DataFrame）
-                    if len(calls_df) > 0 or len(puts_df) > 0:
-                        # 檢查是否有 IV 數據（IBKR 通常不返回 IV，需要額外訂閱）
-                        has_iv = 'impliedVolatility' in calls_df.columns and calls_df['impliedVolatility'].notna().any()
-                        
-                        if has_iv:
-                            logger.info(f"* 成功獲取 {ticker} {expiration} 期權鏈 (IBKR - 含IV)")
-                            logger.info(f"  Call期權: {len(calls_df)} 個")
-                            logger.info(f"  Put期權: {len(puts_df)} 個")
-                            self._record_fallback('option_chain', 'ibkr')
-                            
-                            return {
-                                'calls': calls_df,
-                                'puts': puts_df,
-                                'expiration': expiration,
-                                'data_source': 'ibkr'
-                            }
-                        else:
-                            # IBKR 返回了合約但沒有 IV，需要降級到 Yahoo Finance 獲取市場數據
-                            logger.info(f"  IBKR 返回 {len(calls_df)} calls, {len(puts_df)} puts (僅合約信息，無IV)")
-                            logger.info(f"  降級到 Yahoo Finance 獲取市場數據...")
-                            self._record_fallback_failure('option_chain', 'IBKR', '無IV數據，需要市場數據訂閱')
-                    else:
-                        logger.warning(f"! IBKR 返回 0 個期權合約，降級到 Yahoo Finance")
-                        self._record_fallback_failure('option_chain', 'IBKR', '返回0個合約')
-                else:
-                    logger.warning("! IBKR 返回空期權數據，降級到 Yahoo Finance")
-                    self._record_fallback_failure('option_chain', 'IBKR', '返回空數據')
-            except Exception as e:
-                logger.warning(f"! IBKR 獲取期權鏈失敗: {e}，降級到 Yahoo Finance")
-                self._record_api_failure('ibkr', f"get_option_chain: {str(e)}")
-                self._record_fallback_failure('option_chain', 'IBKR', str(e))
+        # 檢查 IBKR 是否可用（用於後續整合 bid/ask）
+        ibkr_available = self.ibkr_client and self.ibkr_client.is_connected()
+        if ibkr_available:
+            logger.info("  IBKR 已連接，將整合 OPRA 實時 bid/ask 數據")
         
         # 方案2: 降級到 Yahoo Finance V2（簡化版，帶 User-Agent）
         if self.yahoo_v2_client:
@@ -2257,9 +2347,18 @@ class DataFetcher:
                         logger.info(f"* 成功獲取 {ticker} {actual_expiration} 期權鏈 (Yahoo Finance)")
                         logger.info(f"  Call期權: {len(calls_df)} 個")
                         logger.info(f"  Put期權: {len(puts_df)} 個")
-                        self._record_fallback('option_chain', 'Yahoo Finance')
                         
-                        # 填補缺失的 bid/ask 數據
+                        # 整合 IBKR OPRA 實時 bid/ask 數據（如果可用）
+                        if ibkr_available:
+                            calls_df = self._merge_ibkr_opra_with_yahoo(calls_df, ticker, actual_expiration, 'call')
+                            puts_df = self._merge_ibkr_opra_with_yahoo(puts_df, ticker, actual_expiration, 'put')
+                            data_source = 'yahoo_finance+ibkr_opra'
+                        else:
+                            data_source = 'yahoo_finance'
+                        
+                        self._record_fallback('option_chain', data_source)
+                        
+                        # 填補缺失的 bid/ask 數據（對於沒有 IBKR 數據的期權）
                         calls_df = self._fill_missing_bid_ask(calls_df, 'call')
                         puts_df = self._fill_missing_bid_ask(puts_df, 'put')
                         
@@ -2267,7 +2366,7 @@ class DataFetcher:
                             'calls': calls_df,
                             'puts': puts_df,
                             'expiration': actual_expiration,
-                            'data_source': 'yahoo_finance'
+                            'data_source': data_source
                         }
                     else:
                         # 數據不完整，嘗試其他數據源
@@ -2322,9 +2421,18 @@ class DataFetcher:
                 logger.info(f"* 成功獲取 {ticker} {expiration} 期權鏈 (yfinance)")
                 logger.info(f"  Call期權: {len(calls)} 個")
                 logger.info(f"  Put期權: {len(puts)} 個")
-                self._record_fallback('option_chain', 'yfinance')
                 
-                # 填補缺失的 bid/ask 數據
+                # 整合 IBKR OPRA 實時 bid/ask 數據（如果可用）
+                if ibkr_available:
+                    calls = self._merge_ibkr_opra_with_yahoo(calls, ticker, expiration, 'call')
+                    puts = self._merge_ibkr_opra_with_yahoo(puts, ticker, expiration, 'put')
+                    data_source = 'yfinance+ibkr_opra'
+                else:
+                    data_source = 'yfinance'
+                
+                self._record_fallback('option_chain', data_source)
+                
+                # 填補缺失的 bid/ask 數據（對於沒有 IBKR 數據的期權）
                 calls = self._fill_missing_bid_ask(calls, 'call')
                 puts = self._fill_missing_bid_ask(puts, 'put')
                 
@@ -2332,7 +2440,7 @@ class DataFetcher:
                     'calls': calls,
                     'puts': puts,
                     'expiration': expiration,
-                    'data_source': 'yfinance'
+                    'data_source': data_source
                 }
             else:
                 # 數據不完整，嘗試 RapidAPI

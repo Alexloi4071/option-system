@@ -128,11 +128,13 @@ class FinvizScraper:
     # 封鎖檢測關鍵字
     BLOCK_INDICATORS = [
         'captcha',
-        'robot',
+        'are you a robot',
+        'verify you are human',
         'blocked',
         'access denied',
         'rate limit',
         'too many requests',
+        'please complete the security check',
     ]
     
     def __init__(
@@ -142,7 +144,7 @@ class FinvizScraper:
         elite_cookies: dict = None,
         ua_rotator: Optional[UserAgentRotator] = None,
         retry_handler: Optional[RetryHandler] = None,
-        random_delay_range: tuple = (1.0, 3.0),
+        random_delay_range: tuple = (3.0, 7.0),  # 增加隨機延遲避免被封鎖
         connection_config: Optional[ConnectionConfig] = None
     ):
         """
@@ -181,17 +183,17 @@ class FinvizScraper:
         # 初始化 User-Agent 輪換器
         self.ua_rotator = ua_rotator or UserAgentRotator()
         
-        # 初始化重試處理器
+        # 初始化重試處理器（增加延遲以避免被封鎖）
         if retry_handler:
             self.retry_handler = retry_handler
         else:
             retry_config = RetryConfig(
-                max_retries=3,
-                initial_delay=5.0,
-                max_delay=60.0,
+                max_retries=5,  # 增加重試次數
+                initial_delay=10.0,  # 增加初始延遲
+                max_delay=120.0,  # 增加最大延遲
                 exponential_base=2.0,
                 jitter=True,
-                retryable_status_codes=[429, 500, 502, 503, 504]
+                retryable_status_codes=[403, 429, 500, 502, 503, 504]  # 添加 403
             )
             self.retry_handler = RetryHandler(retry_config)
         
@@ -491,15 +493,36 @@ class FinvizScraper:
             # 發送請求（優先使用 curl_cffi 繞過反爬蟲）
             if USE_CURL_CFFI:
                 # 使用 curl_cffi 模擬 Chrome 瀏覽器的 TLS 指紋
+                # 嘗試不同的瀏覽器指紋
+                browser_fingerprints = ['chrome110', 'chrome', 'edge99', 'safari15_5']
+                fingerprint = browser_fingerprints[retry_count % len(browser_fingerprints)]
+                
                 try:
+                    # 添加更完整的 headers 模擬真實瀏覽器
+                    curl_headers = {
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+                        'Accept-Language': 'en-US,en;q=0.9',
+                        'Accept-Encoding': 'gzip, deflate, br',
+                        'Cache-Control': 'max-age=0',
+                        'Sec-Ch-Ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+                        'Sec-Ch-Ua-Mobile': '?0',
+                        'Sec-Ch-Ua-Platform': '"Windows"',
+                        'Sec-Fetch-Dest': 'document',
+                        'Sec-Fetch-Mode': 'navigate',
+                        'Sec-Fetch-Site': 'none',
+                        'Sec-Fetch-User': '?1',
+                        'Upgrade-Insecure-Requests': '1',
+                    }
+                    
                     response = curl_requests.get(
                         url, 
-                        impersonate='chrome',
+                        impersonate=fingerprint,
+                        headers=curl_headers,
                         timeout=self.connection_config.timeout
                     )
                 except Exception as curl_error:
                     # curl_cffi 請求失敗時的重試邏輯
-                    logger.warning(f"! curl_cffi 請求失敗: {curl_error}")
+                    logger.warning(f"! curl_cffi 請求失敗 (指紋: {fingerprint}): {curl_error}")
                     if self.retry_handler.should_retry(0, retry_count):
                         wait_time = self.retry_handler.calculate_delay(retry_count + 1, 'exponential')
                         logger.warning(f"  重試 {retry_count + 1}，等待 {wait_time:.1f}s...")

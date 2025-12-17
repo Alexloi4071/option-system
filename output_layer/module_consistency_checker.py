@@ -433,6 +433,11 @@ class ModuleConsistencyChecker:
         
         Requirements: 8.4
         
+        改進邏輯：
+        1. 當有矛盾時，優先採納信心度最高的模塊
+        2. 如果信心度相同，採納權重最高的模塊
+        3. 清楚說明採納原因和被否決的模塊
+        
         參數:
             module_signals: 各模塊的信號
             conflicts: 矛盾列表
@@ -446,34 +451,62 @@ class ModuleConsistencyChecker:
         
         consolidated_direction = consolidated['direction']
         
-        # 找出與綜合方向一致的模塊
+        # 信心度權重映射
+        confidence_weight = {'High': 3, 'Medium': 2, 'Low': 1}
+        
+        # 找出與綜合方向一致的模塊，並按信心度排序
+        matching_signals = []
+        opposing_signals = []
+        neutral_signals = []
+        
         for module_key, signal in module_signals.items():
             if signal.direction == consolidated_direction:
+                matching_signals.append(signal)
                 adopted_modules.append(signal.module_name)
             elif signal.direction == 'Neutral':
-                # 中性信號不影響方向判斷
-                pass
+                neutral_signals.append(signal)
+            else:
+                opposing_signals.append(signal)
         
         # 生成採納原因
         if not conflicts:
             reasons.append("所有模塊信號一致")
         else:
-            # 有矛盾時，說明採納原因
-            if adopted_modules:
-                reasons.append(f"採納 {', '.join(adopted_modules)} 的建議")
+            # 有矛盾時，詳細說明採納原因
+            if matching_signals:
+                # 找出信心度最高的採納模塊
+                best_match = max(matching_signals, 
+                               key=lambda s: (confidence_weight.get(s.confidence, 0), s.weight))
                 
-                # 說明為什麼採納這些模塊
-                high_confidence_modules = [
-                    signal.module_name for signal in module_signals.values()
-                    if signal.confidence == 'High' and signal.direction == consolidated_direction
-                ]
+                # 找出被否決的模塊
+                rejected_names = [s.module_name for s in opposing_signals]
                 
-                if high_confidence_modules:
-                    reasons.append(
-                        f"因為 {', '.join(high_confidence_modules)} 具有較高信心度"
-                    )
+                # 說明採納原因
+                if best_match.confidence == 'High':
+                    reasons.append(f"採納 {best_match.module_name}（信心度: High）")
+                    if rejected_names:
+                        reasons.append(f"否決 {', '.join(rejected_names)}（信心度較低或方向相反）")
+                elif len(matching_signals) > len(opposing_signals):
+                    reasons.append(f"多數模塊（{len(matching_signals)}/{len(module_signals)}）支持此方向")
                 else:
-                    reasons.append("基於加權平均計算的綜合得分")
+                    # 基於加權得分
+                    matching_score = sum(
+                        s.weight * confidence_weight.get(s.confidence, 1) 
+                        for s in matching_signals
+                    )
+                    opposing_score = sum(
+                        s.weight * confidence_weight.get(s.confidence, 1) 
+                        for s in opposing_signals
+                    )
+                    reasons.append(
+                        f"加權得分: 採納方 {matching_score:.2f} vs 否決方 {opposing_score:.2f}"
+                    )
+            else:
+                # 沒有匹配的模塊，可能是中性結論
+                if neutral_signals:
+                    reasons.append("多數模塊為中性信號")
+                else:
+                    reasons.append("信號相互抵消，建議觀望")
         
         adoption_reason = "；".join(reasons) if reasons else "無明確採納原因"
         
@@ -596,31 +629,50 @@ class ModuleConsistencyChecker:
         report += "💡 交易建議:\n"
         report += "─" * 70 + "\n"
         
+        # 根據矛盾情況調整建議
+        has_conflicts = len(consistency_result.conflicts) > 0
+        conflict_warning = "（存在信號矛盾，建議謹慎）" if has_conflicts else ""
+        
         if consistency_result.consolidated_direction == 'Bullish':
-            if consistency_result.confidence == 'High':
+            if consistency_result.confidence == 'High' and not has_conflicts:
                 report += "  建議考慮 Long Call 或 Short Put 策略\n"
                 report += "  信號強度較高，可適當增加倉位\n"
+            elif consistency_result.confidence == 'High' and has_conflicts:
+                report += "  可考慮 Long Call 策略，但存在矛盾信號\n"
+                report += "  建議控制倉位，設置嚴格止損\n"
             elif consistency_result.confidence == 'Medium':
-                report += "  可考慮 Long Call 策略，但建議控制倉位\n"
+                report += f"  可考慮 Long Call 策略，但建議控制倉位{conflict_warning}\n"
                 report += "  等待更多確認信號\n"
             else:
                 report += "  信號較弱，建議觀望或小倉位試探\n"
+                report += "  不建議重倉操作\n"
         elif consistency_result.consolidated_direction == 'Bearish':
-            if consistency_result.confidence == 'High':
+            if consistency_result.confidence == 'High' and not has_conflicts:
                 report += "  建議考慮 Long Put 或 Short Call 策略\n"
                 report += "  信號強度較高，可適當增加倉位\n"
+            elif consistency_result.confidence == 'High' and has_conflicts:
+                report += "  可考慮 Long Put 策略，但存在矛盾信號\n"
+                report += "  建議控制倉位，設置嚴格止損\n"
             elif consistency_result.confidence == 'Medium':
-                report += "  可考慮 Long Put 策略，但建議控制倉位\n"
+                report += f"  可考慮 Long Put 策略，但建議控制倉位{conflict_warning}\n"
                 report += "  等待更多確認信號\n"
             else:
                 report += "  信號較弱，建議觀望或小倉位試探\n"
+                report += "  不建議重倉操作\n"
         else:
             report += "  市場方向不明確，建議觀望\n"
-            report += "  可考慮中性策略如 Iron Condor 或 Straddle\n"
+            if has_conflicts:
+                report += "  多個模塊信號矛盾，等待方向明確\n"
+            else:
+                report += "  可考慮中性策略如 Iron Condor 或 Straddle\n"
         
-        if consistency_result.conflicts:
+        # 矛盾詳情
+        if has_conflicts:
             report += "\n"
-            report += "  ⚠️ 注意: 存在信號矛盾，請謹慎操作\n"
+            report += "  ⚠️ 矛盾詳情:\n"
+            for conflict in consistency_result.conflicts:
+                report += f"    • {conflict['module1_name']} 建議 {conflict['module1_direction']}\n"
+                report += f"      vs {conflict['module2_name']} 建議 {conflict['module2_direction']}\n"
         
         report += "\n"
         

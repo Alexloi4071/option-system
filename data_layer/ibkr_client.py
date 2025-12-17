@@ -102,10 +102,13 @@ class IBKRClient:
                     
                     # 設置市場數據類型
                     # Market data type: 1=Live, 2=Frozen, 3=Delayed, 4=Delayed Frozen
-                    # 默認使用延遲數據（股票），期權會單獨設置為實時（OPRA）
-                    self.ib.reqMarketDataType(3)  # 使用延遲數據作為默認
+                    # IBKR 只用於期權 OPRA 數據（bid/ask/volume/OI），股票價格由 Finnhub 提供
+                    self.ib.reqMarketDataType(3)  # 延遲模式（不影響 OPRA 期權數據）
                     logger.info(f"* IBKR 連接成功 ({self.mode} mode)")
-                    logger.info("  已設置為延遲市場數據模式 (Delayed) - 期權將使用 OPRA 實時數據")
+                    logger.info("  數據源分工:")
+                    logger.info("    - 股票價格: Finnhub (實時)")
+                    logger.info("    - 期權 bid/ask/volume/OI: IBKR OPRA (實時)")
+                    logger.info("    - 期權 IV/Greeks: Yahoo Finance + 本地計算")
                     return True
                 else:
                     logger.warning("! IBKR 連接後狀態異常：未連接")
@@ -451,6 +454,7 @@ class IBKRClient:
             exp_formatted = expiration.replace('-', '')
             
             # 創建期權合約
+            # 注意：使用 SMART 路由會自動選擇最佳交易所
             option = Option(
                 symbol=ticker,
                 lastTradeDateOrContractMonth=exp_formatted,
@@ -459,13 +463,19 @@ class IBKRClient:
                 exchange='SMART',
                 currency='USD'
             )
-            qualified = self.ib.qualifyContracts(option)
             
-            if not qualified:
+            try:
+                qualified = self.ib.qualifyContracts(option)
+            except Exception as qual_err:
+                logger.debug(f"  合約驗證時出現警告（可忽略）: {qual_err}")
+                # 即使有警告，合約可能仍然有效
+            
+            if not qualified or not option.conId:
                 logger.warning(f"! 無法驗證期權合約: {ticker} {strike} {option_type}")
                 return None
             
-            # 請求期權報價 - 使用流式數據（不是快照）
+            # 請求期權報價 - 只請求期權數據，不請求底層股票
+            # genericTickList 為空字符串表示只請求基本報價（bid/ask/last/volume）
             self.ib.reqMktData(option, '', False, False)  # snapshot=False
             
             # 等待數據
@@ -490,16 +500,33 @@ class IBKRClient:
                 'data_source': 'ibkr_opra'
             }
             
-            # 收集報價數據 - 處理 NaN 值
+            # 收集報價數據 - 處理 NaN 值和 -1 值（IBKR 用 -1 表示無數據）
             try:
-                if ticker_data.bid is not None and not (isinstance(ticker_data.bid, float) and ticker_data.bid != ticker_data.bid):
-                    result['bid'] = float(ticker_data.bid)
-                if ticker_data.ask is not None and not (isinstance(ticker_data.ask, float) and ticker_data.ask != ticker_data.ask):
-                    result['ask'] = float(ticker_data.ask)
-                if ticker_data.last is not None and not (isinstance(ticker_data.last, float) and ticker_data.last != ticker_data.last):
-                    result['last'] = float(ticker_data.last)
+                # 調試：記錄原始數據
+                logger.debug(f"  原始數據: bid={ticker_data.bid}, ask={ticker_data.ask}, last={ticker_data.last}, volume={ticker_data.volume}")
+                
+                # 檢查 bid（排除 NaN 和 -1）
+                if ticker_data.bid is not None:
+                    bid_val = float(ticker_data.bid)
+                    if bid_val > 0 and bid_val == bid_val:  # 排除 NaN 和負數
+                        result['bid'] = bid_val
+                
+                # 檢查 ask（排除 NaN 和 -1）
+                if ticker_data.ask is not None:
+                    ask_val = float(ticker_data.ask)
+                    if ask_val > 0 and ask_val == ask_val:  # 排除 NaN 和負數
+                        result['ask'] = ask_val
+                
+                # 檢查 last（排除 NaN 和 -1）
+                if ticker_data.last is not None:
+                    last_val = float(ticker_data.last)
+                    if last_val > 0 and last_val == last_val:  # 排除 NaN 和負數
+                        result['last'] = last_val
+                
+                # 檢查 volume
                 if ticker_data.volume is not None and ticker_data.volume > 0:
                     result['volume'] = int(ticker_data.volume)
+                    
             except (ValueError, TypeError) as e:
                 logger.debug(f"  處理報價數據時出錯: {e}")
             
