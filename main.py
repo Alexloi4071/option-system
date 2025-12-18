@@ -2104,13 +2104,26 @@ class OptionsAnalysisSystem:
                     strategies = ['long_call', 'long_put', 'short_call', 'short_put']
                     optimal_results = {}
                     
+                    # Task 14.1: 獲取 Module 1 支持阻力位數據用於 Long/Short 策略增強
+                    sr_data = self.analysis_results.get('module1_support_resistance', {})
+                    support_resistance_data = None
+                    if sr_data:
+                        support_resistance_data = {
+                            'support_level': sr_data.get('support_level'),
+                            'resistance_level': sr_data.get('resistance_level')
+                        }
+                        logger.info(f"  使用 Module 1 支持阻力位: 支持 ${support_resistance_data.get('support_level', 0):.2f}, 阻力 ${support_resistance_data.get('resistance_level', 0):.2f}")
+                    
                     for strategy in strategies:
+                        # Task 14.1: 傳入 support_resistance_data 和啟用 enable_max_profit_analysis
                         result = optimal_strike_calc.analyze_strikes(
                             current_price=current_price,
                             option_chain=option_chain_converted,
                             strategy_type=strategy,
                             days_to_expiration=int(days_to_expiration) if days_to_expiration else 30,
-                            iv_rank=iv_rank_value
+                            iv_rank=iv_rank_value,
+                            support_resistance_data=support_resistance_data,  # 新增: 支持阻力位數據
+                            enable_max_profit_analysis=True  # 新增: 啟用 Long/Short 策略增強
                         )
                         
                         # 整合 Module 23 IV 環境信息
@@ -2119,8 +2132,26 @@ class OptionsAnalysisSystem:
                         
                         optimal_results[strategy] = result
                         
+                        # Task 14.2: 更新日誌輸出，包含新的分析結果
                         if result.get('best_strike'):
-                            logger.info(f"  {strategy}: 最佳行使價 ${result['best_strike']:.2f}, 評分 {result['top_recommendations'][0]['composite_score'] if result['top_recommendations'] else 0:.1f}")
+                            best_rec = result['top_recommendations'][0] if result['top_recommendations'] else {}
+                            composite_score = best_rec.get('composite_score', 0)
+                            max_profit_score = best_rec.get('max_profit_score', 0)
+                            
+                            # 根據策略類型顯示不同信息
+                            if strategy in ['long_call', 'long_put']:
+                                # Long 策略: 顯示期望收益和建議持倉天數
+                                multi_scenario = best_rec.get('multi_scenario_profit', {})
+                                optimal_exit = best_rec.get('optimal_exit_timing', {})
+                                expected_pct = multi_scenario.get('expected_profit_pct', 0) if multi_scenario else 0
+                                exit_day = optimal_exit.get('recommended_exit_day', 0) if optimal_exit else 0
+                                logger.info(f"  {strategy}: 最佳行使價 ${result['best_strike']:.2f}, 評分 {composite_score:.1f}, 期望收益 {expected_pct:.0f}%, 建議持倉 {exit_day} 天")
+                            else:
+                                # Short 策略: 顯示安全概率和年化收益
+                                premium_analysis = best_rec.get('premium_analysis', {})
+                                safe_prob = premium_analysis.get('safe_probability', 0) if premium_analysis else 0
+                                annualized = premium_analysis.get('annualized_yield_pct', 0) if premium_analysis else 0
+                                logger.info(f"  {strategy}: 最佳行使價 ${result['best_strike']:.2f}, 評分 {composite_score:.1f}, 安全概率 {safe_prob*100:.0f}%, 年化 {annualized:.0f}%")
                     
                     self.analysis_results['module22_optimal_strike'] = optimal_results
                     logger.info("* 模塊22完成: 最佳行使價分析")
