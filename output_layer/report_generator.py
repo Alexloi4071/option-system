@@ -693,6 +693,10 @@ class ReportGenerator:
                     f.write(self._format_module25_volatility_smile(module_data))
                 elif module_name == 'module26_long_option_analysis':
                     f.write(self._format_module26_long_option_analysis(module_data))
+                elif module_name == 'module27_multi_expiry_comparison':
+                    f.write(self._format_module27_multi_expiry_comparison(module_data))
+                elif module_name == 'module28_position_calculator':
+                    f.write(self._format_module28_position_calculator(module_data))
                 elif module_name == 'strike_selection':
                     # 顯示行使價選擇說明
                     f.write(self._format_strike_selection(module_data))
@@ -4209,6 +4213,188 @@ class ReportGenerator:
         
         report += "│\n"
         report += f"│ 📌 分析時間: {results.get('analysis_time', 'N/A')}\n"
+        report += "└────────────────────────────────────────────────┘\n"
+        return report
+    
+    def _format_module27_multi_expiry_comparison(self, results: dict) -> str:
+        """格式化 Module 27 多到期日比較分析結果"""
+        report = "\n┌─ Module 27: 多到期日比較分析 ───────────────────┐\n"
+        report += "│\n"
+        
+        # 檢查是否錯誤或跳過
+        if results.get('status') in ['error', 'skipped']:
+            report += f"│ x 狀態: {results.get('status')}\n"
+            report += f"│ 原因: {results.get('reason', 'N/A')}\n"
+            report += "│\n"
+            report += "└────────────────────────────────────────────────┘\n"
+            return report
+        
+        # 基本信息
+        report += f"│ 📊 股票: {results.get('ticker', 'N/A')}\n"
+        report += f"│ 💵 當前股價: ${results.get('current_price', 0):.2f}\n"
+        report += f"│ 📈 策略類型: {results.get('strategy_type', 'N/A')}\n"
+        report += f"│ 📅 分析到期日數量: {results.get('expirations_analyzed', 0)}\n"
+        report += "│\n"
+        
+        # 比較表格
+        comparison = results.get('comparison_table', [])
+        if comparison:
+            report += "│ 📋 到期日比較:\n"
+            report += "│ ┌──────────────┬──────┬────────┬───────┬───────┬───────┐\n"
+            report += "│ │ 到期日       │ 天數 │ 權利金 │ IV%   │ Theta │ 評分  │\n"
+            report += "│ ├──────────────┼──────┼────────┼───────┼───────┼───────┤\n"
+            
+            for exp in comparison[:5]:  # 最多顯示5個
+                expiry = str(exp.get('expiration', 'N/A'))[:10]
+                days = exp.get('days', 0)
+                premium = exp.get('premium', 0)
+                iv = exp.get('iv', 0)
+                theta_pct = exp.get('theta_pct', 0)
+                score = exp.get('score', 0)
+                grade = exp.get('grade', '-')
+                
+                report += f"│ │ {expiry:12} │ {days:4} │ ${premium:5.2f} │ {iv:5.1f} │ {theta_pct:5.2f} │ {score:3}({grade}) │\n"
+            
+            report += "│ └──────────────┴──────┴────────┴───────┴───────┴───────┘\n"
+            report += "│\n"
+        
+        # 推薦
+        rec = results.get('recommendation', {})
+        if rec and rec.get('best_expiration'):
+            report += "│ 🎯 最佳到期日推薦:\n"
+            report += f"│   到期日: {rec.get('best_expiration', 'N/A')}\n"
+            report += f"│   天數: {rec.get('best_days', 0)} 天 ({rec.get('best_category', 'N/A')})\n"
+            report += f"│   評分: {rec.get('best_score', 0)} ({rec.get('best_grade', '-')})\n"
+            report += f"│   權利金: ${rec.get('best_premium', 0):.2f}\n"
+            report += "│\n"
+            
+            # 推薦理由
+            reasons = rec.get('reasons', [])
+            if reasons:
+                report += "│ 📝 推薦理由:\n"
+                for reason in reasons:
+                    report += f"│   • {reason}\n"
+                report += "│\n"
+            
+            # 備選方案
+            alternatives = rec.get('alternatives', [])
+            if alternatives:
+                report += "│ 🔄 備選方案:\n"
+                for alt in alternatives:
+                    report += f"│   • {alt.get('expiration', 'N/A')} ({alt.get('days', 0)}天) - 評分 {alt.get('score', 0)} ({alt.get('grade', '-')})\n"
+                report += "│\n"
+        
+        # Theta 分析
+        theta_analysis = results.get('theta_analysis', {})
+        if theta_analysis and theta_analysis.get('status') != 'no_data':
+            report += "│ ⏱️ Theta 衰減分析:\n"
+            report += f"│   平均 Theta: {theta_analysis.get('avg_theta_pct', 0):.2f}%/天\n"
+            
+            if theta_analysis.get('acceleration_point'):
+                report += f"│   加速點: {theta_analysis.get('acceleration_point')} 天\n"
+            
+            if theta_analysis.get('warning'):
+                report += f"│   {theta_analysis.get('warning')}\n"
+            
+            if theta_analysis.get('suggestion'):
+                report += f"│   💡 {theta_analysis.get('suggestion')}\n"
+            report += "│\n"
+        
+        # Long 策略建議
+        long_advice = results.get('long_strategy_advice', {})
+        if long_advice:
+            report += "│ 📌 Long 策略建議:\n"
+            report += f"│   方向: {long_advice.get('direction', 'N/A')}\n"
+            report += f"│   推薦到期範圍: {long_advice.get('recommended_expiry_range', 'N/A')}\n"
+            report += f"│   避免到期範圍: {long_advice.get('avoid_expiry_range', 'N/A')}\n"
+            
+            key_points = long_advice.get('key_points', [])
+            if key_points:
+                for point in key_points:
+                    report += f"│   • {point}\n"
+            report += "│\n"
+        
+        report += f"│ 📌 分析時間: {results.get('analysis_date', 'N/A')}\n"
+        report += "└────────────────────────────────────────────────┘\n"
+        return report
+    
+    def _format_module28_position_calculator(self, results: dict) -> str:
+        """格式化 Module 28 資金倉位計算器結果"""
+        report = "\n┌─ Module 28: 資金倉位計算器 ─────────────────────┐\n"
+        report += "│\n"
+        
+        # 檢查是否錯誤或跳過
+        if results.get('status') in ['error', 'skipped']:
+            report += f"│ x 狀態: {results.get('status')}\n"
+            report += f"│ 原因: {results.get('reason', 'N/A')}\n"
+            report += "│\n"
+            report += "└────────────────────────────────────────────────┘\n"
+            return report
+        
+        # 資金信息
+        capital = results.get('capital_info', {})
+        report += "│ 💰 資金概況:\n"
+        report += f"│   總資金: {capital.get('currency', 'USD')} {capital.get('total_capital', 0):,.0f}\n"
+        report += f"│   USD 等值: ${capital.get('total_capital_usd', 0):,.2f}\n"
+        report += "│\n"
+        
+        # 風險參數
+        risk_level = results.get('risk_level', 'moderate')
+        risk_emoji = {'conservative': '🟢 保守', 'moderate': '🟡 穩健', 'aggressive': '🔴 積極'}.get(risk_level, risk_level)
+        report += f"│ ⚙️ 風險偏好: {risk_emoji}\n"
+        report += "│\n"
+        
+        # 期權信息
+        opt_info = results.get('option_info', {})
+        report += "│ 📊 期權信息:\n"
+        report += f"│   權利金: ${opt_info.get('premium_per_share', 0):.2f}/股\n"
+        report += f"│   每張成本: ${opt_info.get('cost_per_contract', 0):.2f}\n"
+        report += "│\n"
+        
+        # 倉位建議
+        pos = results.get('position_recommendation', {})
+        report += "│ 🎯 倉位建議:\n"
+        report += f"│   建議張數: {pos.get('recommended_contracts', 0)} 張\n"
+        report += f"│   最大張數: {pos.get('max_contracts', 0)} 張\n"
+        report += f"│   投入金額: ${pos.get('actual_investment_usd', 0):.2f}\n"
+        report += f"│   佔總資金: {pos.get('investment_pct', 0):.1f}%\n"
+        report += "│\n"
+        
+        # 風險分析
+        risk = results.get('risk_analysis', {})
+        report += "│ ⚠️ 風險分析:\n"
+        report += f"│   策略類型: {risk.get('strategy_type', 'N/A')}\n"
+        report += f"│   最大虧損: ${risk.get('max_loss_usd', 0):.2f}\n"
+        report += f"│   虧損比例: {risk.get('max_loss_pct', 0):.1f}%\n"
+        report += f"│   風險評級: {risk.get('risk_rating', 'N/A')}\n"
+        report += "│\n"
+        
+        # 止損建議
+        stop = results.get('stop_loss', {})
+        report += "│ 🛑 止損建議:\n"
+        report += f"│   止損比例: {stop.get('suggested_stop_loss_pct', 0)}%\n"
+        report += f"│   止損價格: ${stop.get('stop_loss_price', 0):.2f}\n"
+        report += f"│   止損金額: ${stop.get('stop_loss_amount_usd', 0):.2f}\n"
+        report += "│\n"
+        
+        # 警告
+        warnings = results.get('warnings', [])
+        if warnings:
+            report += "│ 💡 提醒:\n"
+            for w in warnings:
+                report += f"│   {w}\n"
+            report += "│\n"
+        
+        # 資金管理建議
+        summary = results.get('capital_summary', {})
+        recommendations = summary.get('recommendations', [])
+        if recommendations:
+            report += "│ 📋 資金管理建議:\n"
+            for rec in recommendations[:3]:  # 最多顯示3條
+                report += f"│   {rec}\n"
+        
+        report += "│\n"
+        report += f"│ 📌 分析時間: {results.get('analysis_date', 'N/A')}\n"
         report += "└────────────────────────────────────────────────┘\n"
         return report
     

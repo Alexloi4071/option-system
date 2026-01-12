@@ -64,6 +64,10 @@ from calculation_layer.module24_technical_direction import TechnicalDirectionAna
 from calculation_layer.module25_volatility_smile import VolatilitySmileAnalyzer
 # Module 26: Long 期權成本效益分析
 from calculation_layer.module26_long_option_analysis import LongOptionAnalyzer
+# Module 27: 多到期日比較
+from calculation_layer.module27_multi_expiry_comparison import MultiExpiryAnalyzer
+# Module 28: 資金倉位計算器
+from calculation_layer.module28_position_calculator import PositionCalculator
 # 新增: 策略推薦
 from calculation_layer.strategy_recommendation import StrategyRecommender
 from output_layer.report_generator import ReportGenerator
@@ -2330,6 +2334,108 @@ class OptionsAnalysisSystem:
                 import traceback
                 traceback.print_exc()
                 self.analysis_results['module26_long_option_analysis'] = {
+                    'status': 'error',
+                    'reason': str(exc)
+                }
+            
+            # Module 27: 多到期日比較分析
+            logger.info("\n→ 運行 Module 27: 多到期日比較分析...")
+            try:
+                multi_expiry_analyzer = MultiExpiryAnalyzer()
+                
+                # 獲取多個到期日的數據
+                # 這裡我們使用當前到期日的數據作為示例
+                # 實際應用中可以從 data_fetcher 獲取多個到期日
+                expiration_data = []
+                
+                if atm_call and atm_put and days_to_expiration:
+                    # 當前到期日數據
+                    current_expiry = {
+                        'expiration': analysis_data.get('expiration_date', 'N/A'),
+                        'days': int(days_to_expiration) if days_to_expiration else 0,
+                        'atm_call': atm_call,
+                        'atm_put': atm_put
+                    }
+                    expiration_data.append(current_expiry)
+                    
+                    # 分析多到期日（目前只有單一到期日，但結構支持多個）
+                    module27_result = multi_expiry_analyzer.analyze_expirations(
+                        ticker=ticker,
+                        current_price=current_price,
+                        expiration_data=expiration_data,
+                        strategy_type='long_call'  # 默認分析 Long Call
+                    )
+                    
+                    self.analysis_results['module27_multi_expiry_comparison'] = module27_result
+                    
+                    if module27_result.get('status') == 'success':
+                        rec = module27_result.get('recommendation', {})
+                        logger.info(f"  分析到期日數量: {module27_result.get('expirations_analyzed', 0)}")
+                        if rec.get('best_expiration'):
+                            logger.info(f"  最佳到期日: {rec.get('best_expiration')} ({rec.get('best_days')}天)")
+                            logger.info(f"  評分: {rec.get('best_score')} ({rec.get('best_grade')})")
+                        logger.info("* 模塊27完成: 多到期日比較分析")
+                    else:
+                        logger.warning(f"! 模塊27分析失敗: {module27_result.get('reason', 'Unknown')}")
+                else:
+                    logger.warning("! 模塊27跳過: 無法獲取期權數據")
+                    self.analysis_results['module27_multi_expiry_comparison'] = {
+                        'status': 'skipped',
+                        'reason': '無法獲取期權數據'
+                    }
+            except Exception as exc:
+                logger.warning(f"! 模塊27執行失敗: {exc}")
+                self.analysis_results['module27_multi_expiry_comparison'] = {
+                    'status': 'error',
+                    'reason': str(exc)
+                }
+            
+            # Module 28: 資金倉位計算器（使用用戶資金 13萬 HKD）
+            logger.info("\n→ 運行 Module 28: 資金倉位計算器...")
+            try:
+                # 默認資金設定（可通過參數覆蓋）
+                total_capital = getattr(self, 'total_capital', 130000)  # 默認 13萬 HKD
+                currency = getattr(self, 'currency', 'HKD')
+                
+                position_calc = PositionCalculator(total_capital=total_capital, currency=currency)
+                
+                # 獲取 ATM 期權權利金
+                atm_premium = None
+                if atm_call:
+                    atm_premium = atm_call.get('lastPrice') or atm_call.get('last') or \
+                                  ((atm_call.get('bid', 0) + atm_call.get('ask', 0)) / 2)
+                
+                if atm_premium and atm_premium > 0:
+                    # 計算倉位
+                    position_result = position_calc.calculate_position(
+                        option_premium=atm_premium,
+                        risk_level='moderate',
+                        strategy_type='long'
+                    )
+                    
+                    # 添加資金概況
+                    position_result['capital_summary'] = position_calc.get_position_summary()
+                    
+                    self.analysis_results['module28_position_calculator'] = position_result
+                    
+                    if position_result.get('status') == 'success':
+                        pos = position_result['position_recommendation']
+                        risk = position_result['risk_analysis']
+                        logger.info(f"  總資金: {currency} {total_capital:,}")
+                        logger.info(f"  建議張數: {pos['recommended_contracts']} 張")
+                        logger.info(f"  投入金額: ${pos['actual_investment_usd']}")
+                        logger.info(f"  最大虧損: ${risk['max_loss_usd']} ({risk['max_loss_pct']}%)")
+                        logger.info(f"  風險評級: {risk['risk_rating']}")
+                        logger.info("* 模塊28完成: 資金倉位計算")
+                else:
+                    logger.warning("! 模塊28跳過: 無法獲取期權權利金")
+                    self.analysis_results['module28_position_calculator'] = {
+                        'status': 'skipped',
+                        'reason': '無法獲取期權權利金'
+                    }
+            except Exception as exc:
+                logger.warning(f"! 模塊28執行失敗: {exc}")
+                self.analysis_results['module28_position_calculator'] = {
                     'status': 'error',
                     'reason': str(exc)
                 }
