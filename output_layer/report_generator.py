@@ -691,6 +691,8 @@ class ReportGenerator:
                     f.write(self._format_module24_technical_direction(module_data))
                 elif module_name == 'module25_volatility_smile':
                     f.write(self._format_module25_volatility_smile(module_data))
+                elif module_name == 'module26_long_option_analysis':
+                    f.write(self._format_module26_long_option_analysis(module_data))
                 elif module_name == 'strike_selection':
                     # 顯示行使價選擇說明
                     f.write(self._format_strike_selection(module_data))
@@ -812,11 +814,11 @@ class ReportGenerator:
             report += f"   當前股價: ${current_price:.2f}\n"
             report += f"   當前 IV: {iv:.2f}%\n"
             
-            # 支撐阻力位
+            # 支撐阻力位 - 使用68%信心度（1個標準差，最佳風險/收益平衡）
             module1 = calculation_results.get('module1_support_resistance_multi', {})
-            if module1 and module1.get('results', {}).get('90%'):
-                r90 = module1['results']['90%']
-                report += f"   90%信心區間: ${r90['support']:.2f} - ${r90['resistance']:.2f}\n"
+            if module1 and module1.get('results', {}).get('68%'):
+                r68 = module1['results']['68%']
+                report += f"   68%信心區間: ${r68['support']:.2f} - ${r68['resistance']:.2f}\n"
             
             # 到期天數
             days = raw_data.get('days_to_expiration') or module1.get('days_to_expiration', 'N/A')
@@ -4086,6 +4088,127 @@ class ReportGenerator:
         
         report += "│\n"
         report += f"│ 📌 計算時間: {results.get('calculation_date', 'N/A')}\n"
+        report += "└────────────────────────────────────────────────┘\n"
+        return report
+    
+    def _format_module26_long_option_analysis(self, results: dict) -> str:
+        """格式化 Module 26 Long 期權成本效益分析結果"""
+        report = "\n┌─ Module 26: Long 期權成本效益分析 ─────────────┐\n"
+        report += "│\n"
+        
+        # 檢查是否錯誤或跳過
+        if results.get('status') in ['error', 'skipped']:
+            report += f"│ x 狀態: {results.get('status')}\n"
+            report += f"│ 原因: {results.get('reason', 'N/A')}\n"
+            report += "│\n"
+            report += "└────────────────────────────────────────────────┘\n"
+            return report
+        
+        # Long Call 分析
+        long_call = results.get('long_call', {})
+        if long_call.get('status') == 'success':
+            report += "│ 📈 Long Call 分析:\n"
+            
+            # 基本信息
+            inp = long_call.get('input', {})
+            report += f"│   行使價: ${inp.get('strike_price', 0):.2f}\n"
+            report += f"│   權利金: ${inp.get('premium', 0):.2f}/股\n"
+            
+            # 成本
+            cost = long_call.get('cost_analysis', {})
+            report += f"│   總成本: ${cost.get('total_cost', 0):.2f}\n"
+            report += f"│   最大虧損: ${cost.get('max_loss', 0):.2f} (100%)\n"
+            
+            # 盈虧平衡點
+            be = long_call.get('breakeven', {})
+            report += f"│   盈虧平衡點: ${be.get('price', 0):.2f} ({be.get('distance_pct', 0):+.1f}%)\n"
+            report += f"│   {be.get('interpretation', '')}\n"
+            
+            # 槓桿
+            lev = long_call.get('leverage', {})
+            report += f"│   槓桿倍數: {lev.get('effective_leverage', 0):.1f}x {lev.get('rating', '')}\n"
+            report += f"│   {lev.get('explanation', '')}\n"
+            
+            # 評分
+            score = long_call.get('score', {})
+            report += f"│   📊 評分: {score.get('total_score', 0)}/100 ({score.get('grade', 'N/A')}) - {score.get('grade_description', '')}\n"
+            
+            # Theta
+            theta = long_call.get('theta_analysis', {})
+            report += f"│   ⏱️ Theta: ${theta.get('daily_decay_dollar', 0):.2f}/天 {theta.get('risk_level', '')}\n"
+            
+            report += "│\n"
+        
+        # Long Put 分析
+        long_put = results.get('long_put', {})
+        if long_put.get('status') == 'success':
+            report += "│ 📉 Long Put 分析:\n"
+            
+            # 基本信息
+            inp = long_put.get('input', {})
+            report += f"│   行使價: ${inp.get('strike_price', 0):.2f}\n"
+            report += f"│   權利金: ${inp.get('premium', 0):.2f}/股\n"
+            
+            # 成本
+            cost = long_put.get('cost_analysis', {})
+            report += f"│   總成本: ${cost.get('total_cost', 0):.2f}\n"
+            report += f"│   最大虧損: ${cost.get('max_loss', 0):.2f} (100%)\n"
+            
+            # 盈虧平衡點
+            be = long_put.get('breakeven', {})
+            report += f"│   盈虧平衡點: ${be.get('price', 0):.2f} ({be.get('distance_pct', 0):+.1f}%)\n"
+            report += f"│   {be.get('interpretation', '')}\n"
+            
+            # 槓桿
+            lev = long_put.get('leverage', {})
+            report += f"│   槓桿倍數: {lev.get('effective_leverage', 0):.1f}x {lev.get('rating', '')}\n"
+            report += f"│   {lev.get('explanation', '')}\n"
+            
+            # 評分
+            score = long_put.get('score', {})
+            report += f"│   📊 評分: {score.get('total_score', 0)}/100 ({score.get('grade', 'N/A')}) - {score.get('grade_description', '')}\n"
+            
+            # Theta
+            theta = long_put.get('theta_analysis', {})
+            report += f"│   ⏱️ Theta: ${theta.get('daily_decay_dollar', 0):.2f}/天 {theta.get('risk_level', '')}\n"
+            
+            report += "│\n"
+        
+        # 比較結果
+        comparison = results.get('comparison', {})
+        if comparison:
+            report += "│ ═══════════════════════════════════════════════\n"
+            report += "│ 🎯 Long 期權比較:\n"
+            report += f"│   Long Call 評分: {comparison.get('call_score', 0)}\n"
+            report += f"│   Long Put 評分: {comparison.get('put_score', 0)}\n"
+            report += f"│   推薦: {comparison.get('better_choice', 'N/A')}\n"
+            report += f"│   原因: {comparison.get('reason', '')}\n"
+            report += "│\n"
+        
+        # 情境分析表（只顯示 Long Call 的關鍵情境）
+        if long_call.get('status') == 'success':
+            scenarios = long_call.get('scenarios', [])
+            if scenarios:
+                report += "│ 📊 Long Call 情境分析:\n"
+                report += "│   股價變動 | 到期股價  | 損益      | 收益率\n"
+                report += "│   ─────────┼──────────┼──────────┼────────\n"
+                for s in scenarios:
+                    if s['stock_change_pct'] in [-10, 0, 10, 20]:  # 只顯示關鍵情境
+                        report += f"│   {s['stock_change_pct']:+4d}%    | ${s['stock_price']:>7.2f} | ${s['profit_loss']:>+8.2f} | {s['profit_loss_pct']:>+6.1f}%\n"
+                report += "│\n"
+        
+        # 交易建議
+        rec = long_call.get('recommendation', {}) if long_call.get('status') == 'success' else {}
+        if rec:
+            report += "│ 💡 交易建議:\n"
+            for r in rec.get('recommendations', []):
+                report += f"│   {r}\n"
+            for w in rec.get('warnings', []):
+                report += f"│   {w}\n"
+            report += f"│   {rec.get('position_suggestion', '')}\n"
+        
+        report += "│\n"
+        report += f"│ 📌 分析時間: {results.get('analysis_time', 'N/A')}\n"
         report += "└────────────────────────────────────────────────┘\n"
         return report
     

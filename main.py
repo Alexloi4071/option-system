@@ -62,6 +62,8 @@ from calculation_layer.module23_dynamic_iv_threshold import DynamicIVThresholdCa
 from calculation_layer.module24_technical_direction import TechnicalDirectionAnalyzer
 # Module 25: 波動率微笑分析
 from calculation_layer.module25_volatility_smile import VolatilitySmileAnalyzer
+# Module 26: Long 期權成本效益分析
+from calculation_layer.module26_long_option_analysis import LongOptionAnalyzer
 # 新增: 策略推薦
 from calculation_layer.strategy_recommendation import StrategyRecommender
 from output_layer.report_generator import ReportGenerator
@@ -2247,6 +2249,87 @@ class OptionsAnalysisSystem:
                 import traceback
                 traceback.print_exc()
                 self.analysis_results['module25_volatility_smile'] = {
+                    'status': 'error',
+                    'reason': str(exc)
+                }
+            
+            # Module 26: Long 期權成本效益分析
+            logger.info("\n→ 運行 Module 26: Long 期權成本效益分析...")
+            try:
+                long_analyzer = LongOptionAnalyzer()
+                
+                # 獲取 ATM 期權數據
+                atm_call = None
+                atm_put = None
+                
+                if option_chain and 'calls' in option_chain and 'puts' in option_chain:
+                    calls_df = option_chain['calls']
+                    puts_df = option_chain['puts']
+                    
+                    # 找到最接近 ATM 的期權
+                    if hasattr(calls_df, 'iloc') and len(calls_df) > 0:
+                        calls_df['distance'] = abs(calls_df['strike'] - current_price)
+                        atm_idx = calls_df['distance'].idxmin()
+                        atm_call = calls_df.loc[atm_idx].to_dict()
+                    
+                    if hasattr(puts_df, 'iloc') and len(puts_df) > 0:
+                        puts_df['distance'] = abs(puts_df['strike'] - current_price)
+                        atm_idx = puts_df['distance'].idxmin()
+                        atm_put = puts_df.loc[atm_idx].to_dict()
+                
+                if atm_call and atm_put:
+                    # 獲取權利金（優先使用 lastPrice，否則用 mid price）
+                    call_premium = atm_call.get('lastPrice') or atm_call.get('last') or \
+                                   ((atm_call.get('bid', 0) + atm_call.get('ask', 0)) / 2)
+                    put_premium = atm_put.get('lastPrice') or atm_put.get('last') or \
+                                  ((atm_put.get('bid', 0) + atm_put.get('ask', 0)) / 2)
+                    
+                    # 獲取 Greeks
+                    call_delta = atm_call.get('delta', 0.5)
+                    put_delta = atm_put.get('delta', -0.5)
+                    call_theta = atm_call.get('theta', 0)
+                    put_theta = atm_put.get('theta', 0)
+                    
+                    # 獲取 IV
+                    iv = analysis_data.get('implied_volatility', 30)
+                    
+                    # 分析 Long Call 和 Long Put
+                    module26_result = long_analyzer.analyze_both(
+                        stock_price=current_price,
+                        call_strike=atm_call.get('strike', current_price),
+                        call_premium=call_premium if call_premium else 1.0,
+                        put_strike=atm_put.get('strike', current_price),
+                        put_premium=put_premium if put_premium else 1.0,
+                        days_to_expiration=int(days_to_expiration) if days_to_expiration else 30,
+                        call_delta=call_delta if call_delta else 0.5,
+                        put_delta=put_delta if put_delta else -0.5,
+                        call_theta=call_theta if call_theta else 0,
+                        put_theta=put_theta if put_theta else 0,
+                        iv=iv
+                    )
+                    
+                    self.analysis_results['module26_long_option_analysis'] = module26_result
+                    
+                    # 輸出摘要
+                    call_score = module26_result['long_call']['score']['total_score']
+                    put_score = module26_result['long_put']['score']['total_score']
+                    better = module26_result['comparison']['better_choice']
+                    
+                    logger.info(f"  Long Call 評分: {call_score} ({module26_result['long_call']['score']['grade']})")
+                    logger.info(f"  Long Put 評分: {put_score} ({module26_result['long_put']['score']['grade']})")
+                    logger.info(f"  推薦: {better}")
+                    logger.info("* 模塊26完成: Long 期權成本效益分析")
+                else:
+                    logger.warning("! 模塊26跳過: 無法獲取 ATM 期權數據")
+                    self.analysis_results['module26_long_option_analysis'] = {
+                        'status': 'skipped',
+                        'reason': '無法獲取 ATM 期權數據'
+                    }
+            except Exception as exc:
+                logger.warning(f"! 模塊26執行失敗: {exc}")
+                import traceback
+                traceback.print_exc()
+                self.analysis_results['module26_long_option_analysis'] = {
                     'status': 'error',
                     'reason': str(exc)
                 }
