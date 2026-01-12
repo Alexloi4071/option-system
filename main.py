@@ -60,6 +60,8 @@ from calculation_layer.module22_optimal_strike import OptimalStrikeCalculator
 from calculation_layer.module23_dynamic_iv_threshold import DynamicIVThresholdCalculator
 # Module 24: 技術方向分析
 from calculation_layer.module24_technical_direction import TechnicalDirectionAnalyzer
+# Module 25: 波動率微笑分析
+from calculation_layer.module25_volatility_smile import VolatilitySmileAnalyzer
 # 新增: 策略推薦
 from calculation_layer.strategy_recommendation import StrategyRecommender
 from output_layer.report_generator import ReportGenerator
@@ -2205,6 +2207,46 @@ class OptionsAnalysisSystem:
                 import traceback
                 traceback.print_exc()
                 self.analysis_results['module24_technical_direction'] = {
+                    'status': 'error',
+                    'reason': str(exc)
+                }
+            
+            # Module 25: 波動率微笑分析
+            logger.info("\n→ 運行 Module 25: 波動率微笑分析...")
+            try:
+                if option_chain and 'calls' in option_chain and 'puts' in option_chain:
+                    # 準備期權鏈數據
+                    calls_list = option_chain['calls'].to_dict('records') if hasattr(option_chain['calls'], 'to_dict') else option_chain['calls']
+                    puts_list = option_chain['puts'].to_dict('records') if hasattr(option_chain['puts'], 'to_dict') else option_chain['puts']
+                    
+                    smile_analyzer = VolatilitySmileAnalyzer()
+                    smile_result = smile_analyzer.analyze_smile(
+                        option_chain={'calls': calls_list, 'puts': puts_list},
+                        current_price=current_price,
+                        time_to_expiration=days_to_expiration / 365.0 if days_to_expiration else 0.05,
+                        risk_free_rate=analysis_data.get('risk_free_rate', 0.045)
+                    )
+                    
+                    self.analysis_results['module25_volatility_smile'] = smile_result.to_dict()
+                    
+                    logger.info(f"  ATM IV: {smile_result.atm_iv*100:.2f}%")
+                    logger.info(f"  Skew: {smile_result.skew*100:.2f}% ({smile_result.skew_type})")
+                    logger.info(f"  微笑形狀: {smile_result.smile_shape}")
+                    logger.info(f"  IV 環境: {smile_result.iv_environment}")
+                    if smile_result.anomaly_count > 0:
+                        logger.warning(f"  定價異常: {smile_result.anomaly_count} 個")
+                    logger.info("* 模塊25完成: 波動率微笑分析")
+                else:
+                    logger.warning("! 模塊25跳過: 期權鏈數據不完整")
+                    self.analysis_results['module25_volatility_smile'] = {
+                        'status': 'skipped',
+                        'reason': '期權鏈數據不完整'
+                    }
+            except Exception as exc:
+                logger.warning(f"! 模塊25執行失敗: {exc}")
+                import traceback
+                traceback.print_exc()
+                self.analysis_results['module25_volatility_smile'] = {
                     'status': 'error',
                     'reason': str(exc)
                 }

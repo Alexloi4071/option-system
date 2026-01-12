@@ -689,6 +689,8 @@ class ReportGenerator:
                     f.write(self._format_module23_dynamic_iv_threshold(module_data, iv_rank_data))
                 elif module_name == 'module24_technical_direction':
                     f.write(self._format_module24_technical_direction(module_data))
+                elif module_name == 'module25_volatility_smile':
+                    f.write(self._format_module25_volatility_smile(module_data))
                 elif module_name == 'strike_selection':
                     # 顯示行使價選擇說明
                     f.write(self._format_strike_selection(module_data))
@@ -3988,6 +3990,102 @@ class ReportGenerator:
         
         report += "│\n"
         report += f"│ 📌 數據來源: {results.get('data_source', 'N/A')}\n"
+        report += "└────────────────────────────────────────────────┘\n"
+        return report
+    
+    def _format_module25_volatility_smile(self, results: dict) -> str:
+        """格式化 Module 25 波動率微笑分析結果"""
+        report = "\n┌─ Module 25: 波動率微笑分析 ───────────────────┐\n"
+        report += "│\n"
+        
+        # 檢查是否錯誤或跳過
+        if results.get('status') in ['error', 'skipped']:
+            report += f"│ x 狀態: {results.get('status')}\n"
+            report += f"│ 原因: {results.get('reason', 'N/A')}\n"
+            report += "│\n"
+            report += "└────────────────────────────────────────────────┘\n"
+            return report
+        
+        # 基本指標
+        report += "│ 📊 基本指標:\n"
+        report += f"│   當前股價: ${results.get('current_price', 0):.2f}\n"
+        report += f"│   ATM 行使價: ${results.get('atm_strike', 0):.2f}\n"
+        report += f"│   ATM IV: {results.get('atm_iv', 0):.2f}%\n"
+        report += "│\n"
+        
+        # IV Skew 分析
+        skew = results.get('skew', 0)
+        skew_type = results.get('skew_type', 'neutral')
+        skew_25delta = results.get('skew_25delta', 0)
+        
+        report += "│ 📈 偏斜分析:\n"
+        report += f"│   Skew (OTM Put - OTM Call): {skew:.2f}%\n"
+        report += f"│   25-Delta Skew: {skew_25delta:.2f}%\n"
+        
+        # Skew 類型解讀
+        skew_emoji = {'put_skew': '📉 看跌傾斜', 'call_skew': '📈 看漲傾斜', 'neutral': '➖ 中性'}.get(skew_type, skew_type)
+        report += f"│   傾斜類型: {skew_emoji}\n"
+        report += "│\n"
+        
+        # IV Smile 分析
+        smile_curve = results.get('smile_curve', 0)
+        smile_shape = results.get('smile_shape', 'neutral')
+        smile_steepness = results.get('smile_steepness', 0)
+        
+        report += "│ 😊 微笑分析:\n"
+        report += f"│   微笑曲線: {smile_curve:.2f}%\n"
+        
+        shape_emoji = {
+            'smile': '😊 U形微笑',
+            'smirk': '😏 微笑+傾斜',
+            'skew': '📐 傾斜',
+            'flat': '➖ 平坦',
+            'neutral': '➖ 中性'
+        }.get(smile_shape, smile_shape)
+        report += f"│   形狀: {shape_emoji}\n"
+        report += f"│   陡峭度: {smile_steepness:.3f} (0-1)\n"
+        report += "│\n"
+        
+        # IV 環境
+        iv_env = results.get('iv_environment', 'neutral')
+        env_emoji = {
+            'steep_smile': '📈 陡峭微笑',
+            'gentle_smile': '😊 溫和微笑',
+            'put_skew': '📉 看跌傾斜',
+            'call_skew': '📈 看漲傾斜',
+            'flat_iv': '➖ 平坦'
+        }.get(iv_env, iv_env)
+        
+        report += f"│ 🌡️ IV 環境: {env_emoji}\n"
+        report += "│\n"
+        
+        # IV 統計
+        report += "│ 📊 IV 統計:\n"
+        report += f"│   Call IV: {results.get('call_iv_mean', 0):.2f}% ± {results.get('call_iv_std', 0):.2f}%\n"
+        report += f"│   Put IV: {results.get('put_iv_mean', 0):.2f}% ± {results.get('put_iv_std', 0):.2f}%\n"
+        report += "│\n"
+        
+        # 定價異常
+        anomaly_count = results.get('anomaly_count', 0)
+        if anomaly_count > 0:
+            report += f"│ ⚠️ 定價異常: 發現 {anomaly_count} 個\n"
+            anomalies = results.get('pricing_anomalies', [])
+            for a in anomalies[:3]:  # 最多顯示3個
+                report += f"│   • {a.get('type', 'N/A').upper()} ${a.get('strike', 0):.2f}: IV={a.get('iv', 0):.2f}% ({a.get('severity', 'N/A')})\n"
+            report += "│\n"
+        
+        # 交易建議
+        recommendations = results.get('trading_recommendations', [])
+        confidence = results.get('recommendation_confidence', 0)
+        
+        if recommendations:
+            report += "│ 💡 交易建議:\n"
+            for rec in recommendations[:3]:
+                report += f"│   • {rec}\n"
+            report += f"│   信心度: {confidence*100:.0f}%\n"
+        
+        report += "│\n"
+        report += f"│ 📌 計算時間: {results.get('calculation_date', 'N/A')}\n"
         report += "└────────────────────────────────────────────────┘\n"
         return report
     
