@@ -4217,8 +4217,8 @@ class ReportGenerator:
         return report
     
     def _format_module27_multi_expiry_comparison(self, results: dict) -> str:
-        """格式化 Module 27 多到期日比較分析結果"""
-        report = "\n┌─ Module 27: 多到期日比較分析 ───────────────────┐\n"
+        """格式化 Module 27 多到期日比較分析結果（增強版 - 四種策略）"""
+        report = "\n┌─ Module 27: 多到期日比較分析（增強版）─────────────┐\n"
         report += "│\n"
         
         # 檢查是否錯誤或跳過
@@ -4232,88 +4232,106 @@ class ReportGenerator:
         # 基本信息
         report += f"│ 📊 股票: {results.get('ticker', 'N/A')}\n"
         report += f"│ 💵 當前股價: ${results.get('current_price', 0):.2f}\n"
-        report += f"│ 📈 策略類型: {results.get('strategy_type', 'N/A')}\n"
-        report += f"│ 📅 分析到期日數量: {results.get('expirations_analyzed', 0)}\n"
+        report += f"│ 📅 可用到期日總數: {results.get('total_expirations_available', 0)}\n"
+        report += f"│ 📅 ≤90天到期日: {results.get('expirations_within_90_days', 0)}\n"
+        report += f"│ 📅 成功分析到期日: {results.get('expirations_analyzed', 0)}\n"
         report += "│\n"
         
-        # 比較表格
-        comparison = results.get('comparison_table', [])
-        if comparison:
-            report += "│ 📋 到期日比較:\n"
-            report += "│ ┌──────────────┬──────┬────────┬───────┬───────┬───────┐\n"
-            report += "│ │ 到期日       │ 天數 │ 權利金 │ IV%   │ Theta │ 評分  │\n"
-            report += "│ ├──────────────┼──────┼────────┼───────┼───────┼───────┤\n"
+        # 到期日列表
+        exp_list = results.get('expiration_list', [])
+        if exp_list:
+            report += "│ 📋 分析的到期日:\n"
+            for i, exp in enumerate(exp_list[:8], 1):  # 最多顯示8個
+                report += f"│   {i}. {exp}\n"
+            if len(exp_list) > 8:
+                report += f"│   ... 還有 {len(exp_list) - 8} 個\n"
+            report += "│\n"
+        
+        # 四種策略結果
+        strategy_results = results.get('strategy_results', {})
+        strategy_names = {
+            'long_call': '📈 Long Call（看漲買權）',
+            'long_put': '📉 Long Put（看跌買權）',
+            'short_call': '📊 Short Call（看漲賣權）',
+            'short_put': '📊 Short Put（看跌賣權）'
+        }
+        
+        for strategy_type, strategy_name in strategy_names.items():
+            strategy_data = strategy_results.get(strategy_type, {})
+            if not strategy_data or strategy_data.get('status') != 'success':
+                continue
             
-            for exp in comparison[:5]:  # 最多顯示5個
-                expiry = str(exp.get('expiration', 'N/A'))[:10]
-                days = exp.get('days', 0)
-                premium = exp.get('premium', 0)
-                iv = exp.get('iv', 0)
-                theta_pct = exp.get('theta_pct', 0)
-                score = exp.get('score', 0)
-                grade = exp.get('grade', '-')
+            report += f"│ {strategy_name}\n"
+            report += "│ ─────────────────────────────────────────────\n"
+            
+            # 比較表格
+            comparison = strategy_data.get('comparison_table', [])
+            if comparison:
+                report += "│ ┌──────────────┬──────┬────────┬───────┬───────┬───────┐\n"
+                report += "│ │ 到期日       │ 天數 │ 權利金 │ IV%   │ Theta │ 評分  │\n"
+                report += "│ ├──────────────┼──────┼────────┼───────┼───────┼───────┤\n"
                 
-                report += f"│ │ {expiry:12} │ {days:4} │ ${premium:5.2f} │ {iv:5.1f} │ {theta_pct:5.2f} │ {score:3}({grade}) │\n"
+                for exp in comparison[:5]:  # 最多顯示5個
+                    expiry = str(exp.get('expiration', 'N/A'))[:10]
+                    days = exp.get('days', 0)
+                    premium = exp.get('premium', 0)
+                    iv = exp.get('iv', 0)
+                    theta_pct = exp.get('theta_pct', 0)
+                    score = exp.get('score', 0)
+                    grade = exp.get('grade', '-')
+                    
+                    report += f"│ │ {expiry:12} │ {days:4} │ ${premium:5.2f} │ {iv:5.1f} │ {theta_pct:5.2f} │ {score:3}({grade}) │\n"
+                
+                report += "│ └──────────────┴──────┴────────┴───────┴───────┴───────┘\n"
             
-            report += "│ └──────────────┴──────┴────────┴───────┴───────┴───────┘\n"
+            # 推薦
+            rec = strategy_data.get('recommendation', {})
+            if rec and rec.get('best_expiration'):
+                report += f"│ 🎯 最佳: {rec.get('best_expiration')} ({rec.get('best_days')}天)\n"
+                report += f"│    評分: {rec.get('best_score')} ({rec.get('best_grade')}) | 權利金: ${rec.get('best_premium', 0):.2f}\n"
+                
+                # 推薦理由（簡化）
+                reasons = rec.get('reasons', [])
+                if reasons:
+                    report += f"│    理由: {reasons[0]}\n"
+            
             report += "│\n"
         
-        # 推薦
-        rec = results.get('recommendation', {})
-        if rec and rec.get('best_expiration'):
-            report += "│ 🎯 最佳到期日推薦:\n"
-            report += f"│   到期日: {rec.get('best_expiration', 'N/A')}\n"
-            report += f"│   天數: {rec.get('best_days', 0)} 天 ({rec.get('best_category', 'N/A')})\n"
-            report += f"│   評分: {rec.get('best_score', 0)} ({rec.get('best_grade', '-')})\n"
-            report += f"│   權利金: ${rec.get('best_premium', 0):.2f}\n"
-            report += "│\n"
-            
-            # 推薦理由
-            reasons = rec.get('reasons', [])
-            if reasons:
-                report += "│ 📝 推薦理由:\n"
-                for reason in reasons:
-                    report += f"│   • {reason}\n"
-                report += "│\n"
-            
-            # 備選方案
-            alternatives = rec.get('alternatives', [])
-            if alternatives:
-                report += "│ 🔄 備選方案:\n"
-                for alt in alternatives:
-                    report += f"│   • {alt.get('expiration', 'N/A')} ({alt.get('days', 0)}天) - 評分 {alt.get('score', 0)} ({alt.get('grade', '-')})\n"
-                report += "│\n"
+        # 綜合建議
+        report += "│ 💡 綜合建議:\n"
         
-        # Theta 分析
-        theta_analysis = results.get('theta_analysis', {})
-        if theta_analysis and theta_analysis.get('status') != 'no_data':
-            report += "│ ⏱️ Theta 衰減分析:\n"
-            report += f"│   平均 Theta: {theta_analysis.get('avg_theta_pct', 0):.2f}%/天\n"
-            
-            if theta_analysis.get('acceleration_point'):
-                report += f"│   加速點: {theta_analysis.get('acceleration_point')} 天\n"
-            
-            if theta_analysis.get('warning'):
-                report += f"│   {theta_analysis.get('warning')}\n"
-            
-            if theta_analysis.get('suggestion'):
-                report += f"│   💡 {theta_analysis.get('suggestion')}\n"
-            report += "│\n"
+        # 找出各策略的最佳到期日
+        best_picks = []
+        for strategy_type in ['long_call', 'long_put', 'short_call', 'short_put']:
+            strategy_data = strategy_results.get(strategy_type, {})
+            if strategy_data.get('status') == 'success':
+                rec = strategy_data.get('recommendation', {})
+                if rec.get('best_expiration'):
+                    best_picks.append({
+                        'strategy': strategy_type,
+                        'expiration': rec.get('best_expiration'),
+                        'days': rec.get('best_days'),
+                        'score': rec.get('best_score'),
+                        'grade': rec.get('best_grade')
+                    })
         
-        # Long 策略建議
-        long_advice = results.get('long_strategy_advice', {})
-        if long_advice:
-            report += "│ 📌 Long 策略建議:\n"
-            report += f"│   方向: {long_advice.get('direction', 'N/A')}\n"
-            report += f"│   推薦到期範圍: {long_advice.get('recommended_expiry_range', 'N/A')}\n"
-            report += f"│   避免到期範圍: {long_advice.get('avoid_expiry_range', 'N/A')}\n"
+        if best_picks:
+            # 按評分排序
+            best_picks.sort(key=lambda x: x.get('score', 0), reverse=True)
+            top_pick = best_picks[0]
             
-            key_points = long_advice.get('key_points', [])
-            if key_points:
-                for point in key_points:
-                    report += f"│   • {point}\n"
-            report += "│\n"
+            strategy_display = {
+                'long_call': 'Long Call',
+                'long_put': 'Long Put',
+                'short_call': 'Short Call',
+                'short_put': 'Short Put'
+            }
+            
+            report += f"│   最高評分策略: {strategy_display.get(top_pick['strategy'], top_pick['strategy'])}\n"
+            report += f"│   最佳到期日: {top_pick['expiration']} ({top_pick['days']}天)\n"
+            report += f"│   評分: {top_pick['score']} ({top_pick['grade']})\n"
         
+        report += "│\n"
         report += f"│ 📌 分析時間: {results.get('analysis_date', 'N/A')}\n"
         report += "└────────────────────────────────────────────────┘\n"
         return report

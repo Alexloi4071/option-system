@@ -2338,53 +2338,162 @@ class OptionsAnalysisSystem:
                     'reason': str(exc)
                 }
             
-            # Module 27: 多到期日比較分析
-            logger.info("\n→ 運行 Module 27: 多到期日比較分析...")
+            # Module 27: 多到期日比較分析（增強版 - 所有到期日 + 四種策略）
+            logger.info("\n→ 運行 Module 27: 多到期日比較分析（增強版）...")
             try:
                 multi_expiry_analyzer = MultiExpiryAnalyzer()
                 
-                # 獲取多個到期日的數據
-                # 這裡我們使用當前到期日的數據作為示例
-                # 實際應用中可以從 data_fetcher 獲取多個到期日
-                expiration_data = []
+                # 獲取所有可用到期日
+                all_expirations = self.fetcher.get_option_expirations(ticker)
+                logger.info(f"  獲取到 {len(all_expirations)} 個可用到期日")
                 
-                if atm_call and atm_put and days_to_expiration:
-                    # 當前到期日數據
-                    current_expiry = {
-                        'expiration': analysis_data.get('expiration_date', 'N/A'),
-                        'days': int(days_to_expiration) if days_to_expiration else 0,
-                        'atm_call': atm_call,
-                        'atm_put': atm_put
-                    }
-                    expiration_data.append(current_expiry)
+                # 過濾 ≤90 天的到期日
+                from datetime import datetime, timedelta
+                import time as time_module
+                today = datetime.now().date()
+                max_days = 90
+                valid_expirations = []
+                
+                for exp_str in all_expirations:
+                    try:
+                        exp_date = datetime.strptime(exp_str, '%Y-%m-%d').date()
+                        days_diff = (exp_date - today).days
+                        if 0 < days_diff <= max_days:
+                            valid_expirations.append((exp_str, days_diff))
+                    except ValueError:
+                        continue
+                
+                # 按天數排序
+                valid_expirations.sort(key=lambda x: x[1])
+                logger.info(f"  過濾後 ≤{max_days} 天的到期日: {len(valid_expirations)} 個")
+                
+                if valid_expirations:
+                    # 收集每個到期日的期權數據
+                    expiration_data = []
                     
-                    # 分析多到期日（目前只有單一到期日，但結構支持多個）
-                    module27_result = multi_expiry_analyzer.analyze_expirations(
-                        ticker=ticker,
-                        current_price=current_price,
-                        expiration_data=expiration_data,
-                        strategy_type='long_call'  # 默認分析 Long Call
-                    )
+                    # 首先檢查是否已有當前到期日的數據（避免重複請求）
+                    current_exp = analysis_data.get('expiration_date')
+                    if current_exp and atm_call and atm_put:
+                        current_days = int(days_to_expiration) if days_to_expiration else 0
+                        if current_days > 0:
+                            expiration_data.append({
+                                'expiration': current_exp,
+                                'days': current_days,
+                                'atm_call': atm_call,
+                                'atm_put': atm_put
+                            })
+                            logger.info(f"    ✓ {current_exp} ({current_days}天): 使用已有數據")
                     
-                    self.analysis_results['module27_multi_expiry_comparison'] = module27_result
+                    # 限制額外請求的到期日數量（避免 API 限制）
+                    max_additional_requests = 4  # 最多額外請求 4 個到期日
+                    additional_count = 0
                     
-                    if module27_result.get('status') == 'success':
-                        rec = module27_result.get('recommendation', {})
-                        logger.info(f"  分析到期日數量: {module27_result.get('expirations_analyzed', 0)}")
-                        if rec.get('best_expiration'):
-                            logger.info(f"  最佳到期日: {rec.get('best_expiration')} ({rec.get('best_days')}天)")
-                            logger.info(f"  評分: {rec.get('best_score')} ({rec.get('best_grade')})")
-                        logger.info("* 模塊27完成: 多到期日比較分析")
+                    for exp_str, days_diff in valid_expirations:
+                        # 跳過已有數據的到期日
+                        if exp_str == current_exp:
+                            continue
+                        
+                        # 檢查是否達到請求限制
+                        if additional_count >= max_additional_requests:
+                            logger.info(f"    已達到額外請求限制 ({max_additional_requests})，跳過剩餘到期日")
+                            break
+                        
+                        try:
+                            # 添加延遲避免 API 限制
+                            time_module.sleep(1.5)
+                            
+                            # 獲取該到期日的期權鏈
+                            exp_chain = self.fetcher.get_option_chain(ticker, exp_str)
+                            if not exp_chain:
+                                continue
+                            
+                            calls_df = exp_chain.get('calls')
+                            puts_df = exp_chain.get('puts')
+                            
+                            if calls_df is None or puts_df is None or calls_df.empty or puts_df.empty:
+                                continue
+                            
+                            # 找到 ATM 期權（最接近當前股價的行使價）
+                            calls_df['strike_diff'] = abs(calls_df['strike'] - current_price)
+                            puts_df['strike_diff'] = abs(puts_df['strike'] - current_price)
+                            
+                            atm_call_row = calls_df.loc[calls_df['strike_diff'].idxmin()]
+                            atm_put_row = puts_df.loc[puts_df['strike_diff'].idxmin()]
+                            
+                            exp_data = {
+                                'expiration': exp_str,
+                                'days': days_diff,
+                                'atm_call': atm_call_row.to_dict(),
+                                'atm_put': atm_put_row.to_dict()
+                            }
+                            expiration_data.append(exp_data)
+                            additional_count += 1
+                            logger.info(f"    ✓ {exp_str} ({days_diff}天): ATM Strike ${atm_call_row['strike']:.2f}")
+                            
+                        except Exception as e:
+                            logger.warning(f"    x {exp_str}: 獲取數據失敗 - {e}")
+                            # 如果遇到 429 錯誤，停止請求
+                            if '429' in str(e) or 'rate limit' in str(e).lower():
+                                logger.warning("    遇到 API 速率限制，停止額外請求")
+                                break
+                            continue
+                    
+                    logger.info(f"  成功獲取 {len(expiration_data)} 個到期日的期權數據")
+                    
+                    if expiration_data:
+                        # 按天數排序
+                        expiration_data.sort(key=lambda x: x['days'])
+                        
+                        # 分析所有四種策略
+                        strategy_types = ['long_call', 'long_put', 'short_call', 'short_put']
+                        all_strategy_results = {}
+                        
+                        for strategy in strategy_types:
+                            result = multi_expiry_analyzer.analyze_expirations(
+                                ticker=ticker,
+                                current_price=current_price,
+                                expiration_data=expiration_data,
+                                strategy_type=strategy
+                            )
+                            all_strategy_results[strategy] = result
+                            
+                            if result.get('status') == 'success':
+                                rec = result.get('recommendation', {})
+                                if rec.get('best_expiration'):
+                                    logger.info(f"    {strategy}: 最佳 {rec.get('best_expiration')} ({rec.get('best_days')}天) 評分 {rec.get('best_score')} ({rec.get('best_grade')})")
+                        
+                        # 整合結果
+                        self.analysis_results['module27_multi_expiry_comparison'] = {
+                            'status': 'success',
+                            'ticker': ticker,
+                            'current_price': current_price,
+                            'analysis_date': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            'total_expirations_available': len(all_expirations),
+                            'expirations_within_90_days': len(valid_expirations),
+                            'expirations_analyzed': len(expiration_data),
+                            'strategies_analyzed': strategy_types,
+                            'strategy_results': all_strategy_results,
+                            'expiration_list': [e['expiration'] for e in expiration_data]
+                        }
+                        
+                        logger.info(f"* 模塊27完成: 分析 {len(expiration_data)} 個到期日 x 4 種策略")
                     else:
-                        logger.warning(f"! 模塊27分析失敗: {module27_result.get('reason', 'Unknown')}")
+                        logger.warning("! 模塊27: 無法獲取任何到期日的期權數據")
+                        self.analysis_results['module27_multi_expiry_comparison'] = {
+                            'status': 'error',
+                            'reason': '無法獲取期權數據'
+                        }
                 else:
-                    logger.warning("! 模塊27跳過: 無法獲取期權數據")
+                    logger.warning(f"! 模塊27: 無 ≤{max_days} 天的到期日")
                     self.analysis_results['module27_multi_expiry_comparison'] = {
                         'status': 'skipped',
-                        'reason': '無法獲取期權數據'
+                        'reason': f'無 ≤{max_days} 天的到期日'
                     }
+                    
             except Exception as exc:
                 logger.warning(f"! 模塊27執行失敗: {exc}")
+                import traceback
+                traceback.print_exc()
                 self.analysis_results['module27_multi_expiry_comparison'] = {
                     'status': 'error',
                     'reason': str(exc)
