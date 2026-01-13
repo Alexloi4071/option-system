@@ -2,14 +2,114 @@
 """
 Interactive Brokers (IBKR) API 客戶端
 支持 TWS 和 IB Gateway 連接
+
+優化功能:
+- 動態 Market Data Type 切換 (RTH vs 盤後)
+- 完整 Generic Tick Tags 配置
+- Greeks 數據收斂等待機制
+- Underlying Price 驗證
+- 數據質量評估
+- 增強錯誤處理
 """
 
 import logging
 import time
 from typing import Dict, Optional, Any, List
-from datetime import datetime
+from datetime import datetime, time as dt_time
+import pytz
 
 logger = logging.getLogger(__name__)
+
+# ============================================================================
+# Market Data Type 常量
+# ============================================================================
+MARKET_DATA_TYPE_LIVE = 1           # 實時數據 (RTH 期間使用)
+MARKET_DATA_TYPE_FROZEN = 2         # 凍結數據 (盤後使用，返回收盤價)
+MARKET_DATA_TYPE_DELAYED = 3        # 延遲數據 (15-20分鐘延遲)
+MARKET_DATA_TYPE_DELAYED_FROZEN = 4 # 延遲凍結數據
+
+# ============================================================================
+# RTH (Regular Trading Hours) 時間定義 - 美東時間
+# ============================================================================
+RTH_START = dt_time(9, 30)   # 09:30 ET
+RTH_END = dt_time(16, 0)     # 16:00 ET
+ET_TIMEZONE = pytz.timezone('America/New_York')
+
+# ============================================================================
+# Greeks 收斂參數
+# ============================================================================
+GREEKS_INITIAL_TIMEOUT = 10      # 初始等待時間（秒）
+GREEKS_STABILIZATION_TIMEOUT = 3 # 穩定等待時間（秒）
+GREEKS_STABILITY_TOLERANCE = 0.001  # Greeks 穩定性容差
+
+# ============================================================================
+# 價格驗證參數
+# ============================================================================
+PRICE_MISMATCH_THRESHOLD = 0.01  # 1% 價格偏差閾值
+IV_SPIKE_THRESHOLD = 3.0         # 300% IV 異常閾值
+
+# ============================================================================
+# 錯誤處理參數
+# ============================================================================
+MAX_RECENT_ERRORS = 50
+BACKOFF_BASE = 2.0
+BACKOFF_MAX = 60.0
+
+# ============================================================================
+# Generic Tick Tags 完整配置
+# 參考: https://interactivebrokers.github.io/tws-api/tick_types.html
+# ============================================================================
+TICK_TAGS_CONFIG = {
+    'CORE': {
+        # 期權交易核心數據
+        '100': 'Option Call/Put Volume (Tick 29,30)',
+        '101': 'Option Call/Put Open Interest (Tick 27,28)',
+        '104': 'Option Historical Volatility 30-day (Tick 23)',
+        '106': 'Option Implied Volatility 30-day (Tick 24)',
+    },
+    'RECOMMENDED': {
+        # 推薦的額外數據
+        '105': 'Average Option Volume (Tick 87)',
+        '165': '52-Week High/Low + 90-day Avg Volume (Tick 15-21)',
+        '232': 'Mark Price - Theoretical calculated value (Tick 37)',
+        '233': 'RT Volume / Time & Sales (Tick 48) - 異動大單監測',
+        '236': 'Shortable status + Shortable Shares (Tick 46,89) - 做空可用性',
+    },
+    'ADVANCED': {
+        # 進階分析數據
+        '225': 'Auction Data - Volume/Price/Imbalance (Tick 34-36,61)',
+        '292': 'News feed for contract (Tick 62)',
+        '293': 'Trade Count for the day (Tick 54)',
+        '294': 'Trade Rate per minute (Tick 55)',
+        '295': 'Volume Rate per minute (Tick 56)',
+        '318': 'Last RTH Trade price (Tick 57)',
+        '375': 'RT Trade Volume excluding unreportable (Tick 77)',
+        '411': 'RT Historical Volatility 30-day (Tick 58)',
+        '456': 'IB Dividends info (Tick 59)',
+        '595': 'Short-Term Volume 3/5/10 minutes (Tick 63-65)',
+    }
+}
+
+def build_generic_tick_list(categories: List[str] = None) -> str:
+    """
+    構建 Generic Tick Tags 字符串
+    
+    參數:
+        categories: 要包含的類別列表，默認全部 ['CORE', 'RECOMMENDED', 'ADVANCED']
+    
+    返回:
+        str: 逗號分隔的 tick tag 字符串
+    """
+    if categories is None:
+        categories = ['CORE', 'RECOMMENDED', 'ADVANCED']
+    
+    tags = []
+    for category in categories:
+        if category in TICK_TAGS_CONFIG:
+            tags.extend(TICK_TAGS_CONFIG[category].keys())
+    
+    # 按數字排序並去重
+    return ','.join(sorted(set(tags), key=int))
 
 # 嘗試導入 ib_insync（IBKR Python API）
 try:
@@ -36,10 +136,19 @@ class IBKRClient:
     - 獲取實時 Bid/Ask 價差
     - 自動重試和錯誤處理
     - 支持降級到其他數據源
+    
+    優化功能 (v2.0):
+    - 動態 Market Data Type 切換 (RTH vs 盤後)
+    - 完整 Generic Tick Tags 配置
+    - Greeks 數據收斂等待機制
+    - Underlying Price 驗證
+    - 數據質量評估
     """
     
     def __init__(self, host: str = "127.0.0.1", port: int = 7497, 
-                 client_id: int = 100, mode: str = 'paper'):
+                 client_id: int = 100, mode: str = 'paper',
+                 market_data_type: int = None,
+                 tick_tag_categories: List[str] = None):
         """
         初始化 IBKR 客戶端
         
@@ -48,6 +157,8 @@ class IBKRClient:
             port: 端口 (7497=Paper, 7496=Live)
             client_id: 客戶端 ID (必須唯一)
             mode: 'paper' 或 'live'
+            market_data_type: 強制指定 Market Data Type (1=Live, 2=Frozen)，None 為自動
+            tick_tag_categories: Generic Tick Tags 類別，默認全部
         """
         if not IB_INSYNC_AVAILABLE:
             raise ImportError("ib_insync 未安裝，無法使用 IBKR 功能")
@@ -62,14 +173,30 @@ class IBKRClient:
         self.connection_attempts = 0
         self.max_connection_attempts = 3
         
+        # 新增: Market Data Type 管理
+        self._market_data_type_override = market_data_type
+        self._current_market_data_type = None
+        
+        # 新增: Generic Tick Tags 配置
+        self._tick_tag_categories = tick_tag_categories or ['CORE', 'RECOMMENDED', 'ADVANCED']
+        self._generic_tick_list = build_generic_tick_list(self._tick_tag_categories)
+        
+        # 新增: 錯誤追蹤
+        self._recent_errors: List[Dict] = []
+        
+        # 新增: 數據質量追蹤
+        self._data_quality_tracker: Dict[str, Any] = {}
+        
         logger.info(f"IBKR 客戶端初始化: {host}:{port} (mode={mode}, client_id={client_id})")
+        logger.info(f"  Generic Tick Tags: {self._generic_tick_list}")
     
-    def connect(self, timeout: int = 10) -> bool:
+    def connect(self, timeout: int = 10, market_data_type: int = None) -> bool:
         """
         連接到 TWS/Gateway（帶指數退避重試）
         
         參數:
             timeout: 連接超時時間（秒）
+            market_data_type: 強制指定 Market Data Type，None 為自動判斷
         
         返回:
             bool: 是否成功連接
@@ -100,15 +227,14 @@ class IBKRClient:
                     self.connected = True
                     self.connection_attempts = 0
                     
-                    # 設置市場數據類型
-                    # Market data type: 1=Live, 2=Frozen, 3=Delayed, 4=Delayed Frozen
-                    # IBKR 只用於期權 OPRA 數據（bid/ask/volume/OI），股票價格由 Finnhub 提供
-                    self.ib.reqMarketDataType(3)  # 延遲模式（不影響 OPRA 期權數據）
+                    # 動態設置 Market Data Type
+                    self._apply_market_data_type(market_data_type)
+                    
                     logger.info(f"* IBKR 連接成功 ({self.mode} mode)")
-                    logger.info("  數據源分工:")
-                    logger.info("    - 股票價格: Finnhub (實時)")
-                    logger.info("    - 期權 bid/ask/volume/OI: IBKR OPRA (實時)")
-                    logger.info("    - 期權 IV/Greeks: Yahoo Finance + 本地計算")
+                    logger.info("  數據源配置:")
+                    logger.info(f"    - Market Data Type: {self._current_market_data_type} ({self._get_market_data_type_name()})")
+                    logger.info(f"    - Generic Tick Tags: {self._generic_tick_list}")
+                    logger.info(f"    - 當前是否 RTH: {self.is_rth()}")
                     return True
                 else:
                     logger.warning("! IBKR 連接後狀態異常：未連接")
@@ -117,6 +243,7 @@ class IBKRClient:
             except Exception as e:
                 self.connection_attempts += 1
                 self.last_error = str(e)
+                self._record_error(0, str(e), 'connect')
                 logger.warning(f"! IBKR 連接失敗 (嘗試 {self.connection_attempts}/{self.max_connection_attempts}): {e}")
             
             # 如果還有重試機會，使用指數退避等待
@@ -128,6 +255,273 @@ class IBKRClient:
         
         logger.error(f"x IBKR 連接失敗，已達最大重試次數 ({self.max_connection_attempts})。請檢查 TWS/Gateway 是否運行")
         return False
+    
+    # ========================================================================
+    # RTH 和 Market Data Type 管理方法
+    # ========================================================================
+    
+    def is_rth(self) -> bool:
+        """
+        檢查當前是否在正常交易時段 (Regular Trading Hours)
+        
+        RTH: 週一至週五 09:30-16:00 美東時間
+        
+        返回:
+            bool: True 如果在 RTH 內
+        """
+        now_et = datetime.now(ET_TIMEZONE)
+        current_time = now_et.time()
+        weekday = now_et.weekday()
+        
+        # 週末不是 RTH (週六=5, 週日=6)
+        if weekday >= 5:
+            return False
+        
+        # 檢查時間範圍
+        return RTH_START <= current_time <= RTH_END
+    
+    def _determine_market_data_type(self, user_override: int = None) -> int:
+        """
+        決定應使用的 Market Data Type
+        
+        優先級:
+        1. 方法參數 user_override
+        2. 初始化時的 _market_data_type_override
+        3. 根據 RTH 自動判斷
+        
+        返回:
+            int: Market Data Type (1=Live, 2=Frozen)
+        """
+        # 優先使用用戶指定
+        if user_override is not None:
+            return user_override
+        
+        if self._market_data_type_override is not None:
+            return self._market_data_type_override
+        
+        # 自動判斷: RTH 用 Live，盤後用 Frozen
+        return MARKET_DATA_TYPE_LIVE if self.is_rth() else MARKET_DATA_TYPE_FROZEN
+    
+    def _apply_market_data_type(self, user_override: int = None):
+        """應用 Market Data Type 設置"""
+        data_type = self._determine_market_data_type(user_override)
+        self._current_market_data_type = data_type
+        self.ib.reqMarketDataType(data_type)
+        
+        reason = "用戶指定" if (user_override or self._market_data_type_override) else ("RTH 期間" if self.is_rth() else "盤後時段")
+        logger.info(f"  Market Data Type 設置為 {data_type} ({self._get_market_data_type_name()}) - {reason}")
+    
+    def _get_market_data_type_name(self) -> str:
+        """獲取 Market Data Type 名稱"""
+        names = {
+            MARKET_DATA_TYPE_LIVE: 'Live',
+            MARKET_DATA_TYPE_FROZEN: 'Frozen',
+            MARKET_DATA_TYPE_DELAYED: 'Delayed',
+            MARKET_DATA_TYPE_DELAYED_FROZEN: 'Delayed Frozen'
+        }
+        return names.get(self._current_market_data_type, 'Unknown')
+    
+    @property
+    def market_data_type(self) -> int:
+        """獲取當前 Market Data Type"""
+        return self._current_market_data_type
+    
+    def set_market_data_type(self, data_type: int):
+        """
+        手動設置 Market Data Type
+        
+        參數:
+            data_type: 1=Live, 2=Frozen, 3=Delayed, 4=Delayed Frozen
+        """
+        if not self.is_connected():
+            logger.warning("! IBKR 未連接，無法設置 Market Data Type")
+            return
+        
+        old_type = self._current_market_data_type
+        self._current_market_data_type = data_type
+        self.ib.reqMarketDataType(data_type)
+        logger.info(f"Market Data Type 從 {old_type} 切換到 {data_type} ({self._get_market_data_type_name()})")
+    
+    def refresh_market_data_type(self):
+        """根據當前時間刷新 Market Data Type"""
+        if not self.is_connected():
+            return
+        
+        new_type = self._determine_market_data_type()
+        if new_type != self._current_market_data_type:
+            self.set_market_data_type(new_type)
+    
+    # ========================================================================
+    # 錯誤處理方法
+    # ========================================================================
+    
+    def _record_error(self, error_code: int, error_msg: str, context: str = ''):
+        """記錄錯誤"""
+        error_record = {
+            'timestamp': datetime.now().isoformat(),
+            'code': error_code,
+            'message': error_msg,
+            'context': context
+        }
+        
+        self._recent_errors.append(error_record)
+        
+        # 保持錯誤列表大小
+        if len(self._recent_errors) > MAX_RECENT_ERRORS:
+            self._recent_errors = self._recent_errors[-MAX_RECENT_ERRORS:]
+        
+        logger.error(f"IBKR Error [{error_code}]: {error_msg} ({context})")
+    
+    def get_recent_errors(self) -> List[Dict]:
+        """獲取最近的錯誤記錄"""
+        return self._recent_errors.copy()
+    
+    # ========================================================================
+    # 數據質量評估方法
+    # ========================================================================
+    
+    def _assess_data_quality(self, data: Dict) -> str:
+        """
+        評估數據質量
+        
+        返回:
+            str: 'complete', 'partial', 或 'minimal'
+        """
+        required_fields = ['bid', 'ask', 'delta', 'gamma', 'theta', 'vega', 'impliedVol']
+        optional_fields = ['volume', 'openInterest', 'undPrice', 'optPrice']
+        
+        required_count = sum(1 for f in required_fields if data.get(f) is not None)
+        
+        if required_count == len(required_fields):
+            return 'complete'
+        elif required_count >= len(required_fields) * 0.5:
+            return 'partial'
+        else:
+            return 'minimal'
+    
+    # ========================================================================
+    # Greeks 收斂等待方法
+    # ========================================================================
+    
+    def _wait_for_greeks_convergence(self, option_contract, timeout: int = GREEKS_INITIAL_TIMEOUT) -> Dict:
+        """
+        等待 Greeks 數據收斂
+        
+        IBKR 的 Greeks 計算需要時間收斂，此方法會等待數據穩定後再返回
+        
+        參數:
+            option_contract: 期權合約
+            timeout: 最大等待時間（秒）
+        
+        返回:
+            dict: 包含 greeks, converged, convergence_time, warnings
+        """
+        start_time = time.time()
+        last_greeks = None
+        stable_count = 0
+        warnings = []
+        
+        while time.time() - start_time < timeout:
+            ticker_data = self.ib.ticker(option_contract)
+            
+            if ticker_data and ticker_data.modelGreeks:
+                current_greeks = {
+                    'delta': ticker_data.modelGreeks.delta,
+                    'gamma': ticker_data.modelGreeks.gamma,
+                    'theta': ticker_data.modelGreeks.theta,
+                    'vega': ticker_data.modelGreeks.vega,
+                    'rho': getattr(ticker_data.modelGreeks, 'rho', None),
+                    'impliedVol': ticker_data.modelGreeks.impliedVol,
+                    'undPrice': ticker_data.modelGreeks.undPrice,
+                    'optPrice': ticker_data.modelGreeks.optPrice,
+                }
+                
+                # 檢查核心值是否有效
+                core_values = [current_greeks['delta'], current_greeks['gamma'], 
+                              current_greeks['theta'], current_greeks['vega']]
+                
+                if all(v is not None for v in core_values):
+                    # 檢查是否穩定（與上次相同）
+                    if last_greeks and self._greeks_are_stable(last_greeks, current_greeks):
+                        stable_count += 1
+                        if stable_count >= 2:
+                            elapsed = time.time() - start_time
+                            logger.info(f"  Greeks 收斂完成，耗時 {elapsed:.1f} 秒")
+                            return {
+                                'greeks': current_greeks,
+                                'converged': True,
+                                'convergence_time': elapsed,
+                                'warnings': warnings
+                            }
+                    else:
+                        stable_count = 0
+                    
+                    last_greeks = current_greeks
+            
+            time.sleep(0.5)
+        
+        # 超時返回部分數據
+        elapsed = time.time() - start_time
+        warnings.append(f'Greeks 未在 {timeout} 秒內完全收斂')
+        logger.warning(f"  Greeks 收斂超時 ({elapsed:.1f} 秒)")
+        
+        return {
+            'greeks': last_greeks,
+            'converged': False,
+            'convergence_time': elapsed,
+            'warnings': warnings
+        }
+    
+    def _greeks_are_stable(self, prev: Dict, curr: Dict, tolerance: float = GREEKS_STABILITY_TOLERANCE) -> bool:
+        """檢查 Greeks 是否穩定"""
+        for key in ['delta', 'gamma', 'theta', 'vega']:
+            prev_val = prev.get(key)
+            curr_val = curr.get(key)
+            if prev_val is not None and curr_val is not None:
+                if abs(prev_val - curr_val) > tolerance:
+                    return False
+        return True
+    
+    # ========================================================================
+    # Underlying Price 驗證方法
+    # ========================================================================
+    
+    def _validate_underlying_price(self, und_price: float, known_price: float = None) -> Dict:
+        """
+        驗證 IBKR 計算 Greeks 時使用的標的物價格
+        
+        參數:
+            und_price: IBKR 返回的 undPrice
+            known_price: 已知的股票價格（可選）
+        
+        返回:
+            dict: 包含 valid, warnings, deviation 等信息
+        """
+        result = {
+            'und_price': und_price,
+            'valid': True,
+            'warnings': []
+        }
+        
+        # 檢查 undPrice 是否有效
+        if und_price is None or und_price <= 0:
+            result['valid'] = False
+            result['warnings'].append('undPrice 為 None 或無效值')
+            return result
+        
+        # 如果有已知價格，檢查偏差
+        if known_price and known_price > 0:
+            deviation = abs(und_price - known_price) / known_price
+            result['known_price'] = known_price
+            result['deviation'] = deviation
+            
+            if deviation > PRICE_MISMATCH_THRESHOLD:
+                result['warnings'].append(
+                    f'undPrice ({und_price:.2f}) 與已知價格 ({known_price:.2f}) 偏差 {deviation*100:.2f}%'
+                )
+                logger.warning(f"  價格偏差警告: undPrice={und_price:.2f}, known={known_price:.2f}, deviation={deviation*100:.2f}%")
+        
+        return result
     
     def disconnect(self):
         """斷開連接"""
@@ -308,18 +702,27 @@ class IBKRClient:
             return None
     
     def get_option_greeks(self, ticker: str, strike: float, 
-                          expiration: str, option_type: str = 'C') -> Optional[Dict[str, float]]:
+                          expiration: str, option_type: str = 'C',
+                          known_stock_price: float = None) -> Optional[Dict[str, Any]]:
         """
-        獲取期權 Greeks
+        獲取期權 Greeks（優化版）
+        
+        優化功能:
+        - 使用完整 Generic Tick Tags
+        - 等待 Greeks 數據收斂
+        - 驗證 undPrice/optPrice
+        - 數據質量評估
+        - 盤外時段警告
         
         參數:
             ticker: 股票代碼
             strike: 行使價
             expiration: 到期日期 (YYYY-MM-DD)
             option_type: 'C' (Call) 或 'P' (Put)
+            known_stock_price: 已知股價（用於驗證 undPrice）
         
         返回:
-            dict: {'delta': float, 'gamma': float, 'theta': float, 'vega': float, 'rho': float}
+            dict: 包含 Greeks、數據質量指標、警告等完整信息
         """
         if not self.is_connected():
             if not self.connect():
@@ -327,7 +730,11 @@ class IBKRClient:
                 return None
         
         try:
-            logger.info(f"開始獲取 {ticker} {strike} {option_type} Greeks (IBKR)...")
+            logger.info(f"開始獲取 {ticker} {strike} {option_type} Greeks (IBKR 優化版)...")
+            logger.info(f"  使用 Generic Tick Tags: {self._generic_tick_list}")
+            
+            # 刷新 Market Data Type（確保使用正確的類型）
+            self.refresh_market_data_type()
             
             # 轉換日期格式: YYYY-MM-DD -> YYYYMMDD
             exp_formatted = expiration.replace('-', '')
@@ -349,63 +756,90 @@ class IBKRClient:
             
             logger.info(f"  期權合約已驗證: {option.localSymbol}, conId={option.conId}")
             
-            # 請求期權市場數據 - 使用流式數據
-            # genericTickList: 106=Option Implied Volatility
-            self.ib.reqMktData(option, '106', False, False)  # snapshot=False
+            # 請求期權市場數據 - 使用完整 Generic Tick Tags
+            self.ib.reqMktData(option, self._generic_tick_list, False, False)  # snapshot=False
             
-            # 等待數據更新
-            ticker_data = None
-            for _ in range(5):  # 最多等待 5 秒
-                time.sleep(1)
-                ticker_data = self.ib.ticker(option)
-                # 檢查是否有有效的報價數據（不是 NaN）
-                if ticker_data:
-                    has_bid = ticker_data.bid is not None and not (isinstance(ticker_data.bid, float) and ticker_data.bid != ticker_data.bid)
-                    has_ask = ticker_data.ask is not None and not (isinstance(ticker_data.ask, float) and ticker_data.ask != ticker_data.ask)
-                    has_last = ticker_data.last is not None and not (isinstance(ticker_data.last, float) and ticker_data.last != ticker_data.last)
-                    if has_bid or has_ask or has_last:
-                        break
+            # 初始化結果
+            result = {
+                'strike': strike,
+                'expiration': expiration,
+                'option_type': option_type,
+                'source': 'ibkr',
+                'market_data_type': self._current_market_data_type,
+                'outside_rth': not self.is_rth(),
+                'warnings': []
+            }
             
-            if not ticker_data:
-                logger.warning(f"! 無法獲取 {ticker} {strike} 的市場數據")
-                return None
+            # 等待 Greeks 收斂
+            convergence_result = self._wait_for_greeks_convergence(option, GREEKS_INITIAL_TIMEOUT)
             
-            # 收集所有可用數據
-            result = {}
+            if convergence_result['greeks']:
+                greeks = convergence_result['greeks']
+                
+                # 填充 Greeks 數據
+                result['delta'] = greeks.get('delta')
+                result['gamma'] = greeks.get('gamma')
+                result['theta'] = greeks.get('theta')
+                result['vega'] = greeks.get('vega')
+                result['rho'] = greeks.get('rho')
+                result['impliedVol'] = greeks.get('impliedVol')
+                result['undPrice'] = greeks.get('undPrice')
+                result['optPrice'] = greeks.get('optPrice')
+                result['greeks_converged'] = convergence_result['converged']
+                result['convergence_time'] = convergence_result['convergence_time']
+                result['greeks_source'] = 'ibkr_model'
+                
+                # 驗證 undPrice
+                if greeks.get('undPrice'):
+                    price_validation = self._validate_underlying_price(
+                        greeks['undPrice'], 
+                        known_stock_price
+                    )
+                    if price_validation['warnings']:
+                        result['warnings'].extend(price_validation['warnings'])
+                    result['undPrice_valid'] = price_validation['valid']
+                
+                # 檢查 IV 異常（盤外時段可能出現）
+                if result.get('impliedVol') and result['impliedVol'] > IV_SPIKE_THRESHOLD:
+                    result['warnings'].append(
+                        f'IV 異常高 ({result["impliedVol"]*100:.1f}%)，可能因盤外時段 bid/ask 價差過大'
+                    )
+                    result['iv_spike_warning'] = True
+            else:
+                result['greeks_source'] = 'unavailable'
+                result['greeks_converged'] = False
             
-            # 1. 優先使用 IBKR 的 modelGreeks（如果可用）
-            if ticker_data.modelGreeks:
-                logger.info("  使用 IBKR modelGreeks")
-                result = {
-                    'delta': ticker_data.modelGreeks.delta,
-                    'gamma': ticker_data.modelGreeks.gamma,
-                    'theta': ticker_data.modelGreeks.theta,
-                    'vega': ticker_data.modelGreeks.vega,
-                    'rho': ticker_data.modelGreeks.rho,
-                    'impliedVol': ticker_data.modelGreeks.impliedVol,
-                    'source': 'ibkr_model'
-                }
+            # 添加收斂警告
+            if convergence_result.get('warnings'):
+                result['warnings'].extend(convergence_result['warnings'])
             
-            # 2. 獲取期權報價數據（OPRA 數據）
-            try:
-                if ticker_data.bid is not None and not (isinstance(ticker_data.bid, float) and ticker_data.bid != ticker_data.bid):
+            # 獲取報價數據
+            ticker_data = self.ib.ticker(option)
+            if ticker_data:
+                # Bid/Ask/Last
+                if ticker_data.bid is not None and self._is_valid_price(ticker_data.bid):
                     result['bid'] = float(ticker_data.bid)
-                if ticker_data.ask is not None and not (isinstance(ticker_data.ask, float) and ticker_data.ask != ticker_data.ask):
+                if ticker_data.ask is not None and self._is_valid_price(ticker_data.ask):
                     result['ask'] = float(ticker_data.ask)
-                if ticker_data.last is not None and not (isinstance(ticker_data.last, float) and ticker_data.last != ticker_data.last):
+                if ticker_data.last is not None and self._is_valid_price(ticker_data.last):
                     result['last'] = float(ticker_data.last)
+                
+                # Volume 和 OI
                 if ticker_data.volume is not None and ticker_data.volume > 0:
                     result['volume'] = int(ticker_data.volume)
-            except (ValueError, TypeError) as e:
-                logger.debug(f"  處理報價數據時出錯: {e}")
+                if hasattr(ticker_data, 'openInterest') and ticker_data.openInterest:
+                    result['openInterest'] = int(ticker_data.openInterest)
+                
+                # 計算中間價
+                if 'bid' in result and 'ask' in result:
+                    result['mid'] = (result['bid'] + result['ask']) / 2
             
-            # 3. 嘗試獲取 IV（從不同來源）
-            if ticker_data.impliedVolatility and ticker_data.impliedVolatility > 0:
-                result['impliedVol'] = float(ticker_data.impliedVolatility)
-                result['iv_source'] = 'ibkr_tick'
+            # 評估數據質量
+            result['data_quality'] = self._assess_data_quality(result)
             
-            # 過濾 None 值
-            result = {k: v for k, v in result.items() if v is not None}
+            # 盤外時段警告
+            if result['outside_rth']:
+                result['warnings'].append('數據獲取於盤外時段，Greeks 可能不準確')
             
             # 取消市場數據訂閱
             try:
@@ -413,25 +847,42 @@ class IBKRClient:
             except:
                 pass
             
-            if result:
-                logger.info(f"* 獲取期權數據成功: {result}")
-                return result
-            else:
-                logger.warning(f"! 無法獲取期權數據")
-                return None
+            # 過濾 None 值（保留重要字段）
+            important_fields = ['strike', 'expiration', 'option_type', 'source', 'data_quality', 
+                               'greeks_source', 'outside_rth', 'warnings', 'market_data_type']
+            result = {k: v for k, v in result.items() if v is not None or k in important_fields}
+            
+            logger.info(f"* 獲取期權 Greeks 完成: data_quality={result.get('data_quality')}, converged={result.get('greeks_converged')}")
+            return result
                 
         except Exception as e:
             self.last_error = str(e)
+            self._record_error(0, str(e), f'get_option_greeks({ticker}, {strike}, {option_type})')
             logger.error(f"x 獲取 Greeks 失敗: {e}")
             return None
+    
+    def _is_valid_price(self, price) -> bool:
+        """檢查價格是否有效（非 NaN、非負、非 -1）"""
+        if price is None:
+            return False
+        try:
+            p = float(price)
+            # 檢查 NaN
+            if p != p:
+                return False
+            # 檢查負數和 -1（IBKR 用 -1 表示無數據）
+            if p < 0:
+                return False
+            return True
+        except (ValueError, TypeError):
+            return False
     
     def get_option_quote(self, ticker: str, strike: float, 
                          expiration: str, option_type: str = 'C') -> Optional[Dict[str, Any]]:
         """
-        獲取期權報價數據（使用 OPRA 數據）
+        獲取期權報價數據（優化版，使用完整 Tick Tags）
         
-        這個方法專門獲取期權的基本報價數據，不依賴 modelGreeks。
-        適用於只有 OPRA 訂閱的情況。
+        這個方法專門獲取期權的基本報價數據，包含數據質量指標。
         
         參數:
             ticker: 股票代碼
@@ -440,7 +891,7 @@ class IBKRClient:
             option_type: 'C' (Call) 或 'P' (Put)
         
         返回:
-            dict: {'bid': float, 'ask': float, 'last': float, 'volume': int, 'iv': float}
+            dict: 包含報價、數據質量、警告等完整信息
         """
         if not self.is_connected():
             if not self.connect():
@@ -448,13 +899,15 @@ class IBKRClient:
                 return None
         
         try:
-            logger.info(f"開始獲取 {ticker} {strike} {option_type} 期權報價 (IBKR OPRA)...")
+            logger.info(f"開始獲取 {ticker} {strike} {option_type} 期權報價 (IBKR 優化版)...")
+            
+            # 刷新 Market Data Type
+            self.refresh_market_data_type()
             
             # 轉換日期格式
             exp_formatted = expiration.replace('-', '')
             
             # 創建期權合約
-            # 注意：使用 SMART 路由會自動選擇最佳交易所
             option = Option(
                 symbol=ticker,
                 lastTradeDateOrContractMonth=exp_formatted,
@@ -468,26 +921,26 @@ class IBKRClient:
                 qualified = self.ib.qualifyContracts(option)
             except Exception as qual_err:
                 logger.debug(f"  合約驗證時出現警告（可忽略）: {qual_err}")
-                # 即使有警告，合約可能仍然有效
             
             if not qualified or not option.conId:
                 logger.warning(f"! 無法驗證期權合約: {ticker} {strike} {option_type}")
                 return None
             
-            # 請求期權報價 - 只請求期權數據，不請求底層股票
-            # genericTickList 為空字符串表示只請求基本報價（bid/ask/last/volume）
-            self.ib.reqMktData(option, '', False, False)  # snapshot=False
+            # 請求期權報價 - 使用完整 Generic Tick Tags
+            self.ib.reqMktData(option, self._generic_tick_list, False, False)
             
-            # 等待數據
+            # 等待數據（增加等待時間以確保數據完整）
             ticker_data = None
-            for _ in range(5):
+            for i in range(10):  # 最多等待 10 秒
                 time.sleep(1)
                 ticker_data = self.ib.ticker(option)
-                # 檢查是否有有效的報價數據（不是 NaN）
                 if ticker_data:
-                    has_bid = ticker_data.bid is not None and not (isinstance(ticker_data.bid, float) and ticker_data.bid != ticker_data.bid)
-                    has_ask = ticker_data.ask is not None and not (isinstance(ticker_data.ask, float) and ticker_data.ask != ticker_data.ask)
+                    has_bid = self._is_valid_price(ticker_data.bid)
+                    has_ask = self._is_valid_price(ticker_data.ask)
                     if has_bid or has_ask:
+                        # 再等待一下讓更多數據到達
+                        if i < 3:
+                            continue
                         break
             
             if not ticker_data:
@@ -497,35 +950,48 @@ class IBKRClient:
                 'strike': strike,
                 'expiration': expiration,
                 'option_type': option_type,
-                'data_source': 'ibkr_opra'
+                'data_source': 'ibkr_opra',
+                'market_data_type': self._current_market_data_type,
+                'outside_rth': not self.is_rth(),
+                'warnings': [],
+                'tick_tags_used': self._generic_tick_list
             }
             
-            # 收集報價數據 - 處理 NaN 值和 -1 值（IBKR 用 -1 表示無數據）
+            # 收集報價數據
             try:
-                # 調試：記錄原始數據
                 logger.debug(f"  原始數據: bid={ticker_data.bid}, ask={ticker_data.ask}, last={ticker_data.last}, volume={ticker_data.volume}")
                 
-                # 檢查 bid（排除 NaN 和 -1）
-                if ticker_data.bid is not None:
-                    bid_val = float(ticker_data.bid)
-                    if bid_val > 0 and bid_val == bid_val:  # 排除 NaN 和負數
-                        result['bid'] = bid_val
+                if self._is_valid_price(ticker_data.bid):
+                    result['bid'] = float(ticker_data.bid)
                 
-                # 檢查 ask（排除 NaN 和 -1）
-                if ticker_data.ask is not None:
-                    ask_val = float(ticker_data.ask)
-                    if ask_val > 0 and ask_val == ask_val:  # 排除 NaN 和負數
-                        result['ask'] = ask_val
+                if self._is_valid_price(ticker_data.ask):
+                    result['ask'] = float(ticker_data.ask)
                 
-                # 檢查 last（排除 NaN 和 -1）
-                if ticker_data.last is not None:
-                    last_val = float(ticker_data.last)
-                    if last_val > 0 and last_val == last_val:  # 排除 NaN 和負數
-                        result['last'] = last_val
+                if self._is_valid_price(ticker_data.last):
+                    result['last'] = float(ticker_data.last)
                 
-                # 檢查 volume
                 if ticker_data.volume is not None and ticker_data.volume > 0:
                     result['volume'] = int(ticker_data.volume)
+                
+                # Open Interest
+                if hasattr(ticker_data, 'openInterest') and ticker_data.openInterest:
+                    result['openInterest'] = int(ticker_data.openInterest)
+                
+                # Greeks（如果可用）
+                if ticker_data.modelGreeks:
+                    result['delta'] = ticker_data.modelGreeks.delta
+                    result['gamma'] = ticker_data.modelGreeks.gamma
+                    result['theta'] = ticker_data.modelGreeks.theta
+                    result['vega'] = ticker_data.modelGreeks.vega
+                    result['impliedVol'] = ticker_data.modelGreeks.impliedVol
+                    result['undPrice'] = ticker_data.modelGreeks.undPrice
+                    result['optPrice'] = ticker_data.modelGreeks.optPrice
+                    result['greeks_source'] = 'ibkr_model'
+                    
+                    # 檢查 IV 異常
+                    if result.get('impliedVol') and result['impliedVol'] > IV_SPIKE_THRESHOLD:
+                        result['warnings'].append(f'IV 異常高 ({result["impliedVol"]*100:.1f}%)')
+                        result['iv_spike_warning'] = True
                     
             except (ValueError, TypeError) as e:
                 logger.debug(f"  處理報價數據時出錯: {e}")
@@ -534,13 +1000,21 @@ class IBKRClient:
             if 'bid' in result and 'ask' in result:
                 result['mid'] = (result['bid'] + result['ask']) / 2
             
+            # 評估數據質量
+            result['data_quality'] = self._assess_data_quality(result)
+            
+            # 盤外時段警告
+            if result['outside_rth']:
+                result['warnings'].append('數據獲取於盤外時段')
+            
             # 取消市場數據訂閱
             self.ib.cancelMktData(option)
             
-            logger.info(f"* 獲取期權報價成功: {result}")
+            logger.info(f"* 獲取期權報價成功: data_quality={result.get('data_quality')}")
             return result
             
         except Exception as e:
+            self._record_error(0, str(e), f'get_option_quote({ticker}, {strike}, {option_type})')
             logger.error(f"x 獲取期權報價失敗: {e}")
             return None
     

@@ -31,6 +31,14 @@ class Settings:
     IBKR_USE_PAPER = os.getenv("IBKR_USE_PAPER", "True").lower() == "true"  # 使用 Paper Trading
     IBKR_ACCOUNT_ID = os.getenv("IBKR_ACCOUNT_ID", "")
     
+    # IBKR API 優化配置
+    IBKR_GREEKS_TIMEOUT = int(os.getenv("IBKR_GREEKS_TIMEOUT", "10"))  # Greeks 收斂超時（秒）
+    IBKR_GREEKS_STABILIZATION = int(os.getenv("IBKR_GREEKS_STABILIZATION", "3"))  # 穩定等待（秒）
+    IBKR_TICK_TAG_CATEGORIES = os.getenv("IBKR_TICK_TAG_CATEGORIES", "CORE,RECOMMENDED,ADVANCED")  # Tick Tags 類別
+    IBKR_REJECT_OUTSIDE_RTH = os.getenv("IBKR_REJECT_OUTSIDE_RTH", "False").lower() == "true"  # 拒絕盤外數據
+    IBKR_IV_SPIKE_THRESHOLD = float(os.getenv("IBKR_IV_SPIKE_THRESHOLD", "3.0"))  # 300% IV 異常閾值
+    IBKR_PRICE_MISMATCH_THRESHOLD = float(os.getenv("IBKR_PRICE_MISMATCH_THRESHOLD", "0.01"))  # 1% 價格偏差閾值
+    
     # RapidAPI設置
     RAPIDAPI_ENABLED = os.getenv("RAPIDAPI_ENABLED", "True").lower() == "true"
     RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY", "")
