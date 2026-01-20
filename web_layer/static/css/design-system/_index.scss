@@ -1,0 +1,9 @@
+// Design System Index
+// Forward all modules for use with @use 'design-system'
+
+@forward 'variables';
+@forward 'colors';
+@forward 'typography';
+@forward 'spacing';
+@forward 'animations';
+@forward 'responsive';

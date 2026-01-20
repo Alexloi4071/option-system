@@ -1,0 +1,485 @@
+// Progress Indicator Component
+// Modern circular progress with details and step tracking
+// Requirements: 8.1, 8.2, 8.3, 8.4, 8.5
+
+@use '../design-system/variables' as *;
+
+// ============================================================================
+// CSS CUSTOM PROPERTIES FOR PROGRESS
+// ============================================================================
+
+:root {
+  // Progress circle dimensions
+  --progress-circle-size: 120px;
+  --progress-circle-stroke-width: 8px;
+  --progress-circle-radius: 45;
+  --progress-circle-circumference: calc(2 * 3.14159 * var(--progress-circle-radius));
+  
+  // Progress colors
+  --progress-bg-color: var(--color-border);
+  --progress-bar-color: var(--color-primary);
+  --progress-text-color: var(--color-text-primary);
+  
+  // Animation durations
+  --progress-animation-duration: 300ms;
+  --checkmark-animation-duration: 400ms;
+}
+
+// Dark theme adjustments
+[data-theme="dark"] {
+  --progress-bg-color: var(--color-border);
+  --progress-bar-color: var(--color-primary);
+}
+
+// ============================================================================
+// PROGRESS CONTAINER
+// ============================================================================
+
+.progress-modern {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-6);
+  padding: var(--spacing-6);
+  background-color: var(--color-surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  
+  // Responsive: stack vertically on mobile
+  @media (max-width: #{$breakpoint-mobile - 1}) {
+    flex-direction: column;
+    text-align: center;
+  }
+}
+
+// ============================================================================
+// CIRCULAR PROGRESS
+// ============================================================================
+
+.progress-circle {
+  position: relative;
+  width: var(--progress-circle-size);
+  height: var(--progress-circle-size);
+  flex-shrink: 0;
+  
+  svg {
+    width: 100%;
+    height: 100%;
+    transform: rotate(-90deg); // Start from top
+  }
+  
+  // Background circle
+  .progress-bg {
+    fill: none;
+    stroke: var(--progress-bg-color);
+    stroke-width: var(--progress-circle-stroke-width);
+  }
+  
+  // Progress bar circle
+  .progress-bar {
+    fill: none;
+    stroke: var(--progress-bar-color);
+    stroke-width: var(--progress-circle-stroke-width);
+    stroke-linecap: round;
+    stroke-dasharray: var(--progress-circle-circumference);
+    stroke-dashoffset: calc(var(--progress-circle-circumference) * (1 - var(--progress, 0) / 100));
+    transition: stroke-dashoffset var(--progress-animation-duration) var(--ease-in-out);
+  }
+  
+  // Percentage text in center
+  .progress-text {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: var(--font-size-2xl);
+    font-weight: var(--font-weight-bold);
+    color: var(--progress-text-color);
+    font-family: var(--font-family-mono);
+  }
+}
+
+// Small variant
+.progress-circle-sm {
+  --progress-circle-size: 80px;
+  --progress-circle-stroke-width: 6px;
+  
+  .progress-text {
+    font-size: var(--font-size-lg);
+  }
+}
+
+// Large variant
+.progress-circle-lg {
+  --progress-circle-size: 160px;
+  --progress-circle-stroke-width: 10px;
+  
+  .progress-text {
+    font-size: var(--font-size-3xl);
+  }
+}
+
+// ============================================================================
+// PROGRESS DETAILS
+// ============================================================================
+
+.progress-details {
+  flex: 1;
+  min-width: 0; // Allow text truncation
+  
+  h5, .progress-title {
+    font-size: var(--font-size-lg);
+    font-weight: var(--font-weight-semibold);
+    color: var(--color-text-primary);
+    margin-bottom: var(--spacing-2);
+  }
+  
+  p, .progress-step {
+    font-size: var(--font-size-base);
+    color: var(--color-text-secondary);
+    margin-bottom: var(--spacing-2);
+    
+    // Truncate long text
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  
+  .progress-time {
+    font-size: var(--font-size-sm);
+    color: var(--color-text-tertiary);
+    font-family: var(--font-family-mono);
+  }
+}
+
+// ============================================================================
+// COMPLETED MODULES LIST
+// ============================================================================
+
+.progress-modules {
+  margin-top: var(--spacing-4);
+  
+  .modules-title {
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-medium);
+    color: var(--color-text-secondary);
+    margin-bottom: var(--spacing-2);
+  }
+  
+  .modules-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-2);
+    max-height: 120px;
+    overflow-y: auto;
+    
+    // Custom scrollbar
+    &::-webkit-scrollbar {
+      width: 4px;
+    }
+    
+    &::-webkit-scrollbar-track {
+      background: var(--color-border-light);
+      border-radius: var(--radius-full);
+    }
+    
+    &::-webkit-scrollbar-thumb {
+      background: var(--color-border);
+      border-radius: var(--radius-full);
+    }
+  }
+}
+
+// ============================================================================
+// MODULE BADGE WITH CHECKMARK
+// ============================================================================
+
+.module-badge-progress {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  height: 24px;
+  padding: 0 var(--spacing-2);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  border-radius: var(--radius-full);
+  background-color: var(--color-border-light);
+  color: var(--color-text-secondary);
+  transition: all var(--transition-fast) var(--ease-in-out);
+  
+  // Completed state with checkmark
+  &.completed {
+    background-color: var(--color-success);
+    color: white;
+    
+    .checkmark-icon {
+      display: inline-block;
+    }
+    
+    .module-number {
+      display: none;
+    }
+  }
+  
+  // In progress state
+  &.in-progress {
+    background-color: var(--color-primary);
+    color: white;
+    animation: pulse 1.5s ease-in-out infinite;
+  }
+  
+  // Error state
+  &.error {
+    background-color: var(--color-danger);
+    color: white;
+  }
+  
+  // Skipped state
+  &.skipped {
+    background-color: var(--color-warning);
+    color: white;
+  }
+  
+  .checkmark-icon {
+    display: none;
+    width: 12px;
+    height: 12px;
+  }
+}
+
+// ============================================================================
+// CHECKMARK ANIMATION (Requirement 8.4)
+// ============================================================================
+
+@keyframes checkmarkDraw {
+  0% {
+    stroke-dashoffset: 24;
+  }
+  100% {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes checkmarkScale {
+  0% {
+    transform: scale(0);
+    opacity: 0;
+  }
+  50% {
+    transform: scale(1.2);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes checkmarkBounce {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.1);
+  }
+}
+
+.checkmark-animated {
+  animation: checkmarkScale var(--checkmark-animation-duration) var(--ease-out) forwards;
+  
+  .checkmark-path {
+    stroke-dasharray: 24;
+    stroke-dashoffset: 24;
+    animation: checkmarkDraw var(--checkmark-animation-duration) var(--ease-out) forwards;
+    animation-delay: 100ms;
+  }
+}
+
+// Checkmark SVG icon
+.checkmark-svg {
+  width: 14px;
+  height: 14px;
+  
+  .checkmark-circle {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+  }
+  
+  .checkmark-path {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+}
+
+// ============================================================================
+// SKELETON LOADING STATE (Requirement 8.5)
+// ============================================================================
+
+.progress-skeleton {
+  .progress-circle {
+    .skeleton-circle {
+      fill: none;
+      stroke: var(--color-border-light);
+      stroke-width: var(--progress-circle-stroke-width);
+      animation: skeleton-pulse 1.5s ease-in-out infinite;
+    }
+    
+    .progress-text {
+      background: var(--color-border-light);
+      width: 50px;
+      height: 24px;
+      border-radius: var(--radius-sm);
+      animation: skeleton-pulse 1.5s ease-in-out infinite;
+      
+      // Hide text content
+      color: transparent;
+    }
+  }
+  
+  .progress-details {
+    .skeleton-line {
+      background: var(--color-border-light);
+      border-radius: var(--radius-sm);
+      animation: skeleton-pulse 1.5s ease-in-out infinite;
+      
+      &.skeleton-title {
+        width: 60%;
+        height: 20px;
+        margin-bottom: var(--spacing-2);
+      }
+      
+      &.skeleton-step {
+        width: 80%;
+        height: 16px;
+        margin-bottom: var(--spacing-2);
+      }
+      
+      &.skeleton-time {
+        width: 40%;
+        height: 14px;
+      }
+    }
+  }
+}
+
+@keyframes skeleton-pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+// ============================================================================
+// PROGRESS STATES
+// ============================================================================
+
+// Idle state (before analysis starts)
+.progress-modern.idle {
+  .progress-bar {
+    stroke: var(--color-border);
+  }
+  
+  .progress-text {
+    color: var(--color-text-tertiary);
+  }
+}
+
+// Running state
+.progress-modern.running {
+  .progress-bar {
+    stroke: var(--color-primary);
+  }
+}
+
+// Completed state
+.progress-modern.completed {
+  .progress-bar {
+    stroke: var(--color-success);
+  }
+  
+  .progress-text {
+    color: var(--color-success);
+  }
+}
+
+// Error state
+.progress-modern.error {
+  .progress-bar {
+    stroke: var(--color-danger);
+  }
+  
+  .progress-text {
+    color: var(--color-danger);
+  }
+}
+
+// ============================================================================
+// INLINE PROGRESS (for compact displays)
+// ============================================================================
+
+.progress-inline {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-3);
+  
+  .progress-circle {
+    --progress-circle-size: 48px;
+    --progress-circle-stroke-width: 4px;
+    
+    .progress-text {
+      font-size: var(--font-size-xs);
+    }
+  }
+  
+  .progress-details {
+    h5, .progress-title {
+      font-size: var(--font-size-base);
+      margin-bottom: 0;
+    }
+    
+    p, .progress-step {
+      font-size: var(--font-size-sm);
+      margin-bottom: 0;
+    }
+    
+    .progress-time {
+      display: none;
+    }
+  }
+}
+
+// ============================================================================
+// REDUCED MOTION SUPPORT
+// ============================================================================
+
+@media (prefers-reduced-motion: reduce) {
+  .progress-bar {
+    transition: none !important;
+  }
+  
+  .checkmark-animated {
+    animation: none !important;
+    
+    .checkmark-path {
+      animation: none !important;
+      stroke-dashoffset: 0;
+    }
+  }
+  
+  .module-badge-progress.in-progress {
+    animation: none !important;
+  }
+  
+  .progress-skeleton {
+    .skeleton-circle,
+    .skeleton-line,
+    .progress-text {
+      animation: none !important;
+    }
+  }
+}

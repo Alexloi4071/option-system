@@ -1,0 +1,334 @@
+// Tablet Layout Optimizations
+// Two-column layout and optimized spacing for medium screens (768px - 1199px)
+// Requirements: 3.3
+
+@use '../design-system/variables' as *;
+
+// ============================================================================
+// TABLET LAYOUT (768px - 1199px)
+// ============================================================================
+
+@media (min-width: $breakpoint-mobile) and (max-width: #{$breakpoint-desktop - 1px}) {
+  
+  // ============================================================================
+  // TWO-COLUMN GRID LAYOUT
+  // ============================================================================
+  
+  // Main card grid - two columns on tablet
+  .card-grid,
+  .grid-responsive,
+  .module-grid {
+    display: grid !important;
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: var(--spacing-6) !important;
+  }
+  
+  // Strategy grid - two columns
+  .strategy-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: var(--spacing-4) !important;
+  }
+  
+  // Metric grid - two columns
+  .metric-grid,
+  .metrics-container {
+    display: grid !important;
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: var(--spacing-6) !important;
+  }
+  
+  // Auto-fit grid with tablet-optimized minimum
+  .grid-auto-fit {
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)) !important;
+  }
+  
+  // ============================================================================
+  // FULL-WIDTH ITEMS
+  // ============================================================================
+  
+  // Items that should span full width on tablet
+  .tablet-full-width,
+  .col-tablet-full {
+    grid-column: 1 / -1 !important;
+  }
+  
+  // First item spans full width (for hero/header cards)
+  .card-grid--hero-first > *:first-child,
+  .grid-responsive--hero-first > *:first-child {
+    grid-column: 1 / -1;
+  }
+  
+  // ============================================================================
+  // CONTAINER SPACING
+  // ============================================================================
+  
+  .container,
+  .container-responsive,
+  .container-fluid {
+    padding-left: var(--spacing-6);
+    padding-right: var(--spacing-6);
+  }
+  
+  // Section spacing
+  section,
+  .section {
+    padding-top: var(--spacing-8);
+    padding-bottom: var(--spacing-8);
+  }
+  
+  // ============================================================================
+  // CARD ADJUSTMENTS
+  // ============================================================================
+  
+  .card-modern {
+    // Restore hover effects on tablet (non-touch primary)
+    &:hover {
+      transform: translateY(-2px);
+      box-shadow: var(--shadow-md);
+    }
+  }
+  
+  // Card header
+  .card-header {
+    padding: $spacing-4 $spacing-6;
+  }
+  
+  // Card body
+  .card-body {
+    padding: $spacing-6;
+  }
+  
+  // Card footer
+  .card-footer {
+    padding: $spacing-4 $spacing-6;
+  }
+  
+  // Module card
+  .module-card {
+    .module-header {
+      padding: $spacing-4 $spacing-6;
+      padding-left: calc(#{$spacing-6} + 40px);
+    }
+    
+    .module-badge {
+      width: 32px;
+      height: 32px;
+      font-size: $font-size-sm;
+    }
+    
+    .module-body {
+      padding: $spacing-6;
+    }
+  }
+  
+  // ============================================================================
+  // NAVIGATION ADJUSTMENTS
+  // ============================================================================
+  
+  .navbar-modern {
+    padding: $spacing-3 $spacing-6;
+    
+    .navbar-container {
+      gap: $spacing-4;
+    }
+    
+    .navbar-brand {
+      font-size: $font-size-base;
+    }
+    
+    .navbar-status {
+      display: flex;
+      gap: $spacing-3;
+    }
+  }
+  
+  // ============================================================================
+  // TABLE ADJUSTMENTS
+  // ============================================================================
+  
+  .table-container,
+  .table-responsive-wrapper {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  
+  .table-modern {
+    th, td {
+      padding: $spacing-3 $spacing-4;
+      font-size: $font-size-sm;
+    }
+  }
+  
+  // ============================================================================
+  // FORM ADJUSTMENTS
+  // ============================================================================
+  
+  // Form grid - two columns
+  .form-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--spacing-4);
+  }
+  
+  // Full-width form fields
+  .form-field-full {
+    grid-column: 1 / -1;
+  }
+  
+  // Form actions - inline on tablet
+  .form-actions {
+    display: flex;
+    flex-direction: row;
+    gap: $spacing-4;
+    justify-content: flex-end;
+    
+    .btn {
+      width: auto;
+    }
+  }
+  
+  // ============================================================================
+  // METRIC DISPLAY
+  // ============================================================================
+  
+  .metric-card {
+    flex-direction: row;
+    text-align: left;
+    
+    .metric-icon {
+      margin-right: $spacing-4;
+      margin-bottom: 0;
+    }
+    
+    .metric-value {
+      font-size: $font-size-2xl;
+    }
+  }
+  
+  // ============================================================================
+  // PROGRESS INDICATOR
+  // ============================================================================
+  
+  .progress-modern {
+    flex-direction: row;
+    text-align: left;
+    
+    .progress-circle {
+      margin-right: $spacing-6;
+      margin-bottom: 0;
+    }
+    
+    .progress-details {
+      text-align: left;
+    }
+  }
+  
+  // ============================================================================
+  // TYPOGRAPHY
+  // ============================================================================
+  
+  h1, .h1 { font-size: $font-size-3xl; }
+  h2, .h2 { font-size: $font-size-2xl; }
+  h3, .h3 { font-size: $font-size-xl; }
+  h4, .h4 { font-size: $font-size-lg; }
+  h5, .h5 { font-size: $font-size-base; }
+  h6, .h6 { font-size: $font-size-sm; }
+  
+  // ============================================================================
+  // SIDEBAR LAYOUT (Optional)
+  // ============================================================================
+  
+  // Two-column layout with sidebar
+  .layout-with-sidebar {
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    gap: var(--spacing-6);
+  }
+  
+  // Sidebar
+  .sidebar {
+    position: sticky;
+    top: 80px; // Below navbar
+    height: fit-content;
+    max-height: calc(100vh - 100px);
+    overflow-y: auto;
+  }
+  
+  // Main content area
+  .main-content {
+    min-width: 0; // Prevent grid blowout
+  }
+  
+  // ============================================================================
+  // UTILITY CLASSES
+  // ============================================================================
+  
+  // Hide on tablet
+  .tablet-hidden {
+    display: none !important;
+  }
+  
+  // Show only on tablet
+  .tablet-only {
+    display: block !important;
+  }
+  
+  // Center text on tablet
+  .text-tablet-center {
+    text-align: center !important;
+  }
+  
+  // Left align on tablet
+  .text-tablet-left {
+    text-align: left !important;
+  }
+  
+  // Tablet-specific flex direction
+  .flex-tablet-row {
+    flex-direction: row !important;
+  }
+  
+  .flex-tablet-column {
+    flex-direction: column !important;
+  }
+}
+
+// ============================================================================
+// HIDE TABLET-ONLY ON OTHER BREAKPOINTS
+// ============================================================================
+
+// Hide tablet-only on mobile
+@media (max-width: #{$breakpoint-mobile - 1px}) {
+  .tablet-only {
+    display: none !important;
+  }
+}
+
+// Hide tablet-only on desktop
+@media (min-width: $breakpoint-desktop) {
+  .tablet-only {
+    display: none !important;
+  }
+}
+
+// ============================================================================
+// TABLET LANDSCAPE SPECIFIC
+// ============================================================================
+
+@media (min-width: $breakpoint-mobile) and (max-width: #{$breakpoint-desktop - 1px}) and (orientation: landscape) {
+  // Landscape tablet optimizations
+  .card-grid,
+  .grid-responsive {
+    // Can use 3 columns in landscape if space allows
+    @media (min-width: 1024px) {
+      grid-template-columns: repeat(3, 1fr) !important;
+    }
+  }
+  
+  // Reduce vertical spacing in landscape
+  section,
+  .section {
+    padding-top: var(--spacing-6);
+    padding-bottom: var(--spacing-6);
+  }
+}

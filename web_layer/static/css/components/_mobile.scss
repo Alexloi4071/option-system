@@ -1,0 +1,384 @@
+// Mobile Layout Optimizations
+// Ensures proper mobile layout with stacked cards and touch-friendly targets
+// Requirements: 3.2, 3.4
+
+@use '../design-system/variables' as *;
+
+// ============================================================================
+// MOBILE TOUCH TARGET SIZING
+// ============================================================================
+
+// Minimum touch target size (44px per WCAG guidelines)
+$touch-target-min: 44px;
+
+// Mobile-only styles (max-width: 767px)
+@media (max-width: #{$breakpoint-mobile - 1px}) {
+  
+  // ============================================================================
+  // TOUCH TARGET ENFORCEMENT
+  // ============================================================================
+  
+  // Ensure all interactive elements meet minimum touch target size
+  button,
+  .btn,
+  a:not(.btn-link),
+  input[type="button"],
+  input[type="submit"],
+  input[type="reset"],
+  [role="button"],
+  .btn-icon,
+  .btn-icon-sm,
+  .btn-icon-only {
+    min-width: $touch-target-min;
+    min-height: $touch-target-min;
+  }
+  
+  // Form inputs touch targets
+  input[type="text"],
+  input[type="email"],
+  input[type="password"],
+  input[type="number"],
+  input[type="tel"],
+  input[type="url"],
+  input[type="search"],
+  input[type="date"],
+  input[type="time"],
+  input[type="datetime-local"],
+  select,
+  textarea {
+    min-height: $touch-target-min;
+    padding: $spacing-3;
+    font-size: 16px; // Prevent iOS zoom on focus
+  }
+  
+  // Checkbox and radio touch targets
+  input[type="checkbox"],
+  input[type="radio"] {
+    width: $touch-target-min;
+    height: $touch-target-min;
+    
+    // If using custom checkboxes, ensure wrapper is large enough
+    & + label {
+      min-height: $touch-target-min;
+      display: inline-flex;
+      align-items: center;
+      padding-left: $spacing-2;
+    }
+  }
+  
+  // Icon buttons must be at least 44px
+  .btn-icon,
+  .btn-icon-sm {
+    width: $touch-target-min;
+    height: $touch-target-min;
+    
+    i {
+      font-size: $font-size-lg;
+    }
+  }
+  
+  // Card action buttons
+  .card-actions {
+    .btn-icon,
+    .btn-icon-sm {
+      width: $touch-target-min;
+      height: $touch-target-min;
+    }
+  }
+  
+  // Navigation touch targets
+  .navbar-actions {
+    button,
+    a {
+      min-width: $touch-target-min;
+      min-height: $touch-target-min;
+    }
+  }
+  
+  // ============================================================================
+  // MOBILE CARD STACKING
+  // ============================================================================
+  
+  // Stack cards vertically on mobile
+  .card-grid,
+  .grid-responsive,
+  .module-grid {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: var(--spacing-4) !important;
+    
+    // Reset grid properties
+    grid-template-columns: unset !important;
+  }
+  
+  // Strategy grid stacks on mobile
+  .strategy-grid {
+    grid-template-columns: 1fr !important;
+  }
+  
+  // Metric cards stack on mobile
+  .metric-grid,
+  .metrics-container {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: var(--spacing-4) !important;
+  }
+  
+  // ============================================================================
+  // MOBILE CARD ADJUSTMENTS
+  // ============================================================================
+  
+  .card-modern {
+    // Reduce hover effects on mobile (touch devices)
+    &:hover {
+      transform: none;
+      box-shadow: var(--shadow-sm);
+    }
+    
+    // Active state for touch feedback
+    &:active {
+      transform: scale(0.98);
+      box-shadow: var(--shadow-md);
+    }
+  }
+  
+  // Card header adjustments
+  .card-header {
+    padding: $spacing-3 $spacing-4;
+    min-height: $touch-target-min;
+    flex-wrap: wrap;
+    gap: $spacing-2;
+  }
+  
+  // Card body adjustments
+  .card-body {
+    padding: $spacing-4;
+  }
+  
+  // Card footer adjustments
+  .card-footer {
+    padding: $spacing-3 $spacing-4;
+    flex-wrap: wrap;
+    gap: $spacing-2;
+  }
+  
+  // Module card adjustments
+  .module-card {
+    .module-header {
+      padding: $spacing-3 $spacing-4;
+      padding-left: calc(#{$spacing-4} + 36px);
+      flex-wrap: wrap;
+    }
+    
+    .module-badge {
+      width: 28px;
+      height: 28px;
+      font-size: $font-size-xs;
+      top: $spacing-3;
+      left: $spacing-3;
+    }
+    
+    .module-body {
+      padding: $spacing-4;
+    }
+  }
+  
+  // ============================================================================
+  // MOBILE NAVIGATION
+  // ============================================================================
+  
+  .navbar-modern {
+    padding: $spacing-2 $spacing-3;
+    
+    .navbar-container {
+      gap: $spacing-2;
+    }
+    
+    .navbar-brand {
+      font-size: $font-size-sm;
+      
+      i {
+        font-size: $font-size-base;
+      }
+    }
+    
+    .navbar-status {
+      // Hide status indicators on very small screens
+      @media (max-width: 480px) {
+        display: none;
+      }
+    }
+  }
+  
+  // ============================================================================
+  // MOBILE TABLES
+  // ============================================================================
+  
+  // Make tables horizontally scrollable
+  .table-container,
+  .table-responsive-wrapper {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    margin: 0 calc(-1 * var(--spacing-4));
+    padding: 0 var(--spacing-4);
+  }
+  
+  .table-modern {
+    min-width: 600px; // Ensure table doesn't collapse too much
+    
+    th, td {
+      padding: $spacing-2 $spacing-3;
+      font-size: $font-size-sm;
+    }
+  }
+  
+  // ============================================================================
+  // MOBILE FORMS
+  // ============================================================================
+  
+  .form-group-modern {
+    margin-bottom: $spacing-4;
+  }
+  
+  .form-input {
+    padding: $spacing-3;
+    font-size: 16px; // Prevent iOS zoom
+  }
+  
+  // Stack form buttons on mobile
+  .form-actions {
+    display: flex;
+    flex-direction: column;
+    gap: $spacing-3;
+    
+    .btn {
+      width: 100%;
+      justify-content: center;
+    }
+  }
+  
+  // ============================================================================
+  // MOBILE METRICS
+  // ============================================================================
+  
+  .metric-card {
+    flex-direction: column;
+    text-align: center;
+    
+    .metric-icon {
+      margin-bottom: $spacing-2;
+    }
+    
+    .metric-value {
+      font-size: $font-size-2xl;
+    }
+  }
+  
+  // ============================================================================
+  // MOBILE PROGRESS INDICATOR
+  // ============================================================================
+  
+  .progress-modern {
+    flex-direction: column;
+    text-align: center;
+    
+    .progress-circle {
+      margin-bottom: $spacing-4;
+    }
+    
+    .progress-details {
+      text-align: center;
+    }
+  }
+  
+  // ============================================================================
+  // MOBILE SPACING ADJUSTMENTS
+  // ============================================================================
+  
+  // Reduce container padding on mobile
+  .container,
+  .container-responsive,
+  .container-fluid {
+    padding-left: var(--spacing-4);
+    padding-right: var(--spacing-4);
+  }
+  
+  // Reduce section spacing
+  section,
+  .section {
+    padding-top: var(--spacing-6);
+    padding-bottom: var(--spacing-6);
+  }
+  
+  // ============================================================================
+  // MOBILE TYPOGRAPHY
+  // ============================================================================
+  
+  h1, .h1 { font-size: $font-size-2xl; }
+  h2, .h2 { font-size: $font-size-xl; }
+  h3, .h3 { font-size: $font-size-lg; }
+  h4, .h4 { font-size: $font-size-base; }
+  h5, .h5 { font-size: $font-size-sm; }
+  h6, .h6 { font-size: $font-size-sm; }
+  
+  // ============================================================================
+  // MOBILE UTILITY CLASSES
+  // ============================================================================
+  
+  // Full width buttons on mobile
+  .btn-mobile-full {
+    width: 100%;
+    justify-content: center;
+  }
+  
+  // Center text on mobile
+  .text-mobile-center {
+    text-align: center;
+  }
+  
+  // Hide on mobile
+  .mobile-hidden {
+    display: none !important;
+  }
+  
+  // Show only on mobile
+  .mobile-only {
+    display: block !important;
+  }
+}
+
+// Hide mobile-only elements on larger screens
+@media (min-width: $breakpoint-mobile) {
+  .mobile-only {
+    display: none !important;
+  }
+}
+
+// ============================================================================
+// TOUCH-FRIENDLY INTERACTIVE STATES
+// ============================================================================
+
+// Touch-friendly class for explicit touch target sizing
+.touch-target {
+  min-width: $touch-target-min;
+  min-height: $touch-target-min;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+// Touch-friendly link wrapper
+.touch-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: $touch-target-min;
+  padding: $spacing-2;
+}
+
+// Touch-friendly list items
+.touch-list-item {
+  min-height: $touch-target-min;
+  display: flex;
+  align-items: center;
+  padding: $spacing-2 $spacing-3;
+}

@@ -1,0 +1,397 @@
+// Accessibility Styles
+// Keyboard focus indicators and WCAG compliance
+
+// Focus indicator styles
+:focus {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+// Enhanced focus for interactive elements
+button:focus,
+a:focus,
+input:focus,
+select:focus,
+textarea:focus,
+[tabindex]:focus {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.1);
+}
+
+// Focus visible (only show on keyboard navigation)
+:focus:not(:focus-visible) {
+  outline: none;
+  box-shadow: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.1);
+}
+
+// Dark theme focus
+[data-theme="dark"] {
+  button:focus,
+  a:focus,
+  input:focus,
+  select:focus,
+  textarea:focus,
+  [tabindex]:focus {
+    outline-color: var(--color-primary-light);
+    box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.2);
+  }
+
+  :focus-visible {
+    outline-color: var(--color-primary-light);
+    box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.2);
+  }
+}
+
+// Skip to content link (for screen readers)
+.skip-to-content {
+  position: absolute;
+  top: -40px;
+  left: 0;
+  background: var(--color-primary);
+  color: white;
+  padding: var(--spacing-2) var(--spacing-4);
+  text-decoration: none;
+  border-radius: var(--radius-md);
+  z-index: var(--z-tooltip);
+  
+  &:focus {
+    top: var(--spacing-2);
+    left: var(--spacing-2);
+  }
+}
+
+// Ensure all interactive elements are focusable
+button,
+a,
+input,
+select,
+textarea,
+[role="button"],
+[role="link"],
+[role="tab"],
+[role="menuitem"] {
+  &:not([tabindex="-1"]) {
+    // Ensure element can receive focus
+    position: relative;
+  }
+}
+
+// Icon buttons need visible focus
+.btn-icon,
+.btn-icon-sm {
+  &:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+    box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.1);
+  }
+}
+
+// Card interactive elements
+.card-modern {
+  button:focus-visible,
+  a:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+}
+
+// Table row focus
+.table-modern {
+  tbody tr:focus-within {
+    background-color: rgba(37, 99, 235, 0.05);
+    outline: 2px solid var(--color-primary);
+    outline-offset: -2px;
+  }
+}
+
+// Form input focus
+.form-input:focus,
+.form-select:focus,
+.form-textarea:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.1);
+  outline: none;
+}
+
+// Navigation focus
+.navbar-modern {
+  button:focus-visible,
+  a:focus-visible {
+    outline: 2px solid var(--color-primary-light);
+    outline-offset: 2px;
+  }
+}
+
+// Modal and dialog focus trap
+.modal,
+.dialog {
+  &:focus {
+    outline: none;
+  }
+  
+  // First and last focusable elements
+  [data-focus-trap-first]:focus,
+  [data-focus-trap-last]:focus {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+}
+
+// High contrast mode support
+@media (prefers-contrast: high) {
+  :focus-visible {
+    outline-width: 3px;
+    outline-offset: 3px;
+  }
+  
+  button:focus,
+  a:focus,
+  input:focus {
+    outline-width: 3px;
+  }
+}
+
+// Reduced motion support
+@media (prefers-reduced-motion: reduce) {
+  :focus,
+  :focus-visible {
+    transition: none;
+  }
+}
+
+// Screen reader only content
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
+// Screen reader only but focusable
+.sr-only-focusable:focus {
+  position: static;
+  width: auto;
+  height: auto;
+  padding: inherit;
+  margin: inherit;
+  overflow: visible;
+  clip: auto;
+  white-space: normal;
+}
+
+// Keyboard shortcut help overlay
+.keyboard-help-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(4px);
+  z-index: var(--z-modal);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--spacing-4);
+  animation: fadeIn var(--transition-base);
+  
+  &.d-none {
+    display: none;
+  }
+}
+
+.keyboard-help-content {
+  background: var(--color-surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xl);
+  max-width: 800px;
+  width: 100%;
+  max-height: 90vh;
+  overflow-y: auto;
+  animation: slideUp var(--transition-base);
+}
+
+.keyboard-help-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--spacing-6);
+  border-bottom: 1px solid var(--color-border);
+  
+  h2 {
+    margin: 0;
+    font-size: var(--font-size-2xl);
+    font-weight: var(--font-weight-semibold);
+    color: var(--color-text-primary);
+  }
+  
+  .keyboard-help-close {
+    margin-left: var(--spacing-4);
+  }
+}
+
+.keyboard-help-body {
+  padding: var(--spacing-6);
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: var(--spacing-6);
+}
+
+.keyboard-help-section {
+  h3 {
+    font-size: var(--font-size-lg);
+    font-weight: var(--font-weight-semibold);
+    color: var(--color-text-primary);
+    margin: 0 0 var(--spacing-4) 0;
+  }
+}
+
+.keyboard-shortcut {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--spacing-3) 0;
+  border-bottom: 1px solid var(--color-border-light);
+  
+  &:last-child {
+    border-bottom: none;
+  }
+  
+  kbd {
+    display: inline-block;
+    padding: var(--spacing-1) var(--spacing-2);
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+    color: var(--color-text-primary);
+    background: var(--color-background);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    box-shadow: 0 2px 0 var(--color-border);
+    margin-right: var(--spacing-2);
+    
+    & + kbd {
+      margin-left: var(--spacing-1);
+    }
+  }
+  
+  span {
+    flex: 1;
+    text-align: right;
+    color: var(--color-text-secondary);
+    font-size: var(--font-size-sm);
+  }
+}
+
+.keyboard-help-footer {
+  padding: var(--spacing-4) var(--spacing-6);
+  border-top: 1px solid var(--color-border);
+  text-align: center;
+  
+  p {
+    margin: 0;
+    font-size: var(--font-size-sm);
+    color: var(--color-text-tertiary);
+  }
+  
+  kbd {
+    display: inline-block;
+    padding: var(--spacing-1) var(--spacing-2);
+    font-family: var(--font-family-mono);
+    font-size: var(--font-size-xs);
+    color: var(--color-text-primary);
+    background: var(--color-background);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    margin: 0 var(--spacing-1);
+  }
+}
+
+// Dark theme adjustments
+[data-theme="dark"] {
+  .keyboard-help-content {
+    background: var(--color-surface);
+  }
+  
+  .keyboard-shortcut kbd {
+    background: var(--color-surface-elevated);
+    border-color: var(--color-border);
+    box-shadow: 0 2px 0 var(--color-border);
+  }
+  
+  .keyboard-help-footer kbd {
+    background: var(--color-surface-elevated);
+    border-color: var(--color-border);
+  }
+}
+
+// Responsive adjustments
+@media (max-width: 768px) {
+  .keyboard-help-body {
+    grid-template-columns: 1fr;
+    gap: var(--spacing-4);
+  }
+  
+  .keyboard-help-header {
+    padding: var(--spacing-4);
+    
+    h2 {
+      font-size: var(--font-size-xl);
+    }
+  }
+  
+  .keyboard-help-body {
+    padding: var(--spacing-4);
+  }
+  
+  .keyboard-shortcut {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--spacing-2);
+    
+    span {
+      text-align: left;
+    }
+  }
+}
+
+// Animations
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slideUp {
+  from {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+// Reduced motion
+@media (prefers-reduced-motion: reduce) {
+  .keyboard-help-overlay,
+  .keyboard-help-content {
+    animation: none;
+  }
+}

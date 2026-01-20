@@ -6,8 +6,12 @@
 import os
 import sys
 import logging
+import json
+import time
+import threading
+import uuid
 from datetime import datetime
-from flask import Flask, render_template, request, jsonify, send_from_directory
+from flask import Flask, render_template, request, jsonify, send_from_directory, Response
 
 # 添加項目根目錄到 Python 路徑
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -34,6 +38,9 @@ app = Flask(__name__, static_folder='static', template_folder='templates')
 # 注意：這裡不強制使用 IBKR，讓 DataFetcher 根據配置決定
 analysis_system = OptionsAnalysisSystem()
 
+# 進度追蹤存儲
+progress_store = {}
+
 @app.route('/')
 def index():
     """主頁面"""
@@ -48,6 +55,7 @@ def analyze():
     {
         "ticker": "AAPL",
         "expiration": "2025-06-20", (可選)
+        "selected_expirations": ["2025-06-20", "2025-07-18"], (可選，用於 Module 27)
         "confidence": 1.0, (可選)
         "strike": 150.0, (可選)
         "premium": 5.5, (可選)
@@ -62,13 +70,55 @@ def analyze():
         
         ticker = data['ticker'].upper()
         expiration = data.get('expiration')
+        selected_expirations = data.get('selected_expirations')  # 多選到期日
         confidence = float(data.get('confidence', 1.0))
         strike = float(data['strike']) if data.get('strike') else None
         premium = float(data['premium']) if data.get('premium') else None
         option_type = data.get('type')
         use_ibkr = data.get('use_ibkr')
+        task_id = data.get('task_id')  # 用於進度追蹤
         
-        logger.info(f"收到分析請求: {ticker}, 到期日: {expiration}, IBKR: {use_ibkr}")
+        logger.info(f"收到分析請求: {ticker}, 到期日: {expiration}, 多選到期日: {selected_expirations}, IBKR: {use_ibkr}")
+        
+        # 初始化進度追蹤
+        if task_id:
+            progress_store[task_id] = {
+                'status': 'running',
+                'progress': 0,
+                'step': 0,
+                'total_steps': 5,
+                'message': '初始化分析...',
+                'current_module': '準備中',
+                'completed_modules': [],
+                'start_time': time.time(),
+                'estimated_remaining': None
+            }
+        
+        # 創建進度回調函數
+        def progress_callback(step, total, message, module_name=None):
+            if task_id and task_id in progress_store:
+                elapsed = time.time() - progress_store[task_id]['start_time']
+                progress_pct = int((step / total) * 100)
+                
+                # 估算剩餘時間
+                if step > 0:
+                    estimated_total = elapsed * total / step
+                    estimated_remaining = max(0, estimated_total - elapsed)
+                else:
+                    estimated_remaining = None
+                
+                progress_store[task_id].update({
+                    'progress': progress_pct,
+                    'step': step,
+                    'total_steps': total,
+                    'message': message,
+                    'current_module': module_name or message,
+                    'estimated_remaining': estimated_remaining
+                })
+                
+                if module_name and module_name not in progress_store[task_id]['completed_modules']:
+                    if step > 0:  # 不是第一步時，上一個模塊已完成
+                        progress_store[task_id]['completed_modules'].append(module_name)
         
         # 執行分析
         results = analysis_system.run_complete_analysis(
@@ -78,8 +128,18 @@ def analyze():
             use_ibkr=use_ibkr,
             strike=strike,
             premium=premium,
-            option_type=option_type
+            option_type=option_type,
+            selected_expirations=selected_expirations,
+            progress_callback=progress_callback  # 傳遞進度回調
         )
+        
+        # 更新進度為完成
+        if task_id and task_id in progress_store:
+            progress_store[task_id].update({
+                'status': 'completed',
+                'progress': 100,
+                'message': '分析完成！'
+            })
         
         if results['status'] == 'success':
             # 處理結果中的特殊對象 (如 DataFrame, numpy types, datetime) 以便 JSON 序列化
@@ -91,7 +151,44 @@ def analyze():
             
     except Exception as e:
         logger.error(f"API 錯誤: {e}")
+        if task_id and task_id in progress_store:
+            progress_store[task_id].update({
+                'status': 'error',
+                'message': str(e)
+            })
         return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/progress/<task_id>', methods=['GET'])
+def get_progress(task_id):
+    """獲取分析進度"""
+    if task_id in progress_store:
+        return jsonify(progress_store[task_id])
+    else:
+        return jsonify({'status': 'not_found', 'message': '任務不存在'}), 404
+
+
+@app.route('/api/progress/stream/<task_id>')
+def progress_stream(task_id):
+    """SSE 進度流"""
+    def generate():
+        while True:
+            if task_id in progress_store:
+                data = progress_store[task_id]
+                yield f"data: {json.dumps(data)}\n\n"
+                
+                if data.get('status') in ['completed', 'error']:
+                    # 清理完成的任務
+                    time.sleep(1)
+                    if task_id in progress_store:
+                        del progress_store[task_id]
+                    break
+            else:
+                yield f"data: {json.dumps({'status': 'waiting'})}\n\n"
+            
+            time.sleep(0.5)  # 每 0.5 秒更新一次
+    
+    return Response(generate(), mimetype='text/event-stream')
 
 @app.route('/api/expirations', methods=['GET'])
 def get_expirations():

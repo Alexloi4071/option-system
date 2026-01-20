@@ -1,0 +1,511 @@
+// Icon System Styles
+// Standardized icon styling using Font Awesome 6.0+
+// Requirements: 12.1, 12.3, 12.4, 12.5
+
+@use '../design-system/variables' as *;
+
+// ============================================================================
+// ICON BASE STYLES
+// ============================================================================
+
+// Ensure all icons use consistent sizing and alignment
+.fas, .far, .fab, .fal, .fad, .fat,
+[class^="fa-"], [class*=" fa-"] {
+  // Default icon size matches text
+  font-size: inherit;
+  
+  // Ensure proper vertical alignment with text
+  vertical-align: middle;
+  line-height: 1;
+  
+  // Smooth transitions for color changes
+  transition: color var(--transition-fast, 100ms) var(--ease-in-out, ease);
+}
+
+// ============================================================================
+// ICON SIZE CLASSES
+// ============================================================================
+
+.icon-xs {
+  font-size: $font-size-xs !important; // 12px
+}
+
+.icon-sm {
+  font-size: $font-size-sm !important; // 14px
+}
+
+.icon-base {
+  font-size: $font-size-base !important; // 16px
+}
+
+.icon-lg {
+  font-size: $font-size-lg !important; // 18px
+}
+
+.icon-xl {
+  font-size: $font-size-xl !important; // 20px
+}
+
+.icon-2xl {
+  font-size: $font-size-2xl !important; // 24px
+}
+
+.icon-3xl {
+  font-size: 2rem !important; // 32px
+}
+
+.icon-4xl {
+  font-size: 2.5rem !important; // 40px
+}
+
+// ============================================================================
+// ICON COLOR CLASSES
+// ============================================================================
+
+.icon-primary {
+  color: var(--color-primary) !important;
+}
+
+.icon-secondary {
+  color: var(--color-text-secondary) !important;
+}
+
+.icon-success {
+  color: var(--color-success) !important;
+}
+
+.icon-danger {
+  color: var(--color-danger) !important;
+}
+
+.icon-warning {
+  color: var(--color-warning) !important;
+}
+
+.icon-info {
+  color: var(--color-info) !important;
+}
+
+.icon-neutral {
+  color: var(--color-text-tertiary) !important;
+}
+
+.icon-muted {
+  color: var(--color-text-tertiary) !important;
+  opacity: 0.7;
+}
+
+// ============================================================================
+// STATUS ICON STYLES
+// ============================================================================
+
+.status-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  
+  // Default size
+  width: 1em;
+  height: 1em;
+  font-size: $font-size-base;
+  
+  // Ensure proper alignment
+  vertical-align: middle;
+  
+  &.status-success {
+    color: var(--color-success);
+  }
+  
+  &.status-warning {
+    color: var(--color-warning);
+  }
+  
+  &.status-error {
+    color: var(--color-danger);
+  }
+  
+  &.status-info {
+    color: var(--color-info);
+  }
+  
+  &.status-loading {
+    color: var(--color-primary);
+    animation: spin 1s linear infinite;
+  }
+  
+  &.status-pending {
+    color: var(--color-text-secondary);
+  }
+}
+
+// Status icon with background
+.status-icon-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: $radius-full;
+  font-size: $font-size-sm;
+  
+  &.status-success {
+    background-color: rgba(16, 185, 129, 0.1);
+    color: var(--color-success);
+  }
+  
+  &.status-warning {
+    background-color: rgba(245, 158, 11, 0.1);
+    color: var(--color-warning);
+  }
+  
+  &.status-error {
+    background-color: rgba(239, 68, 68, 0.1);
+    color: var(--color-danger);
+  }
+  
+  &.status-info {
+    background-color: rgba(6, 182, 212, 0.1);
+    color: var(--color-info);
+  }
+}
+
+// ============================================================================
+// DIRECTIONAL ICON STYLES
+// ============================================================================
+
+.directional-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  
+  // Default size
+  font-size: 0.875em;
+  
+  // Ensure proper alignment with text
+  vertical-align: middle;
+  margin-right: $spacing-1;
+  
+  &.direction-up {
+    color: var(--color-success);
+  }
+  
+  &.direction-down {
+    color: var(--color-danger);
+  }
+  
+  &.direction-flat {
+    color: var(--color-text-tertiary);
+  }
+}
+
+// Price change indicator with icon
+.price-change {
+  display: inline-flex;
+  align-items: center;
+  gap: $spacing-1;
+  font-weight: $font-weight-medium;
+  
+  i {
+    font-size: 0.75em;
+  }
+  
+  &.positive {
+    color: var(--color-success);
+    
+    i {
+      color: inherit;
+    }
+  }
+  
+  &.negative {
+    color: var(--color-danger);
+    
+    i {
+      color: inherit;
+    }
+  }
+  
+  &.neutral {
+    color: var(--color-text-tertiary);
+    
+    i {
+      color: inherit;
+    }
+  }
+}
+
+// ============================================================================
+// ICON WITH TEXT ALIGNMENT
+// ============================================================================
+
+// Icon before text
+.icon-text {
+  display: inline-flex;
+  align-items: center;
+  gap: $spacing-2;
+  
+  i, .icon {
+    flex-shrink: 0;
+    font-size: 1em;
+    line-height: 1;
+  }
+}
+
+// Icon after text
+.text-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: $spacing-2;
+  
+  i, .icon {
+    flex-shrink: 0;
+    font-size: 1em;
+    line-height: 1;
+    order: 1;
+  }
+}
+
+// Icon only (for buttons, etc.)
+.icon-only {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  
+  i, .icon {
+    font-size: 1em;
+    line-height: 1;
+  }
+}
+
+// ============================================================================
+// MODULE ICON STYLES
+// ============================================================================
+
+.module-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: $radius-md;
+  background-color: rgba(37, 99, 235, 0.1);
+  color: var(--color-primary);
+  font-size: $font-size-base;
+  
+  &.module-icon-sm {
+    width: 24px;
+    height: 24px;
+    font-size: $font-size-sm;
+  }
+  
+  &.module-icon-lg {
+    width: 40px;
+    height: 40px;
+    font-size: $font-size-lg;
+  }
+}
+
+// Module badge with number
+.module-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 $spacing-2;
+  border-radius: $radius-full;
+  background-color: var(--color-primary);
+  color: white;
+  font-size: $font-size-xs;
+  font-weight: $font-weight-bold;
+}
+
+// ============================================================================
+// ACTION ICON STYLES
+// ============================================================================
+
+.action-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: $radius-md;
+  background-color: transparent;
+  color: var(--color-text-secondary);
+  font-size: $font-size-base;
+  cursor: pointer;
+  transition: 
+    background-color var(--transition-fast, 100ms) var(--ease-in-out, ease),
+    color var(--transition-fast, 100ms) var(--ease-in-out, ease);
+  
+  &:hover {
+    background-color: var(--color-background);
+    color: var(--color-text-primary);
+  }
+  
+  &:focus {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+  
+  &:active {
+    transform: scale(0.95);
+  }
+  
+  &.action-icon-sm {
+    width: 24px;
+    height: 24px;
+    font-size: $font-size-sm;
+  }
+  
+  &.action-icon-lg {
+    width: 40px;
+    height: 40px;
+    font-size: $font-size-lg;
+  }
+}
+
+// ============================================================================
+// ICON ANIMATIONS
+// ============================================================================
+
+// Spin animation (for loading icons)
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.icon-spin {
+  animation: spin 1s linear infinite;
+}
+
+// Pulse animation (for status indicators)
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.icon-pulse {
+  animation: pulse 2s ease-in-out infinite;
+}
+
+// Bounce animation (for attention)
+@keyframes bounce {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+.icon-bounce {
+  animation: bounce 1s ease-in-out infinite;
+}
+
+// ============================================================================
+// ICON BUTTON STYLES
+// ============================================================================
+
+.btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: none;
+  border-radius: $radius-md;
+  background-color: transparent;
+  color: var(--color-text-secondary);
+  font-size: $font-size-lg;
+  cursor: pointer;
+  transition: 
+    background-color var(--transition-fast, 100ms) var(--ease-in-out, ease),
+    color var(--transition-fast, 100ms) var(--ease-in-out, ease),
+    transform var(--transition-fast, 100ms) var(--ease-in-out, ease);
+  
+  &:hover {
+    background-color: var(--color-background);
+    color: var(--color-text-primary);
+  }
+  
+  &:focus {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+  
+  &:active {
+    transform: scale(0.95);
+  }
+  
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+}
+
+.btn-icon-sm {
+  width: 32px;
+  height: 32px;
+  font-size: $font-size-base;
+}
+
+.btn-icon-xs {
+  width: 24px;
+  height: 24px;
+  font-size: $font-size-sm;
+}
+
+// ============================================================================
+// ICON LIST STYLES
+// ============================================================================
+
+.icon-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  
+  li {
+    display: flex;
+    align-items: flex-start;
+    gap: $spacing-3;
+    padding: $spacing-2 0;
+    
+    i, .icon {
+      flex-shrink: 0;
+      margin-top: 0.125em; // Align with first line of text
+      color: var(--color-primary);
+    }
+  }
+}
+
+// ============================================================================
+// ACCESSIBILITY
+// ============================================================================
+
+// Hide decorative icons from screen readers
+[aria-hidden="true"] {
+  speak: none;
+}
+
+// Ensure icons with labels are properly announced
+[role="img"][aria-label] {
+  // Icon is meaningful, will be announced
+}
+
+// Focus visible for icon buttons
+.btn-icon:focus-visible,
+.action-icon:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}

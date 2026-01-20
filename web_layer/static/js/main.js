@@ -1,6 +1,120 @@
 // web_layer/static/js/main.js
 
+// ============================================================================
+// MODERN UI INITIALIZATION
+// ============================================================================
+
+// Initialize all modern UI components when DOM is ready
 document.addEventListener('DOMContentLoaded', function() {
+    console.log('[Main] Initializing modern UI components...');
+    
+    // Initialize theme manager (already loaded)
+    if (window.themeManager) {
+        console.log('[Main] Theme Manager ready:', themeManager.getCurrentTheme());
+    }
+    
+    // Initialize animation controller (already loaded)
+    if (window.animationController) {
+        console.log('[Main] Animation Controller ready. Reduced motion:', animationController.reducedMotion);
+        
+        // Apply staggered animations to initial cards
+        const initialCards = document.querySelectorAll('.card');
+        if (initialCards.length > 0) {
+            animationController.applyStaggeredAnimation(initialCards);
+        }
+    }
+    
+    // Initialize module error handler (already loaded)
+    if (window.ModuleErrorHandler) {
+        console.log('[Main] Module Error Handler ready');
+    }
+    
+    // Initialize CSS fallback handler (already loaded)
+    if (window.CSSFallbackHandler) {
+        console.log('[Main] CSS Fallback Handler ready');
+    }
+    
+    // Initialize performance monitor if available
+    if (window.PerformanceMonitor) {
+        console.log('[Main] Performance Monitor ready');
+        PerformanceMonitor.startMonitoring();
+    }
+    
+    // Initialize lazy loader if available
+    if (window.LazyLoader) {
+        console.log('[Main] Lazy Loader ready');
+        LazyLoader.init();
+    }
+    
+    // Initialize virtual scroller if available
+    if (window.VirtualScroller) {
+        console.log('[Main] Virtual Scroller ready');
+    }
+    
+    // Apply hover effects to interactive elements
+    applyHoverEffects();
+    
+    // Apply button click feedback
+    applyButtonFeedback();
+    
+    // Initialize keyboard shortcuts if available
+    if (window.KeyboardShortcuts) {
+        console.log('[Main] Keyboard Shortcuts ready');
+    }
+    
+    console.log('[Main] Modern UI initialization complete');
+    
+    // Continue with existing initialization
+    initializeAnalysisForm();
+});
+
+/**
+ * Apply hover effects to interactive elements
+ */
+function applyHoverEffects() {
+    if (!window.animationController) return;
+    
+    // Apply hover effects to cards
+    document.querySelectorAll('.card').forEach(card => {
+        animationController.applyHoverEffect(card, 'lift');
+    });
+    
+    // Apply hover effects to buttons
+    document.querySelectorAll('.btn').forEach(button => {
+        animationController.applyHoverTransition(button, 'all');
+    });
+    
+    // Apply hover effects to table rows
+    document.querySelectorAll('table tbody tr').forEach(row => {
+        animationController.applyHoverTransition(row, 'background-color');
+    });
+}
+
+/**
+ * Apply button click feedback to all buttons
+ */
+function applyButtonFeedback() {
+    if (!window.animationController) return;
+    
+    document.querySelectorAll('button, .btn').forEach(button => {
+        button.addEventListener('click', function(e) {
+            // Don't apply feedback if button is disabled
+            if (this.disabled) return;
+            
+            // Apply ripple effect for primary buttons
+            if (this.classList.contains('btn-primary')) {
+                animationController.applyButtonFeedback(this, 'ripple');
+            } else {
+                animationController.applyButtonFeedback(this, 'scale');
+            }
+        });
+    });
+}
+
+/**
+ * Initialize analysis form and related functionality
+ */
+function initializeAnalysisForm() {
     const form = document.getElementById('analysisForm');
     const analyzeBtn = document.getElementById('analyzeBtn');
     const loadingState = document.getElementById('loadingState');
@@ -14,15 +128,26 @@ document.addEventListener('DOMContentLoaded', function() {
     const refreshDatesBtn = document.getElementById('refreshDatesBtn');
     const expirationStatus = document.getElementById('expirationStatus');
     
-    let fetchTimeout;
+    // Multi-expiry elements
+    const multiExpirySection = document.getElementById('multiExpirySection');
+    const expirationCheckboxes = document.getElementById('expirationCheckboxes');
+    const selectedExpCount = document.getElementById('selectedExpCount');
+    const selectAllExp = document.getElementById('selectAllExp');
+    const clearAllExp = document.getElementById('clearAllExp');
+    
+    let availableExpirations = []; // 存儲所有可用到期日
 
-    // Auto-fetch dates when ticker changes
-    tickerInput.addEventListener('input', function() {
-        clearTimeout(fetchTimeout);
-        const ticker = this.value.trim();
-        if (ticker.length >= 1) {
-            fetchTimeout = setTimeout(() => fetchExpirations(ticker), 800);
+    // Auto-fetch dates when ticker changes (debounced for performance)
+    // Validates: Requirements 13.4
+    const debouncedFetchExpirations = debounce(function(ticker) {
+        if (ticker && ticker.length >= 1) {
+            fetchExpirations(ticker);
         }
+    }, 800);
+    
+    tickerInput.addEventListener('input', function() {
+        const ticker = this.value.trim();
+        debouncedFetchExpirations(ticker);
     });
 
     refreshDatesBtn.addEventListener('click', function() {
@@ -45,6 +170,8 @@ document.addEventListener('DOMContentLoaded', function() {
             const data = await response.json();
             
             if (data.status === 'success' && data.expirations) {
+                availableExpirations = data.expirations;
+                
                 // Clear existing options except the first one
                 while (expirationSelect.options.length > 1) {
                     expirationSelect.remove(1);
@@ -57,6 +184,10 @@ document.addEventListener('DOMContentLoaded', function() {
                     expirationSelect.appendChild(option);
                 });
                 
+                // 更新多選到期日區域
+                updateMultiExpiryCheckboxes(data.expirations);
+                multiExpirySection.style.display = 'block';
+                
                 expirationStatus.textContent = `已獲取 ${data.expirations.length} 個到期日`;
                 expirationStatus.className = 'form-text text-success';
             } else {
@@ -66,23 +197,92 @@ document.addEventListener('DOMContentLoaded', function() {
             console.error('Fetch expirations error:', error);
             expirationStatus.textContent = '無法獲取到期日 (可能代碼錯誤)';
             expirationStatus.className = 'form-text text-warning';
+            multiExpirySection.style.display = 'none';
         } finally {
             refreshDatesBtn.disabled = false;
         }
     }
+    
+    // 更新多選到期日 checkboxes
+    function updateMultiExpiryCheckboxes(expirations) {
+        expirationCheckboxes.innerHTML = '';
+        
+        // 計算每個到期日距今天數
+        const today = new Date();
+        
+        expirations.forEach((date, index) => {
+            const expDate = new Date(date);
+            const daysDiff = Math.ceil((expDate - today) / (1000 * 60 * 60 * 24));
+            
+            // 只顯示 90 天內的到期日（與 Module 27 邏輯一致）
+            if (daysDiff > 0 && daysDiff <= 90) {
+                const div = document.createElement('div');
+                div.className = 'form-check form-check-inline';
+                div.innerHTML = `
+                    <input class="form-check-input exp-checkbox" type="checkbox" value="${date}" id="exp_${index}" ${index < 5 ? 'checked' : ''}>
+                    <label class="form-check-label small" for="exp_${index}">
+                        ${date} <span class="text-muted">(${daysDiff}天)</span>
+                    </label>
+                `;
+                expirationCheckboxes.appendChild(div);
+            }
+        });
+        
+        updateSelectedCount();
+    }
+    
+    // 更新已選數量
+    function updateSelectedCount() {
+        const checked = document.querySelectorAll('.exp-checkbox:checked').length;
+        selectedExpCount.textContent = checked;
+    }
+    
+    // 監聽 checkbox 變化
+    expirationCheckboxes.addEventListener('change', updateSelectedCount);
+    
+    // 全選
+    selectAllExp.addEventListener('click', function(e) {
+        e.preventDefault();
+        document.querySelectorAll('.exp-checkbox').forEach(cb => cb.checked = true);
+        updateSelectedCount();
+    });
+    
+    // 清除
+    clearAllExp.addEventListener('click', function(e) {
+        e.preventDefault();
+        document.querySelectorAll('.exp-checkbox').forEach(cb => cb.checked = false);
+        updateSelectedCount();
+    });
+    
+    // 獲取選中的到期日
+    function getSelectedExpirations() {
+        const selected = [];
+        document.querySelectorAll('.exp-checkbox:checked').forEach(cb => {
+            selected.push(cb.value);
+        });
+        return selected;
+    }
 
     form.addEventListener('submit', async function(e) {
         e.preventDefault();
+        
+        // 獲取選中的多個到期日
+        const selectedExpirations = getSelectedExpirations();
 
         // 1. 獲取表單數據
         const formData = {
             ticker: document.getElementById('ticker').value,
             expiration: document.getElementById('expiration').value || null,
+            selected_expirations: selectedExpirations.length > 0 ? selectedExpirations : null,
             confidence: document.getElementById('confidence').value,
             use_ibkr: document.getElementById('useIbkr').checked,
             strike: document.getElementById('strike').value || null,
             premium: document.getElementById('premium').value || null,
-            type: document.getElementById('optionType').value || null
+            type: document.getElementById('optionType').value || null,
+            total_capital: document.getElementById('totalCapital').value || 130000,
+            currency: document.getElementById('currency').value || 'HKD',
+            risk_level: document.getElementById('riskLevel').value || 'moderate',
+            strategy_preference: document.getElementById('strategyPreference').value || 'long'
         };
 
         // 2. UI 狀態更新
@@ -574,5 +774,427 @@ document.addEventListener('DOMContentLoaded', function() {
                 parityDiv.innerHTML = '<p class="text-muted">無 Parity 數據</p>';
             }
         }
+
+        // 調用新增模塊渲染函數
+        renderAdditionalModules(calcs);
+        
+        // Initialize lazy loading for dynamically rendered content
+        initializeLazyLoading();
     }
+});
+
+} // End of initializeAnalysisForm
+
+
+// ========== 新增模塊渲染函數 ==========
+
+function renderAdditionalModules(calcs) {
+    // --- 動量過濾器 (Module 21) ---
+    const momentum = calcs.module21_momentum_filter;
+    const momentumDiv = document.getElementById('momentumFilter');
+    if (momentumDiv) {
+        if (momentum && momentum.status !== 'skipped' && momentum.status !== 'error') {
+            const score = momentum.momentum_score || 0.5;
+            const scoreColor = score >= 0.7 ? 'text-success' : (score <= 0.3 ? 'text-danger' : 'text-warning');
+            const direction = score >= 0.7 ? '強勢上漲' : (score <= 0.3 ? '弱勢下跌' : '中性震盪');
+            
+            momentumDiv.innerHTML = `
+                <div class="text-center mb-3">
+                    <h3 class="${scoreColor}">${(score * 100).toFixed(0)}%</h3>
+                    <small class="text-muted">動量得分</small>
+                </div>
+                <div class="d-flex justify-content-between mb-2">
+                    <span>趨勢方向:</span>
+                    <span class="${scoreColor} fw-bold">${direction}</span>
+                </div>
+                ${momentum.recommendation ? `<div class="alert alert-${score >= 0.7 ? 'success' : (score <= 0.3 ? 'danger' : 'warning')} mb-0 py-2 small">${momentum.recommendation}</div>` : ''}
+            `;
+        } else {
+            momentumDiv.innerHTML = `<p class="text-muted">${momentum?.reason || '動量數據不足'}</p>`;
+        }
+    }
+
+    // --- 動態 IV 閾值 (Module 23) ---
+    const ivThreshold = calcs.module23_dynamic_iv_threshold;
+    const ivThresholdDiv = document.getElementById('dynamicIVThreshold');
+    if (ivThresholdDiv) {
+        if (ivThreshold && ivThreshold.status !== 'skipped' && ivThreshold.status !== 'error') {
+            const currentIV = ivThreshold.current_iv || 0;
+            const threshold = ivThreshold.threshold || 0;
+            const isHigh = currentIV > threshold;
+            
+            ivThresholdDiv.innerHTML = `
+                <div class="text-center mb-3">
+                    <h4 class="${isHigh ? 'text-danger' : 'text-success'}">${(currentIV * 100).toFixed(1)}%</h4>
+                    <small class="text-muted">當前 IV</small>
+                </div>
+                <div class="d-flex justify-content-between mb-2">
+                    <span>動態閾值:</span>
+                    <span class="fw-bold">${(threshold * 100).toFixed(1)}%</span>
+                </div>
+                <div class="d-flex justify-content-between mb-2">
+                    <span>IV Rank:</span>
+                    <span class="fw-bold">${ivThreshold.iv_rank ? ivThreshold.iv_rank.toFixed(1) + '%' : 'N/A'}</span>
+                </div>
+                <div class="alert alert-${isHigh ? 'warning' : 'info'} mb-0 py-2 small">
+                    ${isHigh ? '⚠️ IV 偏高，適合賣方策略' : '✓ IV 正常，可考慮買方策略'}
+                </div>
+            `;
+        } else {
+            ivThresholdDiv.innerHTML = `<p class="text-muted">${ivThreshold?.reason || '無動態 IV 閾值數據'}</p>`;
+        }
+    }
+
+    // --- 資金倉位計算器 (Module 28) ---
+    const posCalc = calcs.module28_position_calculator;
+    const posCalcDiv = document.getElementById('positionCalculator');
+    if (posCalcDiv) {
+        if (posCalc && posCalc.status === 'success') {
+            const posRec = posCalc.position_recommendation || {};
+            const riskAna = posCalc.risk_analysis || {};
+            const capSum = posCalc.capital_summary || {};
+            
+            posCalcDiv.innerHTML = `
+                <div class="text-center mb-3">
+                    <h3 class="text-primary">${posRec.recommended_contracts || 0} 張</h3>
+                    <small class="text-muted">建議合約數量</small>
+                </div>
+                <div class="d-flex justify-content-between mb-1">
+                    <span>總資金:</span>
+                    <span class="fw-bold">${capSum.currency || 'HKD'} ${(capSum.total_capital || 0).toLocaleString()}</span>
+                </div>
+                <div class="d-flex justify-content-between mb-1">
+                    <span>投入金額:</span>
+                    <span class="fw-bold">$${(posRec.actual_investment_usd || 0).toFixed(0)}</span>
+                </div>
+                <div class="d-flex justify-content-between mb-1">
+                    <span>最大虧損:</span>
+                    <span class="text-danger fw-bold">$${(riskAna.max_loss_usd || 0).toFixed(0)} (${riskAna.max_loss_pct || 0}%)</span>
+                </div>
+                <div class="d-flex justify-content-between mb-2">
+                    <span>風險評級:</span>
+                    <span class="badge ${riskAna.risk_rating === '低' ? 'bg-success' : (riskAna.risk_rating === '高' ? 'bg-danger' : 'bg-warning')}">${riskAna.risk_rating || 'N/A'}</span>
+                </div>
+            `;
+        } else {
+            posCalcDiv.innerHTML = `<p class="text-muted">${posCalc?.reason || '無倉位計算數據'}</p>`;
+        }
+    }
+
+    // --- 最佳行使價分析 (Module 22) ---
+    const optStrike = calcs.module22_optimal_strike;
+    const optStrikeDiv = document.getElementById('optimalStrike');
+    if (optStrikeDiv) {
+        if (optStrike && optStrike.status !== 'skipped' && optStrike.status !== 'error') {
+            let html = '<div class="row">';
+            const strategies = ['long_call', 'long_put', 'short_call', 'short_put'];
+            const strategyNames = {'long_call': 'Long Call', 'long_put': 'Long Put', 'short_call': 'Short Call', 'short_put': 'Short Put'};
+            const strategyColors = {'long_call': 'success', 'long_put': 'danger', 'short_call': 'warning', 'short_put': 'info'};
+            
+            strategies.forEach(strategy => {
+                const data = optStrike[strategy];
+                if (data && data.optimal_strike) {
+                    html += `
+                        <div class="col-md-3 mb-3">
+                            <div class="card h-100 border-${strategyColors[strategy]}">
+                                <div class="card-header bg-${strategyColors[strategy]} text-white py-2">
+                                    <h6 class="mb-0">${strategyNames[strategy]}</h6>
+                                </div>
+                                <div class="card-body py-2">
+                                    <div class="text-center mb-2">
+                                        <h4 class="mb-0">$${data.optimal_strike.toFixed(2)}</h4>
+                                        <small class="text-muted">最佳行使價</small>
+                                    </div>
+                                    <div class="small">
+                                        <div class="d-flex justify-content-between"><span>評分:</span><span class="fw-bold">${data.score?.toFixed(1) || 'N/A'}</span></div>
+                                        <div class="d-flex justify-content-between"><span>Delta:</span><span>${data.delta?.toFixed(3) || 'N/A'}</span></div>
+                                        <div class="d-flex justify-content-between"><span>權利金:</span><span>$${data.premium?.toFixed(2) || 'N/A'}</span></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }
+            });
+            html += '</div>';
+            if (optStrike.recommendation) {
+                html += `<div class="alert alert-info mt-2 mb-0"><i class="fas fa-lightbulb me-2"></i>${optStrike.recommendation}</div>`;
+            }
+            optStrikeDiv.innerHTML = html;
+        } else {
+            optStrikeDiv.innerHTML = `<p class="text-muted text-center">${optStrike?.reason || '無最佳行使價數據'}</p>`;
+        }
+    }
+
+    // --- 技術方向分析 (Module 24) ---
+    const techDir = calcs.module24_technical_direction;
+    const techDirDiv = document.getElementById('technicalDirection');
+    if (techDirDiv) {
+        if (techDir && techDir.status !== 'skipped' && techDir.status !== 'error') {
+            const direction = techDir.combined_direction || 'Neutral';
+            const confidence = techDir.confidence || 'Low';
+            const dirColor = direction === 'Bullish' ? 'success' : (direction === 'Bearish' ? 'danger' : 'secondary');
+            
+            let html = `
+                <div class="text-center mb-3">
+                    <span class="badge bg-${dirColor} fs-5 px-3 py-2">${direction}</span>
+                    <div class="mt-1"><small class="text-muted">信心度: </small><span class="badge bg-${confidence === 'High' ? 'success' : (confidence === 'Medium' ? 'warning' : 'secondary')}">${confidence}</span></div>
+                </div>
+            `;
+            if (techDir.daily_trend) {
+                const dt = techDir.daily_trend;
+                html += `<div class="border-top pt-2"><h6 class="small fw-bold mb-2">日線趨勢</h6>
+                    <div class="d-flex justify-content-between small mb-1"><span>趨勢:</span><span class="text-${dt.trend === 'Bullish' ? 'success' : (dt.trend === 'Bearish' ? 'danger' : 'muted')}">${dt.trend}</span></div>
+                    ${dt.ma_20 ? `<div class="d-flex justify-content-between small mb-1"><span>MA20:</span><span>$${dt.ma_20.toFixed(2)}</span></div>` : ''}
+                    ${dt.ma_50 ? `<div class="d-flex justify-content-between small mb-1"><span>MA50:</span><span>$${dt.ma_50.toFixed(2)}</span></div>` : ''}
+                </div>`;
+            }
+            techDirDiv.innerHTML = html;
+        } else {
+            techDirDiv.innerHTML = `<p class="text-muted">${techDir?.reason || '無技術方向數據'}</p>`;
+        }
+    }
+
+    // --- 波動率微笑分析 (Module 25) ---
+    const volSmile = calcs.module25_volatility_smile;
+    const volSmileDiv = document.getElementById('volatilitySmile');
+    if (volSmileDiv) {
+        if (volSmile && volSmile.status !== 'skipped' && volSmile.status !== 'error') {
+            const atmIV = volSmile.atm_iv || 0;
+            const skew = volSmile.skew || 0;
+            const skewType = volSmile.skew_type || 'Normal';
+            const ivEnv = volSmile.iv_environment || 'Normal';
+            
+            volSmileDiv.innerHTML = `
+                <div class="text-center mb-3"><h4 class="mb-0">${(atmIV * 100).toFixed(1)}%</h4><small class="text-muted">ATM IV</small></div>
+                <div class="d-flex justify-content-between mb-2"><span>Skew:</span><span class="${skew > 0 ? 'text-danger' : 'text-success'} fw-bold">${(skew * 100).toFixed(2)}%</span></div>
+                <div class="d-flex justify-content-between mb-2"><span>Skew 類型:</span><span class="badge bg-${skewType === 'Put Skew' ? 'danger' : (skewType === 'Call Skew' ? 'success' : 'secondary')}">${skewType}</span></div>
+                <div class="d-flex justify-content-between mb-2"><span>IV 環境:</span><span class="badge bg-${ivEnv === 'High' ? 'danger' : (ivEnv === 'Low' ? 'success' : 'warning')}">${ivEnv}</span></div>
+                ${volSmile.anomaly_count > 0 ? `<div class="alert alert-warning mb-0 py-2 small"><i class="fas fa-exclamation-triangle me-1"></i>發現 ${volSmile.anomaly_count} 個定價異常</div>` : ''}
+            `;
+        } else {
+            volSmileDiv.innerHTML = `<p class="text-muted">${volSmile?.reason || '無波動率微笑數據'}</p>`;
+        }
+    }
+
+    // --- Long 期權成本效益分析 (Module 26) ---
+    const longOpt = calcs.module26_long_option_analysis;
+    const longOptDiv = document.getElementById('longOptionAnalysis');
+    if (longOptDiv) {
+        if (longOpt && longOpt.status !== 'skipped' && longOpt.status !== 'error') {
+            let html = '<div class="row">';
+            if (longOpt.long_call) {
+                const lc = longOpt.long_call;
+                const score = lc.score || {};
+                html += `<div class="col-md-6 mb-3"><div class="card h-100 border-success"><div class="card-header bg-success text-white py-2"><h6 class="mb-0">Long Call</h6></div>
+                    <div class="card-body py-2"><div class="text-center mb-2"><h4 class="mb-0">${score.total_score || 'N/A'}</h4><span class="badge bg-${score.grade === 'A' || score.grade === 'B' ? 'success' : 'warning'}">${score.grade || 'N/A'}</span></div>
+                    <div class="small"><div class="d-flex justify-content-between mb-1"><span>行使價:</span><span>$${lc.strike?.toFixed(2) || 'N/A'}</span></div>
+                    <div class="d-flex justify-content-between mb-1"><span>權利金:</span><span>$${lc.premium?.toFixed(2) || 'N/A'}</span></div>
+                    <div class="d-flex justify-content-between"><span>槓桿:</span><span>${lc.leverage?.toFixed(1) || 'N/A'}x</span></div></div></div></div></div>`;
+            }
+            if (longOpt.long_put) {
+                const lp = longOpt.long_put;
+                const score = lp.score || {};
+                html += `<div class="col-md-6 mb-3"><div class="card h-100 border-danger"><div class="card-header bg-danger text-white py-2"><h6 class="mb-0">Long Put</h6></div>
+                    <div class="card-body py-2"><div class="text-center mb-2"><h4 class="mb-0">${score.total_score || 'N/A'}</h4><span class="badge bg-${score.grade === 'A' || score.grade === 'B' ? 'success' : 'warning'}">${score.grade || 'N/A'}</span></div>
+                    <div class="small"><div class="d-flex justify-content-between mb-1"><span>行使價:</span><span>$${lp.strike?.toFixed(2) || 'N/A'}</span></div>
+                    <div class="d-flex justify-content-between mb-1"><span>權利金:</span><span>$${lp.premium?.toFixed(2) || 'N/A'}</span></div>
+                    <div class="d-flex justify-content-between"><span>槓桿:</span><span>${lp.leverage?.toFixed(1) || 'N/A'}x</span></div></div></div></div></div>`;
+            }
+            html += '</div>';
+            if (longOpt.comparison) {
+                html += `<div class="alert alert-info mb-0"><i class="fas fa-balance-scale me-2"></i><strong>推薦:</strong> ${longOpt.comparison.better_choice || 'N/A'}</div>`;
+            }
+            longOptDiv.innerHTML = html;
+        } else {
+            longOptDiv.innerHTML = `<p class="text-muted text-center">${longOpt?.reason || '無 Long 期權分析數據'}</p>`;
+        }
+    }
+
+    // --- 多到期日比較 (Module 27) ---
+    const multiExp = calcs.module27_multi_expiry_comparison;
+    const multiExpDiv = document.getElementById('multiExpiryComparison');
+    if (multiExpDiv) {
+        if (multiExp && multiExp.status === 'success') {
+            let html = `
+                <div class="mb-3 d-flex justify-content-between align-items-center">
+                    <small class="text-muted">
+                        <i class="fas fa-calendar-check me-1"></i>
+                        分析了 <strong>${multiExp.expirations_analyzed || 0}</strong> 個到期日 
+                        (共 ${multiExp.total_expirations_available || 0} 個可用)
+                    </small>
+                </div>
+            `;
+            
+            // 策略推薦卡片
+            html += '<div class="row mb-3">';
+            const strategyResults = multiExp.strategy_results || {};
+            const strategyNames = {'long_call': 'Long Call', 'long_put': 'Long Put', 'short_call': 'Short Call', 'short_put': 'Short Put'};
+            const strategyColors = {'long_call': 'success', 'long_put': 'danger', 'short_call': 'warning', 'short_put': 'info'};
+            const strategyIcons = {'long_call': 'fa-arrow-up', 'long_put': 'fa-arrow-down', 'short_call': 'fa-level-down-alt', 'short_put': 'fa-level-up-alt'};
+            
+            Object.entries(strategyResults).forEach(([strategy, result]) => {
+                if (result && result.status === 'success') {
+                    const rec = result.recommendation || {};
+                    const reasons = rec.reasons || [];
+                    html += `
+                        <div class="col-md-3 mb-3">
+                            <div class="card h-100 border-${strategyColors[strategy]}">
+                                <div class="card-header bg-${strategyColors[strategy]} text-white py-2">
+                                    <h6 class="mb-0 small"><i class="fas ${strategyIcons[strategy]} me-1"></i>${strategyNames[strategy]}</h6>
+                                </div>
+                                <div class="card-body py-2">
+                                    <div class="text-center mb-2">
+                                        <div class="fw-bold">${rec.best_expiration || 'N/A'}</div>
+                                        <small class="text-muted">${rec.best_days || 0} 天</small>
+                                    </div>
+                                    <div class="small">
+                                        <div class="d-flex justify-content-between mb-1">
+                                            <span>評分:</span>
+                                            <span class="fw-bold">${rec.best_score || 'N/A'}</span>
+                                        </div>
+                                        <div class="d-flex justify-content-between mb-1">
+                                            <span>等級:</span>
+                                            <span class="badge bg-${rec.best_grade === 'A' || rec.best_grade === 'B' ? 'success' : 'secondary'}">${rec.best_grade || 'N/A'}</span>
+                                        </div>
+                                        <div class="d-flex justify-content-between">
+                                            <span>權利金:</span>
+                                            <span>${rec.best_premium?.toFixed(2) || 'N/A'}</span>
+                                        </div>
+                                    </div>
+                                    ${reasons.length > 0 ? `<div class="mt-2 small text-muted border-top pt-1">${reasons[0]}</div>` : ''}
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }
+            });
+            html += '</div>';
+            
+            // 詳細比較表格（如果有多個到期日）
+            if (multiExp.expirations_analyzed > 1) {
+                // 取第一個策略的詳細數據來顯示表格
+                const firstStrategy = Object.values(strategyResults).find(r => r && r.status === 'success');
+                if (firstStrategy && firstStrategy.comparison_table && firstStrategy.comparison_table.length > 0) {
+                    html += `
+                        <div class="table-responsive mt-3">
+                            <table class="table table-sm table-hover">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>到期日</th>
+                                        <th>天數</th>
+                                        <th>權利金</th>
+                                        <th>IV</th>
+                                        <th>Theta/日</th>
+                                        <th>年化收益</th>
+                                        <th>評分</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                    `;
+                    firstStrategy.comparison_table.forEach(row => {
+                        const gradeColor = row.grade === 'A' ? 'success' : (row.grade === 'B' ? 'primary' : (row.grade === 'C' ? 'warning' : 'secondary'));
+                        html += `
+                            <tr>
+                                <td><strong>${row.expiration || 'N/A'}</strong></td>
+                                <td>${row.days || 0}</td>
+                                <td>${row.premium?.toFixed(2) || 'N/A'}</td>
+                                <td>${row.iv?.toFixed(1) || 'N/A'}%</td>
+                                <td class="${row.theta_pct > 3 ? 'text-danger' : ''}">${row.theta_pct?.toFixed(2) || 'N/A'}%</td>
+                                <td>${row.annualized_return?.toFixed(1) || 'N/A'}%</td>
+                                <td><span class="badge bg-${gradeColor}">${row.score || 0} (${row.grade || 'N/A'})</span></td>
+                            </tr>
+                        `;
+                    });
+                    html += '</tbody></table></div>';
+                }
+            }
+            
+            // 已分析的到期日列表
+            if (multiExp.expiration_list && multiExp.expiration_list.length > 0) {
+                html += `
+                    <div class="mt-3 p-2 bg-light rounded small">
+                        <strong><i class="fas fa-list me-1"></i>已分析到期日:</strong> 
+                        ${multiExp.expiration_list.map(exp => `<span class="badge bg-secondary me-1">${exp}</span>`).join('')}
+                    </div>
+                `;
+            }
+            
+            // Theta 分析建議
+            const thetaAnalysis = Object.values(strategyResults).find(r => r && r.theta_analysis);
+            if (thetaAnalysis && thetaAnalysis.theta_analysis && thetaAnalysis.theta_analysis.suggestion) {
+                html += `
+                    <div class="alert alert-info mt-3 mb-0 py-2">
+                        <i class="fas fa-clock me-2"></i>
+                        <strong>Theta 建議:</strong> ${thetaAnalysis.theta_analysis.suggestion}
+                    </div>
+                `;
+            }
+            
+            multiExpDiv.innerHTML = html;
+        } else {
+            multiExpDiv.innerHTML = `<p class="text-muted text-center">${multiExp?.reason || '無多到期日比較數據'}</p>`;
+        }
+    }
+}
+
+
+// ========== Lazy Loading Integration ==========
+
+/**
+ * Mark non-critical module cards for lazy loading
+ * This function adds data-lazy-load attributes to module cards
+ * that are below the fold for performance optimization
+ */
+function setupLazyLoadingForModules() {
+    // Get all module cards
+    const moduleCards = document.querySelectorAll('.card');
+    
+    // Mark cards below the fold for lazy loading
+    moduleCards.forEach((card, index) => {
+        // Load first 3 cards immediately (above the fold)
+        // Lazy load the rest
+        if (index >= 3) {
+            card.setAttribute('data-lazy-load', 'module');
+        }
+    });
+    
+    // Refresh lazy loader to observe new elements
+    if (window.lazyLoader) {
+        window.lazyLoader.refresh();
+    }
+}
+
+/**
+ * Add loading="lazy" attribute to dynamically created images
+ * This ensures all images use native lazy loading when supported
+ */
+function addLazyLoadingToImages() {
+    const images = document.querySelectorAll('img:not([loading])');
+    images.forEach(img => {
+        // Add native lazy loading attribute
+        img.setAttribute('loading', 'lazy');
+    });
+}
+
+/**
+ * Initialize lazy loading after results are rendered
+ */
+function initializeLazyLoading() {
+    // Add lazy loading to images
+    addLazyLoadingToImages();
+    
+    // Setup lazy loading for module cards
+    setupLazyLoadingForModules();
+    
+    // Refresh the lazy loader
+    if (window.lazyLoader) {
+        window.lazyLoader.refresh();
+    }
+}
+
+// Call lazy loading initialization after DOM is ready
+document.addEventListener('DOMContentLoaded', function() {
+    // Initialize lazy loading for existing content
+    initializeLazyLoading();
 });

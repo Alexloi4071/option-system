@@ -1,0 +1,26 @@
+{
+  "name": "options-analysis-webui",
+  "version": "1.0.0",
+  "description": "Modern UI for Options Analysis System",
+  "scripts": {
+    "build:css": "sass static/css/main.scss static/css/main.css --style=compressed --no-source-map",
+    "build:css:dev": "sass static/css/main.scss static/css/main.css --style=expanded --source-map",
+    "watch:css": "sass --watch static/css/main.scss:static/css/main.css --style=expanded --source-map",
+    "build": "npm run build:css",
+    "test": "node --test tests/**/*.test.js",
+    "test:watch": "node --test --watch tests/**/*.test.js"
+  },
+  "devDependencies": {
+    "fast-check": "^4.5.3",
+    "jsdom": "^23.0.0",
+    "sass": "^1.69.5"
+  },
+  "keywords": [
+    "options",
+    "trading",
+    "analysis",
+    "ui"
+  ],
+  "author": "",
+  "license": "ISC"
+}

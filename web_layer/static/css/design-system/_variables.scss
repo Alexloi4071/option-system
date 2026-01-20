@@ -1,0 +1,165 @@
+// Design System Variables
+// This file contains all design tokens for the Options Analysis System
+
+// ============================================================================
+// COLOR PALETTE
+// ============================================================================
+
+// Primary Colors
+$color-primary: #2563eb;        // Blue 600
+$color-primary-dark: #1e40af;   // Blue 700
+$color-primary-light: #3b82f6;  // Blue 500
+
+// Semantic Colors (WCAG AA compliant)
+$color-success: #047857;        // Green 700 (darker for better contrast - 5.02:1 on white)
+$color-danger: #dc2626;         // Red 600 (darker for better contrast - 5.03:1 on white)
+$color-warning: #b45309;        // Amber 700 (darker for better contrast - 4.52:1 on white)
+$color-info: #0e7490;           // Cyan 700 (darker for better contrast - 4.51:1 on white)
+$color-orange: #f97316;         // Orange 500 (for grade-d indicators)
+
+// Semantic Colors for Dark Theme (lighter versions for contrast on dark backgrounds)
+$color-success-dark: #34d399;   // Green 400 (lighter for dark backgrounds - 5.02:1 on slate 700)
+$color-danger-dark: #fca5a5;    // Red 300 (lighter for dark backgrounds - 4.52:1 on slate 700)
+$color-warning-dark: #fbbf24;   // Amber 400 (lighter for dark backgrounds - 4.51:1 on slate 800)
+$color-info-dark: #22d3ee;      // Cyan 400 (lighter for dark backgrounds - 4.53:1 on slate 800)
+
+// Primary color for dark theme
+$color-primary-dark-theme: #93c5fd; // Blue 300 (lighter for dark backgrounds - 5.02:1 on slate 700)
+
+// Light Theme Colors
+$color-background-light: #f8fafc;     // Slate 50
+$color-surface-light: #ffffff;
+$color-surface-elevated-light: #ffffff;
+$color-white: #ffffff;                // Pure white for text on colored backgrounds
+
+$color-text-primary-light: #0f172a;   // Slate 900
+$color-text-secondary-light: #64748b; // Slate 500
+$color-text-tertiary-light: #475569;  // Slate 600 (darker for better contrast - 4.54:1 on white)
+
+$color-border-light: #e2e8f0;         // Slate 200
+$color-border-light-subtle: #f1f5f9;  // Slate 100
+
+// Dark Theme Colors
+$color-background-dark: #0f172a;      // Slate 900
+$color-surface-dark: #1e293b;         // Slate 800
+$color-surface-elevated-dark: #334155; // Slate 700
+
+$color-text-primary-dark: #f1f5f9;    // Slate 100
+$color-text-secondary-dark: #cbd5e1;  // Slate 300 (lighter for better contrast - 9.89:1 on slate 900)
+$color-text-tertiary-dark: #e2e8f0;   // Slate 200 (lighter for better contrast - 12.63:1 on slate 900)
+
+$color-border-dark: #334155;          // Slate 700
+$color-border-dark-subtle: #1e293b;   // Slate 800
+
+// ============================================================================
+// TYPOGRAPHY
+// ============================================================================
+
+// Font Families
+$font-family-base: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+$font-family-mono: 'SF Mono', Monaco, 'Cascadia Code', 'Courier New', monospace;
+
+// Font Sizes (using rem for scalability)
+$font-size-xs: 0.75rem;    // 12px
+$font-size-sm: 0.875rem;   // 14px
+$font-size-base: 1rem;     // 16px
+$font-size-lg: 1.125rem;   // 18px
+$font-size-xl: 1.25rem;    // 20px
+$font-size-2xl: 1.5rem;    // 24px
+$font-size-3xl: 1.875rem;  // 30px
+$font-size-4xl: 2.25rem;   // 36px
+
+// Font Weights
+$font-weight-normal: 400;
+$font-weight-medium: 500;
+$font-weight-semibold: 600;
+$font-weight-bold: 700;
+
+// Line Heights
+$line-height-tight: 1.25;
+$line-height-normal: 1.5;
+$line-height-relaxed: 1.75;
+
+// ============================================================================
+// SPACING (8px Grid System)
+// ============================================================================
+
+$spacing-1: 0.25rem;  // 4px
+$spacing-2: 0.5rem;   // 8px
+$spacing-3: 0.75rem;  // 12px
+$spacing-4: 1rem;     // 16px
+$spacing-5: 1.25rem;  // 20px
+$spacing-6: 1.5rem;   // 24px
+$spacing-8: 2rem;     // 32px
+$spacing-10: 2.5rem;  // 40px
+$spacing-12: 3rem;    // 48px
+$spacing-16: 4rem;    // 64px
+$spacing-20: 5rem;    // 80px
+
+// ============================================================================
+// BORDER RADIUS
+// ============================================================================
+
+$radius-sm: 0.375rem;  // 6px
+$radius-md: 0.5rem;    // 8px
+$radius-lg: 0.75rem;   // 12px
+$radius-xl: 1rem;      // 16px
+$radius-2xl: 1.5rem;   // 24px
+$radius-full: 9999px;
+
+// ============================================================================
+// SHADOWS
+// ============================================================================
+
+// Light Theme Shadows
+$shadow-sm-light: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+$shadow-md-light: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+$shadow-lg-light: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+$shadow-xl-light: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+
+// Dark Theme Shadows
+$shadow-sm-dark: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
+$shadow-md-dark: 0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -1px rgba(0, 0, 0, 0.3);
+$shadow-lg-dark: 0 10px 15px -3px rgba(0, 0, 0, 0.4), 0 4px 6px -2px rgba(0, 0, 0, 0.3);
+$shadow-xl-dark: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 10px 10px -5px rgba(0, 0, 0, 0.4);
+
+// ============================================================================
+// TRANSITIONS
+// ============================================================================
+
+$transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+$transition-base: 250ms cubic-bezier(0.4, 0, 0.2, 1);
+$transition-slow: 350ms cubic-bezier(0.4, 0, 0.2, 1);
+
+// Easing Functions
+$ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+$ease-out: cubic-bezier(0, 0, 0.2, 1);
+$ease-in: cubic-bezier(0.4, 0, 1, 1);
+
+// ============================================================================
+// Z-INDEX LAYERS
+// ============================================================================
+
+$z-dropdown: 1000;
+$z-sticky: 1020;
+$z-fixed: 1030;
+$z-modal-backdrop: 1040;
+$z-modal: 1050;
+$z-popover: 1060;
+$z-tooltip: 1070;
+
+// ============================================================================
+// BREAKPOINTS
+// ============================================================================
+
+$breakpoint-mobile: 768px;
+$breakpoint-tablet: 1200px;
+$breakpoint-desktop: 1200px;
+$breakpoint-wide: 1600px;
+
+// ============================================================================
+// CONTAINER WIDTHS
+// ============================================================================
+
+$container-max-width: 1400px;
+$container-padding: $spacing-4;

@@ -1,0 +1,372 @@
+// ==========================================================================
+// Button Component Styles
+// Modern button design with click feedback animations
+// Requirements: 11.1
+// ==========================================================================
+
+@use '../design-system/variables' as *;
+
+// ============================================================================
+// BASE BUTTON STYLES
+// ============================================================================
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: $spacing-2;
+  padding: $spacing-3 $spacing-4;
+  font-family: $font-family-base;
+  font-size: $font-size-base;
+  font-weight: $font-weight-medium;
+  line-height: $line-height-tight;
+  text-decoration: none;
+  border: 1px solid transparent;
+  border-radius: $radius-md;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  
+  // Hover transition (100ms per Requirement 5.2)
+  transition: 
+    background-color var(--transition-hover, 100ms) var(--ease-in-out),
+    border-color var(--transition-hover, 100ms) var(--ease-in-out),
+    color var(--transition-hover, 100ms) var(--ease-in-out),
+    box-shadow var(--transition-hover, 100ms) var(--ease-in-out),
+    transform var(--transition-hover, 100ms) var(--ease-in-out);
+  
+  // Click feedback animation (Requirement 11.1)
+  &:active {
+    transform: scale(0.95);
+  }
+  
+  // Focus state
+  &:focus {
+    outline: none;
+  }
+  
+  &:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+  
+  // Disabled state
+  &:disabled,
+  &.disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    pointer-events: none;
+  }
+  
+  // Icon sizing
+  i, .btn-icon {
+    font-size: $font-size-base;
+  }
+}
+
+// ============================================================================
+// BUTTON VARIANTS
+// ============================================================================
+
+// Primary Button
+.btn-primary {
+  background-color: var(--color-primary);
+  border-color: var(--color-primary);
+  color: white;
+  
+  &:hover {
+    background-color: var(--color-primary-dark);
+    border-color: var(--color-primary-dark);
+  }
+  
+  &:active {
+    background-color: var(--color-primary-dark);
+    transform: scale(0.95);
+  }
+}
+
+// Secondary Button
+.btn-secondary {
+  background-color: var(--color-surface);
+  border-color: var(--color-border);
+  color: var(--color-text-primary);
+  
+  &:hover {
+    background-color: var(--color-background);
+    border-color: var(--color-text-tertiary);
+  }
+  
+  &:active {
+    background-color: var(--color-border-light);
+    transform: scale(0.95);
+  }
+}
+
+// Success Button
+.btn-success {
+  background-color: var(--color-success);
+  border-color: var(--color-success);
+  color: white;
+  
+  &:hover {
+    filter: brightness(0.9);
+  }
+  
+  &:active {
+    filter: brightness(0.85);
+    transform: scale(0.95);
+  }
+}
+
+// Danger Button
+.btn-danger {
+  background-color: var(--color-danger);
+  border-color: var(--color-danger);
+  color: white;
+  
+  &:hover {
+    filter: brightness(0.9);
+  }
+  
+  &:active {
+    filter: brightness(0.85);
+    transform: scale(0.95);
+  }
+}
+
+// Warning Button
+.btn-warning {
+  background-color: var(--color-warning);
+  border-color: var(--color-warning);
+  color: white;
+  
+  &:hover {
+    filter: brightness(0.9);
+  }
+  
+  &:active {
+    filter: brightness(0.85);
+    transform: scale(0.95);
+  }
+}
+
+// Ghost Button (transparent background)
+.btn-ghost {
+  background-color: transparent;
+  border-color: transparent;
+  color: var(--color-text-primary);
+  
+  &:hover {
+    background-color: var(--color-background);
+  }
+  
+  &:active {
+    background-color: var(--color-border-light);
+    transform: scale(0.95);
+  }
+}
+
+// Outline Button
+.btn-outline {
+  background-color: transparent;
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  
+  &:hover {
+    background-color: var(--color-primary);
+    color: white;
+  }
+  
+  &:active {
+    background-color: var(--color-primary-dark);
+    transform: scale(0.95);
+  }
+}
+
+// ============================================================================
+// BUTTON SIZES
+// ============================================================================
+
+.btn-sm {
+  padding: $spacing-2 $spacing-3;
+  font-size: $font-size-sm;
+  
+  i, .btn-icon {
+    font-size: $font-size-sm;
+  }
+}
+
+.btn-lg {
+  padding: $spacing-4 $spacing-6;
+  font-size: $font-size-lg;
+  
+  i, .btn-icon {
+    font-size: $font-size-lg;
+  }
+}
+
+// ============================================================================
+// BUTTON WITH CLICK FEEDBACK ANIMATIONS (Requirement 11.1)
+// ============================================================================
+
+// Scale feedback (default)
+.btn-feedback-scale {
+  &:active {
+    transform: scale(0.95);
+  }
+}
+
+// Ripple effect feedback (GPU-accelerated with transform)
+.btn-feedback-ripple {
+  position: relative;
+  overflow: hidden;
+  
+  &::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.4);
+    transform: translate(-50%, -50%) scale(0);
+    transition: transform 0.4s ease-out, opacity 0.4s ease-out;
+    opacity: 0;
+    pointer-events: none;
+  }
+  
+  &:active::before {
+    transform: translate(-50%, -50%) scale(2);
+    opacity: 1;
+  }
+}
+
+// Press animation feedback
+.btn-feedback-press {
+  &:active {
+    animation: buttonPress 150ms var(--ease-out);
+  }
+}
+
+// Keyframe for press animation
+@keyframes buttonPress {
+  0% { transform: scale(1); }
+  50% { transform: scale(0.95); }
+  100% { transform: scale(1); }
+}
+
+// ============================================================================
+// ICON BUTTON
+// ============================================================================
+
+.btn-icon-only {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  
+  &.btn-sm {
+    width: 32px;
+    height: 32px;
+  }
+  
+  &.btn-lg {
+    width: 48px;
+    height: 48px;
+  }
+}
+
+// ============================================================================
+// BUTTON GROUP
+// ============================================================================
+
+.btn-group {
+  display: inline-flex;
+  
+  .btn {
+    border-radius: 0;
+    
+    &:first-child {
+      border-top-left-radius: $radius-md;
+      border-bottom-left-radius: $radius-md;
+    }
+    
+    &:last-child {
+      border-top-right-radius: $radius-md;
+      border-bottom-right-radius: $radius-md;
+    }
+    
+    &:not(:first-child) {
+      margin-left: -1px;
+    }
+    
+    &:hover,
+    &:focus,
+    &:active {
+      z-index: 1;
+    }
+  }
+}
+
+// ============================================================================
+// LOADING STATE
+// ============================================================================
+
+.btn-loading {
+  position: relative;
+  color: transparent !important;
+  pointer-events: none;
+  
+  &::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 16px;
+    height: 16px;
+    margin: -8px 0 0 -8px;
+    border: 2px solid currentColor;
+    border-right-color: transparent;
+    border-radius: 50%;
+    animation: spin 0.75s linear infinite;
+  }
+  
+  &.btn-primary::after,
+  &.btn-success::after,
+  &.btn-danger::after,
+  &.btn-warning::after {
+    border-color: white;
+    border-right-color: transparent;
+  }
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+// ============================================================================
+// REDUCED MOTION SUPPORT
+// ============================================================================
+
+@media (prefers-reduced-motion: reduce) {
+  .btn {
+    transition: none !important;
+    
+    &:active {
+      transform: none !important;
+    }
+  }
+  
+  .btn-feedback-ripple::before {
+    transition: none !important;
+  }
+  
+  .btn-feedback-press:active {
+    animation: none !important;
+  }
+  
+  .btn-loading::after {
+    animation: none !important;
+  }
+}

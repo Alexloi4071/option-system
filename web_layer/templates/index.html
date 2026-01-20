@@ -1,49 +1,146 @@
 <!DOCTYPE html>
-<html lang="zh-Hant">
+<html lang="zh-Hant" data-theme="light">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="期權制勝量化分析系統 - 專業的期權分析工具">
+    <meta name="theme-color" content="#2563eb">
     <title>期權制勝 - 量化分析系統</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
-    <link rel="stylesheet" href="/static/css/style.css">
+    
+    <!-- Preconnect to CDN origins for faster resource loading -->
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+    <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
+    
+    <!-- Critical CSS - Inline for immediate rendering -->
+    <style>
+        /* Critical CSS for above-the-fold content */
+        /* Minimal styles to prevent FOUC and enable fast first paint */
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background-color: #f8fafc;
+            color: #0f172a;
+        }
+        
+        .navbar {
+            background-color: #2563eb !important;
+            padding: 1rem 0;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 1rem;
+        }
+        
+        .card {
+            background: white;
+            border-radius: 0.5rem;
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+            margin-bottom: 1.5rem;
+        }
+        
+        .card-header {
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid #e2e8f0;
+        }
+        
+        .card-body {
+            padding: 1.5rem;
+        }
+        
+        /* Loading state */
+        .spinner-border {
+            width: 2.5rem;
+            height: 2.5rem;
+            border: 0.25rem solid currentColor;
+            border-right-color: transparent;
+            border-radius: 50%;
+            animation: spinner-border 0.75s linear infinite;
+        }
+        
+        @keyframes spinner-border {
+            to { transform: rotate(360deg); }
+        }
+        
+        .d-none { display: none !important; }
+        .text-center { text-align: center; }
+        .mb-3 { margin-bottom: 1rem; }
+        .py-4 { padding-top: 1.5rem; padding-bottom: 1.5rem; }
+    </style>
+    
+    <!-- Load non-critical CSS asynchronously -->
+    <link rel="preload" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
+    <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
+    <link rel="preload" href="/static/css/main.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
+    
+    <!-- Fallback for browsers that don't support preload -->
+    <noscript>
+        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+        <link rel="stylesheet" href="/static/css/main.css">
+    </noscript>
+    
+    <!-- Polyfill for CSS preload -->
+    <script>
+        /*! loadCSS. [c]2017 Filament Group, Inc. MIT License */
+        !function(e){"use strict";var t=function(t,n,r,o){var i,a=e.document,d=a.createElement("link");if(n)i=n;else{var l=(a.body||a.getElementsByTagName("head")[0]).childNodes;i=l[l.length-1]}var s=a.styleSheets;if(o)for(var f in o)o.hasOwnProperty(f)&&d.setAttribute(f,o[f]);d.rel="stylesheet",d.href=t,d.media="only x",function e(t){if(a.body)return t();setTimeout(function(){e(t)})}(function(){i.parentNode.insertBefore(d,n?i:i.nextSibling)});var u=function(e){for(var t=d.href,n=s.length;n--;)if(s[n].href===t)return e();setTimeout(function(){u(e)})};return d.addEventListener&&d.addEventListener("load",function(){this.media=r||"all"}),d.onloadcssdefined=u,u(function(){d.media!==r&&(d.media=r)}),d};"undefined"!=typeof exports?exports.loadCSS=t:e.loadCSS=t}("undefined"!=typeof global?global:this);
+    </script>
 </head>
-<body>
-    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+<body data-js-enabled="false">
+    <!-- JavaScript enabled detection -->
+    <script>document.body.setAttribute('data-js-enabled', 'true');</script>
+    
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary" role="navigation" aria-label="主導航" data-component="navigation">
         <div class="container">
-            <a class="navbar-brand" href="#"><i class="fas fa-chart-line me-2"></i>期權制勝分析系統</a>
-            <span class="navbar-text text-white small">v{{ version }}</span>
+            <a class="navbar-brand" href="#" aria-label="期權制勝分析系統首頁"><i class="fas fa-chart-line me-2" aria-hidden="true"></i>期權制勝分析系統</a>
+            <span class="navbar-text text-white small" aria-label="版本號">v{{ version }}</span>
         </div>
     </nav>
 
-    <div class="container mt-4">
+    <div class="container mt-4" data-component="main-content">
         <!-- 輸入控制面板 -->
-        <div class="card shadow-sm mb-4">
+        <div class="card shadow-sm mb-4" data-component="analysis-form">
             <div class="card-header bg-light">
-                <h5 class="mb-0"><i class="fas fa-search me-2"></i>分析參數</h5>
+                <h5 class="mb-0"><i class="fas fa-search me-2" aria-hidden="true"></i>分析參數</h5>
             </div>
             <div class="card-body">
-                <form id="analysisForm">
+                <form id="analysisForm" role="form" aria-label="分析參數表單" data-form="analysis">
                     <div class="row g-3">
                         <div class="col-md-3">
                             <label for="ticker" class="form-label">股票代碼 (Ticker)</label>
-                            <input type="text" class="form-control" id="ticker" placeholder="例如: AAPL" required>
+                            <input type="text" class="form-control" id="ticker" placeholder="例如: AAPL" required aria-required="true" aria-describedby="tickerHelp">
                         </div>
-                        <div class="col-md-3">
-                            <label for="expiration" class="form-label">到期日 (可選)</label>
+                        <div class="col-md-4">
+                            <label for="expiration" class="form-label">主要到期日 (可選)</label>
                             <div class="input-group">
-                                <select class="form-select" id="expiration">
+                                <select class="form-select" id="expiration" aria-label="選擇到期日">
                                     <option value="" selected>自動選擇最近期權</option>
                                 </select>
-                                <button class="btn btn-outline-secondary" type="button" id="refreshDatesBtn" title="刷新日期">
-                                    <i class="fas fa-sync-alt"></i>
+                                <button class="btn btn-outline-secondary" type="button" id="refreshDatesBtn" title="刷新日期" aria-label="刷新到期日列表">
+                                    <i class="fas fa-sync-alt" aria-hidden="true"></i>
                                 </button>
                             </div>
                             <div class="form-text" id="expirationStatus">請先輸入股票代碼</div>
+                            <!-- 多到期日選擇區域 -->
+                            <div class="mt-2" id="multiExpirySection" style="display: none;">
+                                <label class="form-label small text-muted">
+                                    <i class="fas fa-calendar-alt me-1"></i>Module 27 多到期日比較 (可選多個)
+                                </label>
+                                <div id="expirationCheckboxes" class="border rounded p-2 bg-white" style="max-height: 150px; overflow-y: auto;">
+                                    <small class="text-muted">載入到期日後顯示...</small>
+                                </div>
+                                <div class="form-text">
+                                    <span id="selectedExpCount" aria-live="polite">0</span> 個已選 | 
+                                    <a href="#" id="selectAllExp" class="text-decoration-none" aria-label="選擇所有到期日">全選</a> | 
+                                    <a href="#" id="clearAllExp" class="text-decoration-none" aria-label="清除所有選擇">清除</a>
+                                </div>
+                            </div>
                         </div>
-                        <div class="col-md-3">
+                        <div class="col-md-2">
                             <label for="confidence" class="form-label">IV 信心度</label>
-                            <select class="form-select" id="confidence">
+                            <select class="form-select" id="confidence" aria-label="選擇隱含波動率信心度">
                                 <option value="1.0">68% (1.0 σ)</option>
                                 <option value="1.28">80% (1.28 σ)</option>
                                 <option value="1.645" selected>90% (1.645 σ)</option>
@@ -53,7 +150,7 @@
                         <div class="col-md-3">
                             <label for="useIbkr" class="form-label">數據源</label>
                             <div class="form-check form-switch mt-2">
-                                <input class="form-check-input" type="checkbox" id="useIbkr">
+                                <input class="form-check-input" type="checkbox" id="useIbkr" role="switch" aria-label="切換使用 IBKR 數據源">
                                 <label class="form-check-label" for="useIbkr">使用 IBKR (需連接 TWS)</label>
                             </div>
                         </div>
@@ -61,8 +158,8 @@
                     
                     <div class="row g-3 mt-2">
                         <div class="col-md-12">
-                            <button type="button" class="btn btn-link p-0 text-decoration-none" data-bs-toggle="collapse" data-bs-target="#advancedOptions">
-                                <i class="fas fa-cog me-1"></i>高級選項
+                            <button type="button" class="btn btn-link p-0 text-decoration-none" data-bs-toggle="collapse" data-bs-target="#advancedOptions" aria-expanded="false" aria-controls="advancedOptions" aria-label="展開或收起高級選項">
+                                <i class="fas fa-cog me-1" aria-hidden="true"></i>高級選項
                             </button>
                         </div>
                     </div>
@@ -70,15 +167,15 @@
                     <div class="collapse mt-3" id="advancedOptions">
                         <div class="card card-body bg-light border-0">
                             <div class="row g-3">
-                                <div class="col-md-4">
+                                <div class="col-md-3">
                                     <label for="strike" class="form-label">指定行使價 (Strike)</label>
                                     <input type="number" step="0.01" class="form-control" id="strike" placeholder="自動選擇 ATM">
                                 </div>
-                                <div class="col-md-4">
+                                <div class="col-md-3">
                                     <label for="premium" class="form-label">期權價格 (Premium)</label>
                                     <input type="number" step="0.01" class="form-control" id="premium" placeholder="自動獲取">
                                 </div>
-                                <div class="col-md-4">
+                                <div class="col-md-3">
                                     <label for="optionType" class="form-label">期權類型</label>
                                     <select class="form-select" id="optionType">
                                         <option value="">自動 (Call)</option>
@@ -86,44 +183,103 @@
                                         <option value="P">Put (看跌)</option>
                                     </select>
                                 </div>
+                                <div class="col-md-3">
+                                    <label for="totalCapital" class="form-label">總資金 (HKD)</label>
+                                    <input type="number" step="1000" class="form-control" id="totalCapital" placeholder="130000" value="130000">
+                                </div>
+                            </div>
+                            <div class="row g-3 mt-2">
+                                <div class="col-md-3">
+                                    <label for="currency" class="form-label">貨幣</label>
+                                    <select class="form-select" id="currency">
+                                        <option value="HKD" selected>HKD (港幣)</option>
+                                        <option value="USD">USD (美元)</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-3">
+                                    <label for="riskLevel" class="form-label">風險偏好</label>
+                                    <select class="form-select" id="riskLevel">
+                                        <option value="conservative">保守 (2%)</option>
+                                        <option value="moderate" selected>穩健 (5%)</option>
+                                        <option value="aggressive">積極 (10%)</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-3">
+                                    <label for="strategyPreference" class="form-label">策略偏好</label>
+                                    <select class="form-select" id="strategyPreference">
+                                        <option value="long" selected>Long (買方)</option>
+                                        <option value="short">Short (賣方)</option>
+                                        <option value="both">兩者皆可</option>
+                                    </select>
+                                </div>
                             </div>
                         </div>
                     </div>
 
                     <div class="mt-4 text-end">
-                        <button type="submit" class="btn btn-primary px-4" id="analyzeBtn">
-                            <i class="fas fa-play me-2"></i>開始分析
+                        <button type="submit" class="btn btn-primary px-4" id="analyzeBtn" aria-label="開始分析" data-click-feedback="ripple">
+                            <i class="fas fa-play me-2" aria-hidden="true"></i>開始分析
                         </button>
                     </div>
                 </form>
             </div>
         </div>
 
-        <!-- 載入中提示 -->
-        <div id="loadingState" class="text-center py-5 d-none">
-            <div class="spinner-border text-primary" role="status" style="width: 3rem; height: 3rem;">
-                <span class="visually-hidden">Loading...</span>
-            </div>
-            <p class="mt-3 text-muted">正在獲取數據並進行量化分析，請稍候...</p>
-            <div class="progress mt-3 mx-auto" style="max-width: 400px;">
-                <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 100%"></div>
+        <!-- 載入中提示 (增強版進度顯示) -->
+        <div id="loadingState" class="text-center py-4 d-none" role="status" aria-live="polite" aria-busy="true" data-component="loading-state">
+            <div class="card shadow-sm mx-auto" style="max-width: 500px;" data-animation="fade-in">
+                <div class="card-body">
+                    <div class="spinner-border text-primary mb-3" role="status" style="width: 2.5rem; height: 2.5rem;">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <h5 class="mb-2" id="progressTitle">正在分析...</h5>
+                    <p class="text-muted mb-3" id="progressMessage">初始化中...</p>
+                    
+                    <!-- 進度條 -->
+                    <div class="progress mb-2" style="height: 20px;" role="progressbar" aria-label="分析進度">
+                        <div class="progress-bar progress-bar-striped progress-bar-animated bg-primary" 
+                             id="progressBar"
+                             style="width: 0%"
+                             aria-valuenow="0" 
+                             aria-valuemin="0" 
+                             aria-valuemax="100">
+                            <span id="progressPercent">0%</span>
+                        </div>
+                    </div>
+                    
+                    <!-- 進度詳情 -->
+                    <div class="d-flex justify-content-between small text-muted mb-3">
+                        <span id="progressStep">步驟 0/5</span>
+                        <span id="progressTime">預計剩餘: 計算中...</span>
+                    </div>
+                    
+                    <!-- 當前模塊 -->
+                    <div class="bg-light rounded p-2 small" aria-live="polite">
+                        <i class="fas fa-cog fa-spin me-1" aria-hidden="true"></i>
+                        <span id="currentModule">準備開始...</span>
+                    </div>
+                    
+                    <!-- 已完成模塊列表 -->
+                    <div class="mt-3 text-start" id="completedModules" style="max-height: 120px; overflow-y: auto;" aria-live="polite" aria-label="已完成的模塊">
+                    </div>
+                </div>
             </div>
         </div>
 
         <!-- 錯誤提示 -->
-        <div id="errorAlert" class="alert alert-danger d-none" role="alert">
+        <div id="errorAlert" class="alert alert-danger d-none" role="alert" data-component="error-alert">
             <i class="fas fa-exclamation-circle me-2"></i><span id="errorMessage"></span>
         </div>
 
         <!-- 分析結果區域 -->
-        <div id="resultsArea" class="d-none">
+        <div id="resultsArea" class="d-none" role="region" aria-label="分析結果" data-component="results-area">
             <!-- 1. 核心概覽 -->
-            <div class="row mb-4">
+            <div class="row mb-4" data-module-group="overview">
                 <div class="col-md-12">
-                    <div class="card border-primary h-100">
+                    <div class="card border-primary h-100" data-module="overview" data-animation="card-entrance">
                         <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
                             <h5 class="mb-0">核心概覽</h5>
-                            <span class="badge bg-light text-primary" id="analysisDate"></span>
+                            <span class="badge bg-light text-primary" id="analysisDate" aria-label="分析日期"></span>
                         </div>
                         <div class="card-body">
                             <div class="row text-center">
@@ -353,6 +509,99 @@
                             <div id="parityCheck"></div>
                         </div>
                     </div>
+
+                    <!-- 模塊21: 動量過濾器 -->
+                    <div class="card mb-4 shadow-sm border-info">
+                        <div class="card-header bg-info text-white">
+                            <h6 class="mb-0 fw-bold">21. 動量過濾器</h6>
+                        </div>
+                        <div class="card-body">
+                            <div id="momentumFilter"></div>
+                        </div>
+                    </div>
+
+                    <!-- 模塊23: 動態IV閾值 -->
+                    <div class="card mb-4 shadow-sm border-warning">
+                        <div class="card-header bg-warning text-dark">
+                            <h6 class="mb-0 fw-bold">23. 動態 IV 閾值</h6>
+                        </div>
+                        <div class="card-body">
+                            <div id="dynamicIVThreshold"></div>
+                        </div>
+                    </div>
+
+                    <!-- 模塊28: 資金倉位計算器 -->
+                    <div class="card mb-4 shadow-sm border-success">
+                        <div class="card-header bg-success text-white">
+                            <h6 class="mb-0 fw-bold"><i class="fas fa-calculator me-2"></i>28. 資金倉位計算器</h6>
+                        </div>
+                        <div class="card-body">
+                            <div id="positionCalculator"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 新增: Module 22, 24, 25, 26, 27 大型模塊區域 -->
+            <div class="row g-4 mt-2">
+                <!-- 模塊22: 最佳行使價分析 -->
+                <div class="col-lg-12">
+                    <div class="card mb-4 shadow-sm border-primary">
+                        <div class="card-header bg-primary text-white">
+                            <h6 class="mb-0 fw-bold"><i class="fas fa-bullseye me-2"></i>22. 最佳行使價分析 (四種策略)</h6>
+                        </div>
+                        <div class="card-body">
+                            <div id="optimalStrike"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 模塊24: 技術方向分析 -->
+                <div class="col-lg-6">
+                    <div class="card mb-4 shadow-sm">
+                        <div class="card-header bg-light">
+                            <h6 class="mb-0 fw-bold text-primary"><i class="fas fa-compass me-2"></i>24. 技術方向分析</h6>
+                        </div>
+                        <div class="card-body">
+                            <div id="technicalDirection"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 模塊25: 波動率微笑 -->
+                <div class="col-lg-6">
+                    <div class="card mb-4 shadow-sm">
+                        <div class="card-header bg-light">
+                            <h6 class="mb-0 fw-bold text-primary"><i class="fas fa-smile me-2"></i>25. 波動率微笑分析</h6>
+                        </div>
+                        <div class="card-body">
+                            <div id="volatilitySmile"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 模塊26: Long 期權成本效益分析 -->
+                <div class="col-lg-12">
+                    <div class="card mb-4 shadow-sm border-info">
+                        <div class="card-header bg-info text-white">
+                            <h6 class="mb-0 fw-bold"><i class="fas fa-chart-bar me-2"></i>26. Long 期權成本效益分析</h6>
+                        </div>
+                        <div class="card-body">
+                            <div id="longOptionAnalysis"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 模塊27: 多到期日比較 -->
+                <div class="col-lg-12">
+                    <div class="card mb-4 shadow-sm border-success">
+                        <div class="card-header bg-success text-white">
+                            <h6 class="mb-0 fw-bold"><i class="fas fa-calendar-alt me-2"></i>27. 多到期日比較 (四種策略)</h6>
+                        </div>
+                        <div class="card-body">
+                            <div id="multiExpiryComparison"></div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -365,7 +614,39 @@
         </div>
     </footer>
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="/static/js/main.js"></script>
+    <!-- CSS Fallback Handler - Load immediately to catch CSS errors -->
+    <script src="/static/js/css-fallback-handler.js"></script>
+    
+    <!-- Module Error Handler - Load early for module rendering -->
+    <script src="/static/js/module-error-handler.js"></script>
+    
+    <!-- Defer non-critical JavaScript for faster page load -->
+    <!-- Bootstrap bundle includes Popper.js -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js" defer></script>
+    
+    <!-- Performance monitoring - load early but non-blocking -->
+    <script src="/static/js/performance-monitor.js" defer></script>
+    
+    <!-- Application JavaScript - deferred for non-blocking load -->
+    <script src="/static/js/theme-manager.js" defer></script>
+    <script src="/static/js/animation-controller.js" defer></script>
+    <script src="/static/js/debounce-utility.js" defer></script>
+    <script src="/static/js/lazy-loader.js" defer></script>
+    <script src="/static/js/virtual-scroller.js" defer></script>
+    
+    <!-- UI Component Controllers -->
+    <script src="/static/js/responsive-layout.js" defer></script>
+    <script src="/static/js/navigation-controller.js" defer></script>
+    <script src="/static/js/notification-manager.js" defer></script>
+    <script src="/static/js/progress-controller.js" defer></script>
+    <script src="/static/js/metric-display.js" defer></script>
+    <script src="/static/js/icon-system.js" defer></script>
+    <script src="/static/js/accessibility-manager.js" defer></script>
+    
+    <!-- Module Rendering -->
+    <script src="/static/js/module-renderer.js" defer></script>
+    
+    <!-- Main Application -->
+    <script src="/static/js/main.js" defer></script>
 </body>
 </html>

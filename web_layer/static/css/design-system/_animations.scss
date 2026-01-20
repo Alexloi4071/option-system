@@ -1,0 +1,593 @@
+// Animation System
+// Defines CSS custom properties and utilities for animations
+// Requirements: 5.4, 13.5
+//
+// GPU ACCELERATION STRATEGY (Requirement 13.5):
+// ============================================
+// All animations use ONLY transform and opacity properties for GPU acceleration.
+// These properties are composited on the GPU, avoiding expensive layout recalculations.
+//
+// GPU-Accelerated Properties (ALWAYS USE):
+// - transform (translate, scale, rotate, skew)
+// - opacity
+//
+// Non-GPU Properties (AVOID IN ANIMATIONS):
+// - width, height, top, left, right, bottom
+// - margin, padding, border-width
+// - font-size, line-height
+//
+// EXCEPTIONS:
+// - Collapse/expand animations require max-height transitions (no GPU alternative)
+// - These are optimized with opacity, will-change hints, and reasonable max values
+//
+// PERFORMANCE TIPS:
+// - Use will-change: transform, opacity for complex animations
+// - Use backface-visibility: hidden to force GPU layer
+// - Keep animation durations short (150-350ms)
+// - Respect prefers-reduced-motion for accessibility
+
+@use 'variables' as *;
+
+// ============================================================================
+// CSS CUSTOM PROPERTIES FOR ANIMATIONS
+// ============================================================================
+
+:root {
+  // Transition Durations
+  --transition-fast: #{$transition-fast};
+  --transition-base: #{$transition-base};
+  --transition-slow: #{$transition-slow};
+  
+  // Hover transition (must complete within 100ms per Requirement 5.2)
+  --transition-hover: 100ms cubic-bezier(0.4, 0, 0.2, 1);
+  
+  // Easing Functions (ease-in-out per Requirement 5.4)
+  --ease-in-out: #{$ease-in-out};
+  --ease-out: #{$ease-out};
+  --ease-in: #{$ease-in};
+  
+  // Animation Durations
+  --animation-duration-fast: 150ms;
+  --animation-duration-base: 250ms;
+  --animation-duration-slow: 350ms;
+  
+  // Stagger delay increment for card animations
+  --stagger-delay: 50ms;
+  
+  // Reduced motion flag (set by JS when prefers-reduced-motion is detected)
+  --motion-enabled: 1;
+}
+
+// ============================================================================
+// TRANSITION UTILITIES
+// ============================================================================
+
+.transition-none { transition: none !important; }
+.transition-all { transition: all var(--transition-base) var(--ease-in-out) !important; }
+.transition-fast { transition: all var(--transition-fast) var(--ease-in-out) !important; }
+.transition-slow { transition: all var(--transition-slow) var(--ease-in-out) !important; }
+.transition-hover { transition: all var(--transition-hover) !important; }
+
+// GPU-accelerated transitions (only transform and opacity - Requirement 13.5)
+.transition-gpu {
+  transition: transform var(--transition-base) var(--ease-in-out),
+              opacity var(--transition-base) var(--ease-in-out);
+  will-change: transform, opacity;
+}
+
+// ============================================================================
+// TRANSFORM UTILITIES (GPU-accelerated)
+// ============================================================================
+
+.transform { transform: translateZ(0); }
+.transform-gpu { 
+  transform: translateZ(0); 
+  will-change: transform; 
+  backface-visibility: hidden;
+}
+
+// ============================================================================
+// KEYFRAME ANIMATIONS
+// ============================================================================
+
+// Fade animations
+@keyframes fadeIn { 
+  from { opacity: 0; } 
+  to { opacity: 1; } 
+}
+
+@keyframes fadeOut { 
+  from { opacity: 1; } 
+  to { opacity: 0; } 
+}
+
+// Slide animations (GPU-accelerated using transform)
+@keyframes slideInUp {
+  from { 
+    opacity: 0; 
+    transform: translateY(20px); 
+  }
+  to { 
+    opacity: 1; 
+    transform: translateY(0); 
+  }
+}
+
+@keyframes slideInDown {
+  from { 
+    opacity: 0; 
+    transform: translateY(-20px); 
+  }
+  to { 
+    opacity: 1; 
+    transform: translateY(0); 
+  }
+}
+
+@keyframes slideInLeft {
+  from { 
+    opacity: 0; 
+    transform: translateX(-20px); 
+  }
+  to { 
+    opacity: 1; 
+    transform: translateX(0); 
+  }
+}
+
+@keyframes slideInRight {
+  from { 
+    opacity: 0; 
+    transform: translateX(20px); 
+  }
+  to { 
+    opacity: 1; 
+    transform: translateX(0); 
+  }
+}
+
+// Scale animations (GPU-accelerated)
+@keyframes scaleIn {
+  from { 
+    opacity: 0; 
+    transform: scale(0.95); 
+  }
+  to { 
+    opacity: 1; 
+    transform: scale(1); 
+  }
+}
+
+@keyframes scaleOut {
+  from { 
+    opacity: 1; 
+    transform: scale(1); 
+  }
+  to { 
+    opacity: 0; 
+    transform: scale(0.95); 
+  }
+}
+
+// Button click feedback animation (Requirement 11.1)
+@keyframes buttonPress {
+  0% { transform: scale(1); }
+  50% { transform: scale(0.95); }
+  100% { transform: scale(1); }
+}
+
+// Ripple effect animation
+@keyframes rippleEffect {
+  0% {
+    transform: translate(-50%, -50%) scale(0);
+    opacity: 0.6;
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(4);
+    opacity: 0;
+  }
+}
+
+// Continuous animations
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes bounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+
+// Card entrance animation (combines fade and slide)
+@keyframes cardEntrance {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+// ============================================================================
+// ANIMATION CLASSES
+// ============================================================================
+
+// Basic animations
+.animate-fade-in { 
+  animation: fadeIn var(--animation-duration-base) var(--ease-in-out) forwards; 
+}
+
+.animate-fade-out { 
+  animation: fadeOut var(--animation-duration-base) var(--ease-in-out) forwards; 
+}
+
+.animate-slide-in-up { 
+  animation: slideInUp var(--animation-duration-base) var(--ease-out) forwards; 
+}
+
+.animate-slide-in-down { 
+  animation: slideInDown var(--animation-duration-base) var(--ease-out) forwards; 
+}
+
+.animate-slide-in-left { 
+  animation: slideInLeft var(--animation-duration-base) var(--ease-out) forwards; 
+}
+
+.animate-slide-in-right { 
+  animation: slideInRight var(--animation-duration-base) var(--ease-out) forwards; 
+}
+
+.animate-scale-in { 
+  animation: scaleIn var(--animation-duration-base) var(--ease-out) forwards; 
+}
+
+.animate-scale-out { 
+  animation: scaleOut var(--animation-duration-base) var(--ease-in) forwards; 
+}
+
+// Continuous animations
+.animate-pulse { 
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; 
+}
+
+.animate-spin { 
+  animation: spin 1s linear infinite; 
+}
+
+.animate-bounce { 
+  animation: bounce 1s ease-in-out infinite; 
+}
+
+// Card entrance animation class
+.animate-card-entrance {
+  animation: cardEntrance var(--animation-duration-base) var(--ease-out) forwards;
+  opacity: 0; // Start hidden
+}
+
+// ============================================================================
+// STAGGERED ANIMATION DELAYS (for card lists - Requirement 5.1)
+// ============================================================================
+
+// Fixed delay classes
+.animate-delay-0 { animation-delay: 0ms; }
+.animate-delay-50 { animation-delay: 50ms; }
+.animate-delay-100 { animation-delay: 100ms; }
+.animate-delay-150 { animation-delay: 150ms; }
+.animate-delay-200 { animation-delay: 200ms; }
+.animate-delay-250 { animation-delay: 250ms; }
+.animate-delay-300 { animation-delay: 300ms; }
+.animate-delay-350 { animation-delay: 350ms; }
+.animate-delay-400 { animation-delay: 400ms; }
+.animate-delay-450 { animation-delay: 450ms; }
+.animate-delay-500 { animation-delay: 500ms; }
+
+// Staggered children (using CSS custom property for index)
+.stagger-children {
+  > * {
+    animation: cardEntrance var(--animation-duration-base) var(--ease-out) forwards;
+    opacity: 0;
+    
+    // Each child gets incrementally larger delay
+    @for $i from 1 through 20 {
+      &:nth-child(#{$i}) {
+        animation-delay: calc(#{$i - 1} * var(--stagger-delay));
+      }
+    }
+  }
+}
+
+// Alternative: data attribute based stagger
+[data-stagger-index] {
+  animation-delay: calc(var(--stagger-index, 0) * var(--stagger-delay));
+}
+
+// ============================================================================
+// HOVER EFFECTS (must complete within 100ms - Requirement 5.2)
+// ============================================================================
+
+.hover-lift {
+  transition: transform var(--transition-hover),
+              box-shadow var(--transition-hover);
+  
+  &:hover { 
+    transform: translateY(-2px); 
+    box-shadow: var(--shadow-lg); 
+  }
+}
+
+.hover-scale {
+  transition: transform var(--transition-hover);
+  
+  &:hover { 
+    transform: scale(1.02); 
+  }
+}
+
+.hover-scale-sm {
+  transition: transform var(--transition-hover);
+  
+  &:hover { 
+    transform: scale(1.01); 
+  }
+}
+
+.hover-brightness {
+  transition: filter var(--transition-hover);
+  
+  &:hover { 
+    filter: brightness(1.05); 
+  }
+}
+
+.hover-opacity {
+  transition: opacity var(--transition-hover);
+  
+  &:hover {
+    opacity: 0.8;
+  }
+}
+
+.hover-bg {
+  transition: background-color var(--transition-hover);
+  
+  &:hover {
+    background-color: var(--color-background);
+  }
+}
+
+// ============================================================================
+// FOCUS TRANSITIONS
+// ============================================================================
+
+.focus-ring {
+  transition: outline var(--transition-hover),
+              outline-offset var(--transition-hover);
+  
+  &:focus {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+  
+  &:focus:not(:focus-visible) {
+    outline: none;
+  }
+  
+  &:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+}
+
+// ============================================================================
+// BUTTON CLICK FEEDBACK (Requirement 11.1)
+// ============================================================================
+
+// Scale effect on click
+.btn-click-scale {
+  transition: transform var(--transition-hover);
+  
+  &:active {
+    transform: scale(0.95);
+  }
+}
+
+// Press animation class (applied via JS)
+.btn-press-animation {
+  animation: buttonPress 150ms var(--ease-out);
+}
+
+// Ripple effect container
+.ripple-container {
+  position: relative;
+  overflow: hidden;
+  
+  .ripple-effect {
+    position: absolute;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.4);
+    pointer-events: none;
+    animation: rippleEffect 600ms linear forwards;
+  }
+}
+
+// Simple ripple using pseudo-element (GPU-accelerated with transform)
+.ripple {
+  position: relative;
+  overflow: hidden;
+  
+  &::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.4);
+    transform: translate(-50%, -50%) scale(0);
+    transition: transform 300ms ease-out, opacity 300ms ease-out;
+    opacity: 0;
+    pointer-events: none;
+  }
+  
+  &:active::after {
+    transform: translate(-50%, -50%) scale(2);
+    opacity: 1;
+  }
+}
+
+// Dark theme ripple
+[data-theme="dark"] .ripple::after {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+// ============================================================================
+// REDUCED MOTION SUPPORT (Requirement 13.5)
+// ============================================================================
+
+@media (prefers-reduced-motion: reduce) {
+  // Disable all animations and transitions
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  
+  // Disable continuous animations completely
+  .animate-pulse,
+  .animate-spin,
+  .animate-bounce {
+    animation: none !important;
+  }
+  
+  // Disable hover transforms
+  .hover-lift:hover,
+  .hover-scale:hover,
+  .hover-scale-sm:hover {
+    transform: none !important;
+  }
+  
+  // Disable staggered animations
+  .stagger-children > * {
+    animation: none !important;
+    opacity: 1 !important;
+  }
+  
+  // Disable card entrance animations
+  .animate-card-entrance {
+    animation: none !important;
+    opacity: 1 !important;
+  }
+  
+  // Set CSS variable for JS to detect
+  :root {
+    --motion-enabled: 0;
+  }
+}
+
+// Class-based reduced motion (for JS control)
+.reduce-motion {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+// ============================================================================
+// LOADING SKELETON ANIMATION
+// ============================================================================
+
+@keyframes skeleton-loading {
+  0% { background-position: -200px 0; }
+  100% { background-position: calc(200px + 100%) 0; }
+}
+
+.skeleton {
+  background: linear-gradient(
+    90deg, 
+    var(--color-surface-elevated) 0%, 
+    var(--color-border-light) 50%, 
+    var(--color-surface-elevated) 100%
+  );
+  background-size: 200px 100%;
+  animation: skeleton-loading 1.5s ease-in-out infinite;
+  border-radius: var(--radius-md);
+}
+
+// ============================================================================
+// COLLAPSE/EXPAND ANIMATIONS
+// ============================================================================
+
+// NOTE: max-height and padding are not GPU-accelerated properties
+// However, they are necessary for collapse/expand functionality
+// We minimize performance impact by:
+// 1. Using reasonable max-height values (not 9999px)
+// 2. Combining with opacity for smoother visual effect
+// 3. Using will-change hint for browser optimization
+// 4. Keeping transitions as short as practical
+.collapse-transition {
+  transition: 
+    max-height var(--transition-slow) var(--ease-in-out),
+    opacity var(--transition-base) var(--ease-in-out),
+    padding var(--transition-base) var(--ease-in-out);
+  overflow: hidden;
+  opacity: 1;
+  will-change: max-height, opacity;
+  
+  &.collapsed {
+    max-height: 0 !important;
+    opacity: 0;
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+  }
+}
+
+// ============================================================================
+// TAB/VIEW TRANSITIONS (Requirement 5.5)
+// ============================================================================
+
+.view-transition-fade {
+  transition: opacity var(--transition-base) var(--ease-in-out);
+  
+  &.entering {
+    opacity: 0;
+  }
+  
+  &.entered {
+    opacity: 1;
+  }
+  
+  &.exiting {
+    opacity: 0;
+  }
+}
+
+.view-transition-slide {
+  transition: transform var(--transition-base) var(--ease-out),
+              opacity var(--transition-base) var(--ease-out);
+  
+  &.entering {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  
+  &.entered {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  
+  &.exiting {
+    opacity: 0;
+    transform: translateX(-20px);
+  }
+}

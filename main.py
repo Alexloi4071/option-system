@@ -110,7 +110,8 @@ class OptionsAnalysisSystem:
     def run_complete_analysis(self, ticker: str, expiration: str = None, 
                              confidence: float = 1.0, use_ibkr: bool = None,
                              strike: float = None, premium: float = None, 
-                             option_type: str = None):
+                             option_type: str = None, selected_expirations: list = None,
+                             progress_callback=None):
         """
         運行完整分析
         
@@ -122,14 +123,30 @@ class OptionsAnalysisSystem:
             strike: 期權行使價 (可選)
             premium: 期權價格 (可選)
             option_type: 期權類型 'C' (Call) 或 'P' (Put) (可選)
+            selected_expirations: 用戶選擇的多個到期日列表 (用於 Module 27)
+            progress_callback: 進度回調函數 (step, total, message, module_name)
         
         返回:
             dict: 完整分析結果
         """
+        # 進度報告輔助函數
+        def report_progress(step, total, message, module_name=None):
+            if progress_callback:
+                try:
+                    progress_callback(step, total, message, module_name)
+                except Exception as e:
+                    logger.warning(f"進度回調失敗: {e}")
+        
         try:
             logger.info(f"\n開始分析 {ticker}")
             # 清空上一輪結果
             self.analysis_results = {}
+            
+            # 保存用戶選擇的多個到期日（用於 Module 27）
+            self.selected_expirations = selected_expirations
+            
+            # 報告初始進度
+            report_progress(0, 28, "初始化分析系統...", "初始化")
             
             # 檢查是否需要重新初始化 DataFetcher
             # 只有當 use_ibkr 設置與現有 fetcher 不同時才重新初始化
@@ -153,6 +170,7 @@ class OptionsAnalysisSystem:
                 logger.info(f"數據源設置: IBKR={'啟用' if use_ibkr else '禁用'}")
             
             # 第1步: 獲取數據
+            report_progress(1, 28, "正在獲取市場數據...", "數據獲取")
             logger.info("→ 第1步: 獲取市場數據...")
             analysis_data = self.fetcher.get_complete_analysis_data(ticker, expiration)
             if not analysis_data:
@@ -167,11 +185,13 @@ class OptionsAnalysisSystem:
                 analysis_data['option_type'] = option_type.upper()
             
             # 第2步: 驗證數據
+            report_progress(2, 28, "驗證數據完整性...", "數據驗證")
             logger.info("\n→ 第2步: 驗證數據完整性...")
             if not self.validator.validate_stock_data(analysis_data):
                 raise ValueError("數據驗證失敗")
             
             # 第3步: 運行計算模塊
+            report_progress(3, 28, "開始運行計算模塊...", "Module 1: 支持/阻力位")
             logger.info("\n→ 第3步: 運行計算模塊...")
             
             # 模塊1: 支持/阻力位 (IV法) - 多信心度計算
@@ -317,6 +337,7 @@ class OptionsAnalysisSystem:
             # 原位置的 Module 3 調用已註釋，請參見 Module 19 之後的新實現
             
             # 模塊4: PE估值（使用真實 PE，優先 Forward PE）
+            report_progress(4, 28, "計算 PE 估值...", "Module 4: PE估值")
             try:
                 eps = analysis_data.get('eps')
                 # ✅ 優先使用 Forward PE（更準確），否則使用 TTM PE
@@ -733,6 +754,7 @@ class OptionsAnalysisSystem:
                     logger.warning("! 模塊10執行失敗: %s", exc)
             
             # 模塊11: 合成正股（支持股息調整）
+            report_progress(11, 28, "計算合成正股...", "Module 11: 合成正股")
             try:
                 if strike_price and call_last_price >= 0 and put_last_price >= 0:
                     # 獲取無風險利率和到期時間
@@ -920,6 +942,7 @@ class OptionsAnalysisSystem:
                 logger.warning("⚠ 模塊13執行失敗: %s", exc)
             
             # 模塊14: 12監察崗位（增強版 - 使用 Finviz ATR/RSI）
+            report_progress(14, 28, "計算監察崗位...", "Module 14: 監察崗位")
             try:
                 # ✅ 確保 Delta 有值 (默認 0.5 ATM)
                 delta_value = call_delta if call_delta is not None else 0.5
@@ -974,6 +997,7 @@ class OptionsAnalysisSystem:
                 logger.warning("! 模塊14執行失敗: %s", exc)
             
             # ========== 新增模塊 (Module 15-19) ==========
+            report_progress(15, 28, "計算期權定價與 Greeks...", "Module 15-19: 期權定價")
             logger.info("\n→ 運行新增模塊 (Module 15-19)...")
             
             # 準備新模塊所需的共同參數
@@ -1710,6 +1734,8 @@ class OptionsAnalysisSystem:
                 logger.warning("! 模塊19執行失敗: %s", exc)
             
             # ========== 模塊21: 動量過濾器 (新增) ==========
+            report_progress(20, 28, "計算基本面健康...", "Module 20: 基本面健康")
+            report_progress(21, 28, "計算動量過濾器...", "Module 21: 動量過濾器")
             logger.info("\n→ 運行 Module 21: 動量過濾器...")
             momentum_score = 0.5  # 默認中性動量
             try:
@@ -2000,6 +2026,7 @@ class OptionsAnalysisSystem:
             
             # ========== 模塊23: 動態IV閾值 (移到 Module 22 之前) ==========
             # 原因: Module 22 需要 Module 23 的 IV 環境信息來調整推薦策略
+            report_progress(23, 28, "計算動態 IV 閾值...", "Module 23: 動態IV閾值")
             logger.info("\n→ 運行 Module 23: 動態IV閾值計算...")
             iv_environment = 'neutral'  # 默認中性
             iv_trading_suggestion = None
@@ -2068,6 +2095,7 @@ class OptionsAnalysisSystem:
                 }
             
             # ========== 模塊22: 最佳行使價分析 (整合 Module 23 IV 環境) ==========
+            report_progress(22, 28, "分析最佳行使價...", "Module 22: 最佳行使價")
             logger.info("\n→ 運行 Module 22: 最佳行使價分析...")
             try:
                 # 獲取期權鏈數據
@@ -2178,6 +2206,7 @@ class OptionsAnalysisSystem:
                 }
             
             # ========== 模塊24: 技術方向分析 ==========
+            report_progress(24, 28, "分析技術方向...", "Module 24: 技術方向")
             logger.info("\n→ 運行 Module 24: 技術方向分析...")
             technical_direction = None
             try:
@@ -2218,6 +2247,7 @@ class OptionsAnalysisSystem:
                 }
             
             # Module 25: 波動率微笑分析
+            report_progress(25, 28, "分析波動率微笑...", "Module 25: 波動率微笑")
             logger.info("\n→ 運行 Module 25: 波動率微笑分析...")
             try:
                 if option_chain and 'calls' in option_chain and 'puts' in option_chain:
@@ -2258,6 +2288,7 @@ class OptionsAnalysisSystem:
                 }
             
             # Module 26: Long 期權成本效益分析
+            report_progress(26, 28, "分析 Long 期權成本效益...", "Module 26: Long期權分析")
             logger.info("\n→ 運行 Module 26: Long 期權成本效益分析...")
             try:
                 long_analyzer = LongOptionAnalyzer()
@@ -2339,6 +2370,7 @@ class OptionsAnalysisSystem:
                 }
             
             # Module 27: 多到期日比較分析（增強版 - 所有到期日 + 四種策略）
+            report_progress(27, 28, "比較多個到期日...", "Module 27: 多到期日比較")
             logger.info("\n→ 運行 Module 27: 多到期日比較分析（增強版）...")
             try:
                 multi_expiry_analyzer = MultiExpiryAnalyzer()
@@ -2346,6 +2378,9 @@ class OptionsAnalysisSystem:
                 # 獲取所有可用到期日
                 all_expirations = self.fetcher.get_option_expirations(ticker)
                 logger.info(f"  獲取到 {len(all_expirations)} 個可用到期日")
+                
+                # 檢查是否有用戶選擇的到期日
+                user_selected = getattr(self, 'selected_expirations', None)
                 
                 # 過濾 ≤90 天的到期日
                 from datetime import datetime, timedelta
@@ -2367,6 +2402,15 @@ class OptionsAnalysisSystem:
                 valid_expirations.sort(key=lambda x: x[1])
                 logger.info(f"  過濾後 ≤{max_days} 天的到期日: {len(valid_expirations)} 個")
                 
+                # 如果用戶選擇了特定到期日，優先使用
+                if user_selected and len(user_selected) > 0:
+                    logger.info(f"  用戶選擇了 {len(user_selected)} 個到期日進行比較")
+                    # 過濾出用戶選擇的有效到期日
+                    user_valid = [(exp, days) for exp, days in valid_expirations if exp in user_selected]
+                    if user_valid:
+                        valid_expirations = user_valid
+                        logger.info(f"  使用用戶選擇的 {len(valid_expirations)} 個到期日")
+                
                 if valid_expirations:
                     # 收集每個到期日的期權數據
                     expiration_data = []
@@ -2376,16 +2420,19 @@ class OptionsAnalysisSystem:
                     if current_exp and atm_call and atm_put:
                         current_days = int(days_to_expiration) if days_to_expiration else 0
                         if current_days > 0:
-                            expiration_data.append({
-                                'expiration': current_exp,
-                                'days': current_days,
-                                'atm_call': atm_call,
-                                'atm_put': atm_put
-                            })
-                            logger.info(f"    ✓ {current_exp} ({current_days}天): 使用已有數據")
+                            # 只有當用戶沒有選擇特定到期日，或當前到期日在用戶選擇中時才添加
+                            if not user_selected or current_exp in user_selected:
+                                expiration_data.append({
+                                    'expiration': current_exp,
+                                    'days': current_days,
+                                    'atm_call': atm_call,
+                                    'atm_put': atm_put
+                                })
+                                logger.info(f"    ✓ {current_exp} ({current_days}天): 使用已有數據")
                     
                     # 限制額外請求的到期日數量（避免 API 限制）
-                    max_additional_requests = 4  # 最多額外請求 4 個到期日
+                    # 如果用戶選擇了特定到期日，則獲取所有選擇的到期日
+                    max_additional_requests = len(user_selected) if user_selected else 4
                     additional_count = 0
                     
                     for exp_str, days_diff in valid_expirations:
@@ -2393,8 +2440,8 @@ class OptionsAnalysisSystem:
                         if exp_str == current_exp:
                             continue
                         
-                        # 檢查是否達到請求限制
-                        if additional_count >= max_additional_requests:
+                        # 檢查是否達到請求限制（僅在非用戶選擇模式下限制）
+                        if not user_selected and additional_count >= max_additional_requests:
                             logger.info(f"    已達到額外請求限制 ({max_additional_requests})，跳過剩餘到期日")
                             break
                         
@@ -2500,6 +2547,7 @@ class OptionsAnalysisSystem:
                 }
             
             # Module 28: 資金倉位計算器（使用用戶資金 13萬 HKD）
+            report_progress(28, 28, "計算資金倉位...", "Module 28: 資金倉位")
             logger.info("\n→ 運行 Module 28: 資金倉位計算器...")
             try:
                 # 默認資金設定（可通過參數覆蓋）

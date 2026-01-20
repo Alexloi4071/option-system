@@ -1,0 +1,457 @@
+/**
+ * Reduced Motion Support
+ * Respects user's prefers-reduced-motion preference
+ * Disables or simplifies animations when reduced motion is preferred
+ */
+
+// Detect reduced motion preference
+@media (prefers-reduced-motion: reduce) {
+  // Disable all animations and transitions
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  
+  // Remove animation delays
+  * {
+    animation-delay: 0ms !important;
+    transition-delay: 0ms !important;
+  }
+  
+  // Disable specific animation classes
+  .animate-card-entrance,
+  .animate-fade-in,
+  .animate-fade-out,
+  .animate-slide-in-up,
+  .animate-slide-in-down,
+  .animate-slide-in-left,
+  .animate-slide-in-right,
+  .animate-scale-in,
+  .animate-scale-out {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+  
+  // Disable hover effects
+  .hover-lift:hover,
+  .hover-scale:hover {
+    transform: none !important;
+  }
+  
+  // Disable button feedback animations
+  .btn-click-scale,
+  .btn-press-animation {
+    transform: none !important;
+  }
+  
+  // Disable ripple effects
+  .ripple-effect {
+    display: none !important;
+  }
+  
+  // Disable loading spinners rotation (keep visible but static)
+  .spinner-border,
+  .spinner-grow {
+    animation: none !important;
+  }
+  
+  // Simplify progress bar animations
+  .progress-bar-animated {
+    animation: none !important;
+  }
+  
+  // Disable skeleton loading animations
+  .skeleton-loading {
+    animation: none !important;
+    background: var(--color-border-light) !important;
+  }
+  
+  // Disable toast slide-in animations
+  .toast {
+    animation: none !important;
+  }
+  
+  // Disable modal fade animations
+  .modal.fade .modal-dialog {
+    transition: none !important;
+    transform: none !important;
+  }
+  
+  // Disable collapse animations
+  .collapse {
+    transition: none !important;
+  }
+  
+  // Disable carousel transitions
+  .carousel-item {
+    transition: none !important;
+  }
+  
+  // Keep focus indicators visible (accessibility requirement)
+  *:focus,
+  *:focus-visible {
+    outline: 2px solid var(--color-primary) !important;
+    outline-offset: 2px !important;
+  }
+}
+
+// Alternative: Class-based reduced motion control
+// Can be toggled via JavaScript
+.reduce-motion {
+  // Disable all animations and transitions
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  
+  // Remove animation delays
+  * {
+    animation-delay: 0ms !important;
+    transition-delay: 0ms !important;
+  }
+  
+  // Disable specific animation classes
+  .animate-card-entrance,
+  .animate-fade-in,
+  .animate-fade-out,
+  .animate-slide-in-up,
+  .animate-slide-in-down,
+  .animate-slide-in-left,
+  .animate-slide-in-right,
+  .animate-scale-in,
+  .animate-scale-out {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+  
+  // Disable hover effects
+  .hover-lift:hover,
+  .hover-scale:hover {
+    transform: none !important;
+  }
+  
+  // Disable button feedback animations
+  .btn-click-scale,
+  .btn-press-animation {
+    transform: none !important;
+  }
+  
+  // Disable ripple effects
+  .ripple-effect {
+    display: none !important;
+  }
+  
+  // Disable loading spinners rotation
+  .spinner-border,
+  .spinner-grow {
+    animation: none !important;
+  }
+  
+  // Simplify progress bar animations
+  .progress-bar-animated {
+    animation: none !important;
+  }
+  
+  // Disable skeleton loading animations
+  .skeleton-loading {
+    animation: none !important;
+    background: var(--color-border-light) !important;
+  }
+}
+
+// Motion-safe animations (only apply when motion is NOT reduced)
+@media (prefers-reduced-motion: no-preference) {
+  // Enable smooth scrolling
+  html {
+    scroll-behavior: smooth;
+  }
+  
+  // Enable card entrance animations
+  .animate-card-entrance {
+    animation: cardEntrance var(--transition-base) var(--easing-standard) forwards;
+  }
+  
+  // Enable fade animations
+  .animate-fade-in {
+    animation: fadeIn var(--transition-base) var(--easing-standard) forwards;
+  }
+  
+  .animate-fade-out {
+    animation: fadeOut var(--transition-base) var(--easing-standard) forwards;
+  }
+  
+  // Enable slide animations
+  .animate-slide-in-up {
+    animation: slideInUp var(--transition-base) var(--easing-standard) forwards;
+  }
+  
+  .animate-slide-in-down {
+    animation: slideInDown var(--transition-base) var(--easing-standard) forwards;
+  }
+  
+  .animate-slide-in-left {
+    animation: slideInLeft var(--transition-base) var(--easing-standard) forwards;
+  }
+  
+  .animate-slide-in-right {
+    animation: slideInRight var(--transition-base) var(--easing-standard) forwards;
+  }
+  
+  // Enable scale animations
+  .animate-scale-in {
+    animation: scaleIn var(--transition-base) var(--easing-standard) forwards;
+  }
+  
+  .animate-scale-out {
+    animation: scaleOut var(--transition-base) var(--easing-standard) forwards;
+  }
+  
+  // Enable hover effects
+  .hover-lift {
+    transition: transform var(--transition-fast) var(--easing-standard),
+                box-shadow var(--transition-fast) var(--easing-standard);
+    
+    &:hover {
+      transform: translateY(-2px);
+      box-shadow: var(--shadow-lg);
+    }
+  }
+  
+  .hover-scale {
+    transition: transform var(--transition-fast) var(--easing-standard);
+    
+    &:hover {
+      transform: scale(1.05);
+    }
+  }
+  
+  .hover-brightness {
+    transition: filter var(--transition-fast) var(--easing-standard);
+    
+    &:hover {
+      filter: brightness(1.1);
+    }
+  }
+  
+  .hover-opacity {
+    transition: opacity var(--transition-fast) var(--easing-standard);
+    
+    &:hover {
+      opacity: 0.8;
+    }
+  }
+  
+  // Enable button feedback
+  .btn-click-scale {
+    transition: transform var(--transition-fast) var(--easing-standard);
+  }
+  
+  .btn-press-animation {
+    animation: buttonPress 150ms var(--easing-standard);
+  }
+  
+  // Enable ripple effect
+  .ripple-effect {
+    position: absolute;
+    border-radius: 50%;
+    background-color: rgba(255, 255, 255, 0.6);
+    transform: scale(0);
+    animation: ripple 600ms var(--easing-standard);
+    pointer-events: none;
+  }
+  
+  @keyframes ripple {
+    to {
+      transform: scale(4);
+      opacity: 0;
+    }
+  }
+  
+  // Enable loading spinner
+  .spinner-border {
+    animation: spinner-border 0.75s linear infinite;
+  }
+  
+  @keyframes spinner-border {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  
+  .spinner-grow {
+    animation: spinner-grow 0.75s linear infinite;
+  }
+  
+  @keyframes spinner-grow {
+    0% {
+      transform: scale(0);
+    }
+    50% {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  
+  // Enable progress bar animation
+  .progress-bar-animated {
+    animation: progress-bar-stripes 1s linear infinite;
+  }
+  
+  @keyframes progress-bar-stripes {
+    0% {
+      background-position: 1rem 0;
+    }
+    100% {
+      background-position: 0 0;
+    }
+  }
+  
+  // Enable skeleton loading
+  .skeleton-loading {
+    animation: skeleton-loading 1.5s ease-in-out infinite;
+  }
+  
+  @keyframes skeleton-loading {
+    0% {
+      background-position: -200px 0;
+    }
+    100% {
+      background-position: calc(200px + 100%) 0;
+    }
+  }
+}
+
+// Keyframe animations (defined outside media query for reference)
+@keyframes cardEntrance {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes fadeOut {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes slideInUp {
+  from {
+    opacity: 0;
+    transform: translateY(30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideInDown {
+  from {
+    opacity: 0;
+    transform: translateY(-30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideInLeft {
+  from {
+    opacity: 0;
+    transform: translateX(-30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes slideInRight {
+  from {
+    opacity: 0;
+    transform: translateX(30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes scaleOut {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+}
+
+@keyframes buttonPress {
+  0% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(0.95);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+// CSS Variables for motion control
+:root {
+  --motion-enabled: 1;
+  --easing-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-fast: 150ms;
+  --transition-base: 250ms;
+  --transition-slow: 350ms;
+}
+
+// When motion is disabled via CSS variable
+[style*="--motion-enabled: 0"] {
+  * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

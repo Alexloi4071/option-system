@@ -1,0 +1,417 @@
+// Responsive Layout System
+// Defines breakpoints, media queries, and responsive grid system
+// Requirements: 3.1, 3.2, 3.3, 3.4, 3.5
+
+@use 'variables' as *;
+
+// ============================================================================
+// BREAKPOINT DEFINITIONS
+// ============================================================================
+
+// Breakpoint values (mobile-first approach)
+// Mobile: 0 - 767px
+// Tablet: 768px - 1199px
+// Desktop: 1200px+
+// Wide: 1600px+
+
+$breakpoints: (
+  'mobile': 0,
+  'tablet': 768px,
+  'desktop': 1200px,
+  'wide': 1600px
+);
+
+// CSS Custom Properties for breakpoints (for JavaScript access)
+:root {
+  --breakpoint-mobile: 0;
+  --breakpoint-tablet: 768px;
+  --breakpoint-desktop: 1200px;
+  --breakpoint-wide: 1600px;
+  
+  // Touch target minimum size (44px per WCAG guidelines)
+  --touch-target-min: 44px;
+  
+  // Container padding
+  --container-padding-mobile: #{$spacing-4};
+  --container-padding-tablet: #{$spacing-6};
+  --container-padding-desktop: #{$spacing-8};
+}
+
+// ============================================================================
+// MEDIA QUERY MIXINS
+// ============================================================================
+
+// Mobile only (max-width: 767px)
+@mixin mobile-only {
+  @media (max-width: #{$breakpoint-mobile - 1px}) {
+    @content;
+  }
+}
+
+// Tablet and up (min-width: 768px)
+@mixin tablet-up {
+  @media (min-width: #{$breakpoint-mobile}) {
+    @content;
+  }
+}
+
+// Tablet only (768px - 1199px)
+@mixin tablet-only {
+  @media (min-width: #{$breakpoint-mobile}) and (max-width: #{$breakpoint-desktop - 1px}) {
+    @content;
+  }
+}
+
+// Desktop and up (min-width: 1200px)
+@mixin desktop-up {
+  @media (min-width: #{$breakpoint-desktop}) {
+    @content;
+  }
+}
+
+// Wide screens (min-width: 1600px)
+@mixin wide-up {
+  @media (min-width: #{$breakpoint-wide}) {
+    @content;
+  }
+}
+
+// ============================================================================
+// RESPONSIVE CONTAINER
+// ============================================================================
+
+.container-responsive {
+  width: 100%;
+  max-width: 100%;
+  margin-left: auto;
+  margin-right: auto;
+  padding-left: var(--container-padding-mobile);
+  padding-right: var(--container-padding-mobile);
+  overflow-x: hidden; // Prevent horizontal scrolling
+  
+  @media (min-width: $breakpoint-mobile) {
+    padding-left: var(--container-padding-tablet);
+    padding-right: var(--container-padding-tablet);
+  }
+  
+  @media (min-width: $breakpoint-desktop) {
+    max-width: $container-max-width;
+    padding-left: var(--container-padding-desktop);
+    padding-right: var(--container-padding-desktop);
+  }
+}
+
+// Fluid container (always full width with padding)
+.container-fluid {
+  width: 100%;
+  padding-left: var(--container-padding-mobile);
+  padding-right: var(--container-padding-mobile);
+  overflow-x: hidden;
+  
+  @media (min-width: $breakpoint-mobile) {
+    padding-left: var(--container-padding-tablet);
+    padding-right: var(--container-padding-tablet);
+  }
+  
+  @media (min-width: $breakpoint-desktop) {
+    padding-left: var(--container-padding-desktop);
+    padding-right: var(--container-padding-desktop);
+  }
+}
+
+// ============================================================================
+// RESPONSIVE GRID SYSTEM
+// ============================================================================
+
+.grid-responsive {
+  display: grid;
+  gap: var(--spacing-4);
+  width: 100%;
+  
+  // Mobile: Single column
+  grid-template-columns: 1fr;
+  
+  // Tablet: Two columns
+  @media (min-width: $breakpoint-mobile) {
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--spacing-6);
+  }
+  
+  // Desktop: Three columns
+  @media (min-width: $breakpoint-desktop) {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  
+  // Wide: Four columns
+  @media (min-width: $breakpoint-wide) {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+// Auto-fit grid (responsive without media queries)
+.grid-auto-fit {
+  display: grid;
+  gap: var(--spacing-4);
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  
+  @media (min-width: $breakpoint-mobile) {
+    gap: var(--spacing-6);
+  }
+}
+
+// Auto-fill grid
+.grid-auto-fill {
+  display: grid;
+  gap: var(--spacing-4);
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  
+  @media (min-width: $breakpoint-mobile) {
+    gap: var(--spacing-6);
+  }
+}
+
+// ============================================================================
+// RESPONSIVE COLUMN UTILITIES
+// ============================================================================
+
+// Mobile (default)
+.col-1 { grid-column: span 1; }
+.col-2 { grid-column: span 2; }
+.col-3 { grid-column: span 3; }
+.col-4 { grid-column: span 4; }
+.col-full { grid-column: 1 / -1; }
+
+// Tablet (md prefix)
+@media (min-width: $breakpoint-mobile) {
+  .col-md-1 { grid-column: span 1; }
+  .col-md-2 { grid-column: span 2; }
+  .col-md-3 { grid-column: span 3; }
+  .col-md-4 { grid-column: span 4; }
+  .col-md-full { grid-column: 1 / -1; }
+}
+
+// Desktop (lg prefix)
+@media (min-width: $breakpoint-desktop) {
+  .col-lg-1 { grid-column: span 1; }
+  .col-lg-2 { grid-column: span 2; }
+  .col-lg-3 { grid-column: span 3; }
+  .col-lg-4 { grid-column: span 4; }
+  .col-lg-full { grid-column: 1 / -1; }
+}
+
+// ============================================================================
+// RESPONSIVE FLEXBOX UTILITIES
+// ============================================================================
+
+.flex-responsive {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-4);
+  
+  @media (min-width: $breakpoint-mobile) {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: var(--spacing-6);
+  }
+}
+
+// Stack on mobile, row on tablet+
+.stack-to-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-4);
+  
+  @media (min-width: $breakpoint-mobile) {
+    flex-direction: row;
+  }
+}
+
+// Row on mobile, stack on tablet+ (reverse)
+.row-to-stack {
+  display: flex;
+  flex-direction: row;
+  gap: var(--spacing-4);
+  
+  @media (min-width: $breakpoint-mobile) {
+    flex-direction: column;
+  }
+}
+
+// ============================================================================
+// RESPONSIVE VISIBILITY UTILITIES
+// ============================================================================
+
+// Hide on mobile only
+.hide-mobile {
+  @media (max-width: #{$breakpoint-mobile - 1px}) {
+    display: none !important;
+  }
+}
+
+// Show only on mobile
+.show-mobile-only {
+  @media (min-width: $breakpoint-mobile) {
+    display: none !important;
+  }
+}
+
+// Hide on tablet and up
+.hide-tablet-up {
+  @media (min-width: $breakpoint-mobile) {
+    display: none !important;
+  }
+}
+
+// Show only on tablet
+.show-tablet-only {
+  @media (max-width: #{$breakpoint-mobile - 1px}) {
+    display: none !important;
+  }
+  @media (min-width: $breakpoint-desktop) {
+    display: none !important;
+  }
+}
+
+// Hide on desktop and up
+.hide-desktop-up {
+  @media (min-width: $breakpoint-desktop) {
+    display: none !important;
+  }
+}
+
+// Show only on desktop
+.show-desktop-only {
+  @media (max-width: #{$breakpoint-desktop - 1px}) {
+    display: none !important;
+  }
+}
+
+// ============================================================================
+// RESPONSIVE SPACING UTILITIES
+// ============================================================================
+
+// Responsive gap
+.gap-responsive {
+  gap: var(--spacing-4);
+  
+  @media (min-width: $breakpoint-mobile) {
+    gap: var(--spacing-6);
+  }
+  
+  @media (min-width: $breakpoint-desktop) {
+    gap: var(--spacing-8);
+  }
+}
+
+// Responsive padding
+.p-responsive {
+  padding: var(--spacing-4);
+  
+  @media (min-width: $breakpoint-mobile) {
+    padding: var(--spacing-6);
+  }
+  
+  @media (min-width: $breakpoint-desktop) {
+    padding: var(--spacing-8);
+  }
+}
+
+// Responsive margin
+.m-responsive {
+  margin: var(--spacing-4);
+  
+  @media (min-width: $breakpoint-mobile) {
+    margin: var(--spacing-6);
+  }
+  
+  @media (min-width: $breakpoint-desktop) {
+    margin: var(--spacing-8);
+  }
+}
+
+// ============================================================================
+// RESPONSIVE TEXT UTILITIES
+// ============================================================================
+
+// Responsive text alignment
+.text-center-mobile {
+  @media (max-width: #{$breakpoint-mobile - 1px}) {
+    text-align: center !important;
+  }
+}
+
+.text-left-tablet-up {
+  @media (min-width: $breakpoint-mobile) {
+    text-align: left !important;
+  }
+}
+
+// Responsive font sizes
+.text-responsive-sm {
+  font-size: $font-size-xs;
+  
+  @media (min-width: $breakpoint-mobile) {
+    font-size: $font-size-sm;
+  }
+}
+
+.text-responsive-base {
+  font-size: $font-size-sm;
+  
+  @media (min-width: $breakpoint-mobile) {
+    font-size: $font-size-base;
+  }
+}
+
+.text-responsive-lg {
+  font-size: $font-size-base;
+  
+  @media (min-width: $breakpoint-mobile) {
+    font-size: $font-size-lg;
+  }
+  
+  @media (min-width: $breakpoint-desktop) {
+    font-size: $font-size-xl;
+  }
+}
+
+.text-responsive-xl {
+  font-size: $font-size-lg;
+  
+  @media (min-width: $breakpoint-mobile) {
+    font-size: $font-size-xl;
+  }
+  
+  @media (min-width: $breakpoint-desktop) {
+    font-size: $font-size-2xl;
+  }
+}
+
+// ============================================================================
+// PREVENT HORIZONTAL SCROLLING
+// ============================================================================
+
+// Apply to html/body to prevent horizontal scroll
+.no-horizontal-scroll {
+  overflow-x: hidden;
+  max-width: 100vw;
+}
+
+// Responsive images (prevent overflow)
+.img-responsive {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+
+// Responsive tables wrapper
+.table-responsive-wrapper {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  
+  // Prevent horizontal scroll on larger screens
+  @media (min-width: $breakpoint-desktop) {
+    overflow-x: visible;
+  }
+}
