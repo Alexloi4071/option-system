@@ -233,6 +233,93 @@ $touch-target-min: 44px;
   }
   
   // ============================================================================
+  // MOBILE DATA CARD VIEW (US-4)
+  // ============================================================================
+  
+  // Hide tables on mobile, show cards instead
+  .data-table {
+    display: none !important;
+  }
+  
+  // Show card view on mobile
+  .data-cards {
+    display: block !important;
+  }
+  
+  // Data card styling
+  .data-card {
+    background: var(--color-surface, #ffffff);
+    border: 1px solid var(--color-border, #e0e0e0);
+    border-radius: var(--radius-lg, 12px);
+    padding: var(--spacing-4, 16px);
+    margin-bottom: var(--spacing-4, 16px);
+    box-shadow: var(--shadow-sm, 0 1px 3px rgba(0, 0, 0, 0.1));
+    transition: box-shadow 0.2s ease;
+    
+    // Touch feedback
+    &:active {
+      box-shadow: var(--shadow-md, 0 4px 6px rgba(0, 0, 0, 0.1));
+    }
+  }
+  
+  // Data card header
+  .data-card-header {
+    font-weight: 600;
+    font-size: var(--font-size-base, 16px);
+    color: var(--color-text-primary, #1a1a1a);
+    margin-bottom: var(--spacing-3, 12px);
+    padding-bottom: var(--spacing-2, 8px);
+    border-bottom: 2px solid var(--color-primary, #007bff);
+  }
+  
+  // Data card row (label-value pair)
+  .data-card-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--spacing-2, 8px) 0;
+    border-bottom: 1px solid var(--color-border-light, #f0f0f0);
+    
+    &:last-child {
+      border-bottom: none;
+    }
+  }
+  
+  // Data card label
+  .data-card-label {
+    font-weight: 500;
+    font-size: var(--font-size-sm, 14px);
+    color: var(--color-text-secondary, #666666);
+    flex: 0 0 auto;
+    margin-right: var(--spacing-3, 12px);
+  }
+  
+  // Data card value
+  .data-card-value {
+    font-weight: 400;
+    font-size: var(--font-size-sm, 14px);
+    color: var(--color-text-primary, #1a1a1a);
+    text-align: right;
+    flex: 1 1 auto;
+    
+    // Numeric values
+    &.numeric {
+      font-family: 'Courier New', monospace;
+      font-weight: 500;
+    }
+    
+    // Positive values (green)
+    &.positive {
+      color: var(--color-success, #28a745);
+    }
+    
+    // Negative values (red)
+    &.negative {
+      color: var(--color-danger, #dc3545);
+    }
+  }
+  
+  // ============================================================================
   // MOBILE FORMS
   // ============================================================================
   
@@ -350,6 +437,15 @@ $touch-target-min: 44px;
 // Hide mobile-only elements on larger screens
 @media (min-width: $breakpoint-mobile) {
   .mobile-only {
+    display: none !important;
+  }
+  
+  // Desktop: Show tables, hide cards (US-4)
+  .data-table {
+    display: table !important;
+  }
+  
+  .data-cards {
     display: none !important;
   }
 }

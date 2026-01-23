@@ -3192,6 +3192,122 @@ class DataFetcher:
             logger.error(f"x 獲取 {ticker} 派息失敗: {e}")
             return None
     
+    def get_dividend_yield(self, ticker: str) -> float:
+        """
+        獲取年化股息率（支持多數據源降級）
+        
+        數據來源優先級:
+        1. Yahoo Finance: info['dividendYield']（最優先，直接提供年化股息率）
+        2. Finviz: fundamentals['dividend_yield']（降級方案）
+        3. 計算方式: annual_dividend / current_price（最後降級）
+        
+        參數:
+            ticker: 股票代碼
+        
+        返回:
+            float: 年化股息率（小數形式，如 0.025 表示 2.5%）
+                   如果無股息或獲取失敗，返回 0.0
+        
+        示例:
+            >>> fetcher = DataFetcher()
+            >>> # 高股息股票（如 KO）
+            >>> div_yield = fetcher.get_dividend_yield('KO')
+            >>> print(f"KO 股息率: {div_yield*100:.2f}%")
+            
+            >>> # 無股息股票（如 TSLA）
+            >>> div_yield = fetcher.get_dividend_yield('TSLA')
+            >>> print(f"TSLA 股息率: {div_yield*100:.2f}%")  # 應該是 0.00%
+        
+        注意:
+            - 返回值已經是小數形式（如 0.03 表示 3%），無需再除以 100
+            - 對於無股息股票，返回 0.0
+            - 如果所有數據源都失敗，返回 0.0 並記錄警告
+        """
+        try:
+            logger.info(f"開始獲取 {ticker} 股息率...")
+            
+            # 方法1: Yahoo Finance info['dividendYield']（最優先）
+            try:
+                stock = yf.Ticker(ticker)
+                info = stock.info
+                
+                if 'dividendYield' in info and info['dividendYield'] is not None:
+                    dividend_yield = float(info['dividendYield'])
+                    
+                    # Yahoo Finance 的 dividendYield 已經是小數形式（如 0.03 表示 3%）
+                    if 0 <= dividend_yield <= 0.2:  # 合理範圍檢查（0% - 20%）
+                        logger.info(f"* {ticker} 股息率: {dividend_yield*100:.2f}% (來源: Yahoo Finance)")
+                        self._record_fallback('dividend_yield', 'Yahoo Finance', success=True)
+                        return dividend_yield
+                    else:
+                        logger.warning(f"! Yahoo Finance 股息率超出合理範圍: {dividend_yield*100:.2f}%")
+                
+            except Exception as e:
+                logger.debug(f"Yahoo Finance 股息率獲取失敗: {e}")
+                self._record_fallback('dividend_yield', 'Yahoo Finance', success=False, error_reason=str(e))
+            
+            # 方法2: Finviz fundamentals['dividend_yield']（降級方案）
+            if self.finviz_scraper:
+                try:
+                    fundamentals = self.finviz_scraper.get_fundamentals(ticker)
+                    
+                    if fundamentals and 'dividend_yield' in fundamentals:
+                        div_yield_str = fundamentals['dividend_yield']
+                        
+                        # Finviz 返回格式: "3.25%" 或 "-"
+                        if div_yield_str and div_yield_str != '-':
+                            # 移除 % 符號並轉換為小數
+                            dividend_yield = float(div_yield_str.rstrip('%')) / 100
+                            
+                            if 0 <= dividend_yield <= 0.2:
+                                logger.info(f"* {ticker} 股息率: {dividend_yield*100:.2f}% (來源: Finviz)")
+                                self._record_fallback('dividend_yield', 'Finviz', success=True)
+                                return dividend_yield
+                        else:
+                            logger.debug(f"Finviz 顯示 {ticker} 無股息")
+                
+                except Exception as e:
+                    logger.debug(f"Finviz 股息率獲取失敗: {e}")
+                    self._record_fallback('dividend_yield', 'Finviz', success=False, error_reason=str(e))
+            
+            # 方法3: 計算方式 annual_dividend / current_price（最後降級）
+            try:
+                # 獲取年度股息
+                div_data = self.get_dividends(ticker, years=1)
+                
+                if div_data and div_data['annual_dividend'] > 0:
+                    annual_dividend = div_data['annual_dividend']
+                    
+                    # 獲取當前股價
+                    stock_info = self.get_stock_info(ticker)
+                    
+                    if stock_info and 'current_price' in stock_info:
+                        current_price = stock_info['current_price']
+                        
+                        if current_price > 0:
+                            dividend_yield = annual_dividend / current_price
+                            
+                            if 0 <= dividend_yield <= 0.2:
+                                logger.info(f"* {ticker} 股息率: {dividend_yield*100:.2f}% (來源: 計算)")
+                                logger.info(f"  年度股息: ${annual_dividend:.2f}, 當前股價: ${current_price:.2f}")
+                                self._record_fallback('dividend_yield', 'Calculated', success=True)
+                                return dividend_yield
+                            else:
+                                logger.warning(f"! 計算的股息率超出合理範圍: {dividend_yield*100:.2f}%")
+                
+            except Exception as e:
+                logger.debug(f"計算股息率失敗: {e}")
+                self._record_fallback('dividend_yield', 'Calculated', success=False, error_reason=str(e))
+            
+            # 所有方法都失敗，返回 0.0
+            logger.info(f"* {ticker} 無股息或無法獲取股息率，使用 0.0")
+            return 0.0
+            
+        except Exception as e:
+            logger.error(f"x 獲取 {ticker} 股息率失敗: {e}")
+            logger.error(traceback.format_exc())
+            return 0.0
+    
     # ==================== 宏觀數據 ====================
     
     def get_risk_free_rate(self):

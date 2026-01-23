@@ -15,7 +15,7 @@ import os
 # 添加項目根目錄到路徑
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from calculation_layer.module24_volatility_smile import VolatilitySmileAnalyzer, SmileAnalysisResult
+from calculation_layer.module25_volatility_smile import VolatilitySmileAnalyzer, VolatilitySmileResult
 from calculation_layer.module15_black_scholes import BlackScholesCalculator
 
 
@@ -166,9 +166,9 @@ class TestSmileAnalysisCompleteness:
             time_to_expiration=time_to_expiration
         )
         
-        # 驗證結果是 SmileAnalysisResult 類型
-        assert isinstance(result, SmileAnalysisResult), \
-            f"Expected SmileAnalysisResult, got {type(result)}"
+        # 驗證結果是 VolatilitySmileResult 類型
+        assert isinstance(result, VolatilitySmileResult), \
+            f"Expected VolatilitySmileResult, got {type(result)}"
         
         # 驗證 ATM IV 存在且在合理範圍內
         assert result.atm_iv > 0, f"ATM IV should be positive, got {result.atm_iv}"
@@ -185,7 +185,7 @@ class TestSmileAnalysisCompleteness:
             f"Skew should be numeric, got {type(result.skew)}"
         
         # 驗證 smile_shape 是有效的分類
-        valid_shapes = ['symmetric', 'put_skew', 'call_skew', 'unknown']
+        valid_shapes = ['smile', 'smirk', 'skew', 'flat', 'neutral']
         assert result.smile_shape in valid_shapes, \
             f"Smile shape '{result.smile_shape}' not in valid shapes {valid_shapes}"
         
@@ -223,7 +223,7 @@ class TestSmileAnalysisCompleteness:
         **Validates: Requirements 5.1, 5.5**
         
         Property: Even with empty option chain, the analyzer should return a valid 
-        SmileAnalysisResult with default values.
+        VolatilitySmileResult with default values.
         """
         result = self.analyzer.analyze_smile(
             option_chain={'calls': [], 'puts': []},
@@ -231,9 +231,9 @@ class TestSmileAnalysisCompleteness:
             time_to_expiration=0.25
         )
         
-        assert isinstance(result, SmileAnalysisResult)
+        assert isinstance(result, VolatilitySmileResult)
         assert result.atm_iv == 0.30  # 默認 IV
-        assert result.smile_shape == 'unknown'
+        assert result.smile_shape == 'neutral'  # module25 使用 'neutral' 而非 'unknown'
 
 
 
@@ -283,7 +283,7 @@ class TestSmileShapeClassification:
         )
         
         # 驗證 smile_shape 是且僅是一個有效分類
-        valid_shapes = ['symmetric', 'put_skew', 'call_skew', 'unknown']
+        valid_shapes = ['smile', 'smirk', 'skew', 'flat', 'neutral']
         assert result.smile_shape in valid_shapes, \
             f"Smile shape '{result.smile_shape}' not in valid shapes {valid_shapes}"
         
@@ -317,8 +317,8 @@ class TestSmileShapeClassification:
             time_to_expiration=0.25
         )
         
-        assert result.smile_shape == 'put_skew', \
-            f"Expected 'put_skew' for positive skew, got '{result.smile_shape}'"
+        assert result.smile_shape == 'skew', \
+            f"Expected 'skew' for positive skew, got '{result.smile_shape}'"
     
     def test_call_skew_classification(self):
         """
@@ -345,8 +345,8 @@ class TestSmileShapeClassification:
             time_to_expiration=0.25
         )
         
-        assert result.smile_shape == 'call_skew', \
-            f"Expected 'call_skew' for negative skew, got '{result.smile_shape}'"
+        assert result.smile_shape == 'skew', \
+            f"Expected 'skew' for negative skew, got '{result.smile_shape}'"
     
     def test_symmetric_classification(self):
         """
@@ -373,8 +373,8 @@ class TestSmileShapeClassification:
             time_to_expiration=0.25
         )
         
-        assert result.smile_shape == 'symmetric', \
-            f"Expected 'symmetric' for zero skew, got '{result.smile_shape}'"
+        assert result.smile_shape in ['smile', 'flat', 'neutral'], \
+            f"Expected 'smile', 'flat', or 'neutral' for zero skew, got '{result.smile_shape}'"
 
 
 if __name__ == '__main__':

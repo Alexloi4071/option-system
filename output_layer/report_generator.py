@@ -5137,9 +5137,9 @@ class ReportGenerator:
         return report
     
     def _format_strategy_recommendations(self, recommendations: list) -> str:
-        """格式化策略推薦結果（含信心度）"""
+        """格式化策略推薦結果（含信心度和風險回報比）"""
         report = "\n" + "=" * 70 + "\n"
-        report += "策略推薦分析 (含信心度)\n"
+        report += "策略推薦分析 (含信心度和風險回報比)\n"
         report += "=" * 70 + "\n"
         
         if not recommendations:
@@ -5155,6 +5155,9 @@ class ReportGenerator:
                 reasoning = rec.get('reasoning', [])
                 suggested_strike = rec.get('suggested_strike')
                 key_levels = rec.get('key_levels', {})
+                risk_reward_ratio = rec.get('risk_reward_ratio')
+                max_profit = rec.get('max_profit')
+                max_loss = rec.get('max_loss')
             else:
                 strategy_name = getattr(rec, 'strategy_name', 'N/A')
                 direction = getattr(rec, 'direction', 'N/A')
@@ -5162,6 +5165,9 @@ class ReportGenerator:
                 reasoning = getattr(rec, 'reasoning', [])
                 suggested_strike = getattr(rec, 'suggested_strike', None)
                 key_levels = getattr(rec, 'key_levels', {})
+                risk_reward_ratio = getattr(rec, 'risk_reward_ratio', None)
+                max_profit = getattr(rec, 'max_profit', None)
+                max_loss = getattr(rec, 'max_loss', None)
             
             # 信心度 emoji
             confidence_emoji = {
@@ -5175,6 +5181,24 @@ class ReportGenerator:
             report += f"│  方向: {direction}\n"
             report += f"│  信心度: {confidence_emoji} {confidence}\n"
             report += f"│\n"
+            
+            # 添加風險回報比信息
+            if risk_reward_ratio is not None:
+                report += f"│  風險回報比: {risk_reward_ratio:.2f}:1\n"
+            if max_profit is not None:
+                if max_profit == float('inf'):
+                    report += f"│  最大利潤: 無限\n"
+                else:
+                    report += f"│  最大利潤: ${max_profit:.2f}\n"
+            if max_loss is not None:
+                if max_loss == float('inf'):
+                    report += f"│  最大損失: 無限 ⚠️\n"
+                else:
+                    report += f"│  最大損失: ${max_loss:.2f}\n"
+            
+            if risk_reward_ratio or max_profit or max_loss:
+                report += f"│\n"
+            
             report += f"│  推薦理由:\n"
             for reason in reasoning:
                 report += f"│    - {reason}\n"
@@ -5560,6 +5584,7 @@ class ReportGenerator:
         格式化 Module 11 (合成股票) 結果
         
         Requirements: 11.1, 11.2, 11.3
+        US-3 Task 3.3: 添加套利機會警報和策略詳情
         """
         try:
             if results.get('status') in ['skipped', 'error']:
@@ -5578,9 +5603,23 @@ class ReportGenerator:
             arbitrage_opportunity = results.get('arbitrage_opportunity', False)
             strategy = results.get('strategy', 'N/A')
             
+            # US-3: 檢查是否由 Parity 失效觸發
+            triggered_by_parity = results.get('triggered_by_parity', False)
+            parity_deviation = results.get('parity_deviation', 0)
+            arbitrage_strategy = results.get('arbitrage_strategy', {})
+            
             report = "\n" + "=" * 70 + "\n"
             report += "模塊11: 合成股票期權組合\n"
             report += "=" * 70 + "\n"
+            
+            # US-3 Task 3.3.2: 套利機會警報
+            if triggered_by_parity and arbitrage_strategy:
+                report += "\n" + "🎯" * 35 + "\n"
+                report += "⚠️  套利機會警報！Put-Call Parity 失效\n"
+                report += "🎯" * 35 + "\n"
+                report += f"Parity 偏離: ${abs(parity_deviation):>10.4f}\n"
+                report += f"理論利潤:   ${arbitrage_strategy.get('theoretical_profit', 0):>10.2f}\n"
+                report += "\n"
             
             report += f"行使價:              ${strike_price:>10.2f}\n"
             report += "\n📊 期權組合成本:\n"
@@ -5594,7 +5633,10 @@ class ReportGenerator:
             report += f"價格偏差:            ${difference:>10.2f}\n"
             report += "\n"
             
-            if arbitrage_opportunity:
+            # US-3 Task 3.3.3-3.3.5: 顯示套利策略詳情
+            if triggered_by_parity and arbitrage_strategy:
+                report += self._format_arbitrage_strategy(arbitrage_strategy)
+            elif arbitrage_opportunity:
                 report += "🚨 發現套利機會!\n"
                 report += f"策略: {strategy}\n"
                 report += "\n💡 說明:\n"
@@ -5618,6 +5660,91 @@ class ReportGenerator:
         except Exception as e:
             logger.error(f"x Module 11 格式化失敗: {e}")
             return f"❌ Module 11 格式化失敗: {str(e)}\n"
+    
+    def _format_arbitrage_strategy(self, strategy: dict) -> str:
+        """
+        US-3 Task 3.3.1: 格式化套利策略詳情
+        
+        參數:
+            strategy: 套利策略字典
+        
+        返回:
+            str: 格式化的策略報告
+        """
+        try:
+            report = "📋 套利策略詳情:\n"
+            report += "=" * 70 + "\n"
+            
+            # 策略類型
+            strategy_name = strategy.get('strategy_name', 'N/A')
+            report += f"策略名稱: {strategy_name}\n"
+            report += "\n"
+            
+            # Task 3.3.3: 策略腿表格
+            legs = strategy.get('legs', [])
+            if legs:
+                report += "📊 交易組合:\n"
+                report += "-" * 70 + "\n"
+                report += f"{'動作':<8} {'類型':<10} {'行使價':<12} {'數量':<8}\n"
+                report += "-" * 70 + "\n"
+                for leg in legs:
+                    action = leg.get('action', 'N/A')
+                    leg_type = leg.get('type', 'N/A')
+                    strike = leg.get('strike')
+                    quantity = leg.get('quantity', 1)
+                    
+                    strike_str = f"${strike:.2f}" if strike else "市價"
+                    report += f"{action:<8} {leg_type:<10} {strike_str:<12} {quantity:<8}\n"
+                report += "\n"
+            
+            # 利潤分析
+            risk_analysis = strategy.get('risk_analysis', {})
+            max_profit = risk_analysis.get('max_profit', 0)
+            max_loss = risk_analysis.get('max_loss', 0)
+            break_even = risk_analysis.get('break_even', 0)
+            
+            report += "💰 利潤分析:\n"
+            report += "-" * 70 + "\n"
+            report += f"最大利潤:            ${max_profit:>10.2f}\n"
+            if max_loss == 0:
+                report += f"最大損失:            理論無風險\n"
+            else:
+                report += f"最大損失:            ${max_loss:>10.2f}\n"
+            report += f"損益平衡點:          ${break_even:>10.2f}\n"
+            report += "\n"
+            
+            # Task 3.3.4: 風險分析
+            risks = risk_analysis.get('risks', [])
+            if risks:
+                report += "⚠️  風險提示:\n"
+                report += "-" * 70 + "\n"
+                for i, risk in enumerate(risks, 1):
+                    report += f"{i}. {risk}\n"
+                report += "\n"
+            
+            # Task 3.3.5: 執行步驟
+            execution_steps = strategy.get('execution_steps', [])
+            if execution_steps:
+                report += "📝 執行步驟:\n"
+                report += "-" * 70 + "\n"
+                for step in execution_steps:
+                    report += f"{step}\n"
+                report += "\n"
+            
+            # 注意事項
+            note = strategy.get('note', '')
+            if note:
+                report += "💡 重要提示:\n"
+                report += f"   {note}\n"
+                report += "\n"
+            
+            report += "=" * 70 + "\n"
+            
+            return report
+            
+        except Exception as e:
+            logger.error(f"x 套利策略格式化失敗: {e}")
+            return f"❌ 套利策略格式化失敗: {str(e)}\n"
     
     def _format_module12_annual_yield(self, results: dict) -> str:
         """

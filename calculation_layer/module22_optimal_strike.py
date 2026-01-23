@@ -20,6 +20,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any
 from datetime import datetime
+from functools import lru_cache
 
 # 導入統一的數據標準化工具
 try:
@@ -41,6 +42,64 @@ except ImportError:
         return True
 
 logger = logging.getLogger(__name__)
+
+
+# 模塊級 LRU 緩存函數（支持 @lru_cache 裝飾器）
+@lru_cache(maxsize=1000)
+def _calculate_greeks_cached(
+    stock_price: float,
+    strike: float,
+    rate: float,
+    time: float,
+    vol: float,
+    option_type: str
+) -> tuple:
+    """
+    緩存的 Greeks 計算（模塊級函數，支持 LRU cache）
+    
+    使用 @lru_cache 裝飾器實現高效緩存，自動管理緩存大小和淘汰策略。
+    
+    參數:
+        stock_price: 當前股價（保留2位小數）
+        strike: 行使價（保留2位小數）
+        rate: 無風險利率（保留4位小數）
+        time: 到期時間/年（保留4位小數）
+        vol: 波動率/小數形式（保留4位小數）
+        option_type: 期權類型 ('call' 或 'put')
+    
+    返回:
+        tuple: (delta, gamma, theta, vega, rho)
+    
+    注意:
+        - 此函數使用 @lru_cache，參數必須是 hashable 類型
+        - 輸入參數會被四捨五入以提高緩存命中率
+        - 緩存大小限制為 1000 個條目
+    """
+    from calculation_layer.module16_greeks import GreeksCalculator
+    
+    try:
+        greeks_calc = GreeksCalculator()
+        result = greeks_calc.calculate_all_greeks(
+            stock_price=stock_price,
+            strike_price=strike,
+            time_to_expiration=time,
+            risk_free_rate=rate,
+            volatility=vol,
+            option_type=option_type
+        )
+        
+        # 返回 tuple（hashable）
+        return (
+            result.delta,
+            result.gamma,
+            result.theta,
+            result.vega,
+            result.rho
+        )
+        
+    except Exception as e:
+        logger.error(f"計算 Greeks 失敗: {e}")
+        return (0.5, 0.0, 0.0, 0.0, 0.0)  # 返回默認值
 
 
 @dataclass
@@ -175,6 +234,9 @@ class OptimalStrikeCalculator:
     def __init__(self):
         logger.info("* 最佳行使價計算器已初始化")
         self._iv_calculator = None
+        self._greeks_calculator = None  # 添加 Greeks 計算器
+        self._cache_hits = 0  # 緩存命中計數
+        self._cache_misses = 0  # 緩存未命中計數
     
     def _get_iv_calculator(self):
         """延遲初始化 IV 計算器"""
@@ -182,6 +244,104 @@ class OptimalStrikeCalculator:
             from calculation_layer.module17_implied_volatility import ImpliedVolatilityCalculator
             self._iv_calculator = ImpliedVolatilityCalculator()
         return self._iv_calculator
+    
+    def _get_greeks_calculator(self):
+        """延遲初始化 Greeks 計算器"""
+        if self._greeks_calculator is None:
+            from calculation_layer.module16_greeks import GreeksCalculator
+            self._greeks_calculator = GreeksCalculator()
+        return self._greeks_calculator
+    
+    def _cached_greeks(
+        self,
+        stock_price: float,
+        strike: float,
+        rate: float,
+        time: float,
+        vol: float,
+        option_type: str
+    ) -> tuple:
+        """
+        緩存 Greeks 計算結果（使用 LRU cache）
+        
+        此方法是模塊級 LRU 緩存函數的包裝器，同時維護緩存統計。
+        
+        參數:
+            stock_price: 當前股價
+            strike: 行使價
+            rate: 無風險利率
+            time: 到期時間（年）
+            vol: 波動率（小數形式）
+            option_type: 期權類型 ('call' 或 'put')
+        
+        返回:
+            tuple: (delta, gamma, theta, vega, rho)
+        """
+        # 四捨五入參數以提高緩存命中率
+        stock_price_rounded = round(stock_price, 2)
+        strike_rounded = round(strike, 2)
+        rate_rounded = round(rate, 4)
+        time_rounded = round(time, 4)
+        vol_rounded = round(vol, 4)
+        
+        # 檢查緩存（通過 LRU cache 的 cache_info）
+        cache_info_before = _calculate_greeks_cached.cache_info()
+        
+        # 調用 LRU 緩存函數
+        result = _calculate_greeks_cached(
+            stock_price_rounded,
+            strike_rounded,
+            rate_rounded,
+            time_rounded,
+            vol_rounded,
+            option_type
+        )
+        
+        # 更新緩存統計
+        cache_info_after = _calculate_greeks_cached.cache_info()
+        
+        if cache_info_after.hits > cache_info_before.hits:
+            self._cache_hits += 1
+            logger.debug(f"  緩存命中 (命中率: {self._get_cache_hit_rate():.1f}%)")
+        else:
+            self._cache_misses += 1
+        
+        return result
+    
+    def _get_cache_hit_rate(self) -> float:
+        """計算緩存命中率"""
+        total = self._cache_hits + self._cache_misses
+        if total == 0:
+            return 0.0
+        return (self._cache_hits / total) * 100
+    
+    def get_cache_stats(self) -> Dict[str, int]:
+        """
+        獲取緩存統計信息（包含 LRU cache 信息）
+        
+        返回:
+            {
+                'hits': int,  # 本實例的緩存命中次數
+                'misses': int,  # 本實例的緩存未命中次數
+                'hit_rate': float,  # 本實例的緩存命中率（%）
+                'lru_hits': int,  # LRU cache 總命中次數
+                'lru_misses': int,  # LRU cache 總未命中次數
+                'lru_size': int,  # LRU cache 當前大小
+                'lru_maxsize': int  # LRU cache 最大容量
+            }
+        """
+        # 獲取 LRU cache 統計
+        cache_info = _calculate_greeks_cached.cache_info()
+        
+        return {
+            'hits': self._cache_hits,
+            'misses': self._cache_misses,
+            'hit_rate': self._get_cache_hit_rate(),
+            'lru_hits': cache_info.hits,
+            'lru_misses': cache_info.misses,
+            'lru_size': cache_info.currsize,
+            'lru_maxsize': cache_info.maxsize
+        }
     
     def _normalize_iv(self, raw_iv: float) -> float:
         """
@@ -521,6 +681,10 @@ class OptimalStrikeCalculator:
             logger.info(f"  分析了 {len(analyzed_strikes)} 個行使價")
             logger.info(f"  最佳行使價: ${best_strike:.2f}")
             
+            # 輸出緩存統計
+            cache_stats = self.get_cache_stats()
+            logger.info(f"  緩存統計: 命中 {cache_stats['hits']}, 未命中 {cache_stats['misses']}, 命中率 {cache_stats['hit_rate']:.1f}%")
+            
             return result
             
         except Exception as e:
@@ -641,36 +805,28 @@ class OptimalStrikeCalculator:
             theta = option.get('theta')
             vega = option.get('vega')
             
-            # 如果沒有 Greeks 數據，使用 Black-Scholes 計算
+            # 如果沒有 Greeks 數據，使用 Black-Scholes 計算（帶緩存）
             if delta is None or delta == 0:
                 try:
-                    from calculation_layer.module16_greeks import GreeksCalculator
-                    greeks_calc = GreeksCalculator()
-                    
                     # 使用校正後的 IV（已經是小數形式）計算 Greeks
                     volatility = corrected_iv
                     
-                    # 計算 Greeks（使用正確的方法名）
-                    greeks_result = greeks_calc.calculate_all_greeks(
+                    # 使用緩存的 Greeks 計算
+                    delta_cached, gamma_cached, theta_cached, vega_cached, rho_cached = self._cached_greeks(
                         stock_price=current_price,
-                        strike_price=strike,
-                        time_to_expiration=time_to_expiry,
-                        risk_free_rate=risk_free_rate,
-                        volatility=volatility,
+                        strike=strike,
+                        rate=risk_free_rate,
+                        time=time_to_expiry,
+                        vol=volatility,
                         option_type='call' if option_type == 'call' else 'put'
                     )
                     
-                    if greeks_result:
-                        delta = abs(greeks_result.delta)
-                        gamma = greeks_result.gamma
-                        theta = greeks_result.theta
-                        vega = greeks_result.vega
-                        logger.debug(f"  計算 Greeks: Δ={delta:.4f}, Γ={gamma:.4f}, Θ={theta:.4f}, ν={vega:.4f}")
-                    else:
-                        delta = 0.5
-                        gamma = 0
-                        theta = 0
-                        vega = 0
+                    delta = abs(delta_cached)
+                    gamma = gamma_cached
+                    theta = theta_cached
+                    vega = vega_cached
+                    logger.debug(f"  計算 Greeks: Δ={delta:.4f}, Γ={gamma:.4f}, Θ={theta:.4f}, ν={vega:.4f}")
+                    
                 except Exception as e:
                     logger.debug(f"  計算 Greeks 失敗: {e}，使用默認值")
                     delta = 0.5
@@ -1355,7 +1511,7 @@ class OptimalStrikeCalculator:
             logger.info("開始波動率微笑分析...")
             
             # 創建 VolatilitySmileAnalyzer 實例
-            from calculation_layer.module24_volatility_smile import VolatilitySmileAnalyzer
+            from calculation_layer.module25_volatility_smile import VolatilitySmileAnalyzer
             
             smile_analyzer = VolatilitySmileAnalyzer()
             

@@ -107,6 +107,35 @@ class OptionsAnalysisSystem:
         self.report_generator = ReportGenerator(output_manager=self.output_manager)
         self.analysis_results = {}
     
+    def validate_data_completeness(self, data: dict, required_fields: list) -> dict:
+        """
+        驗證數據完整性 (US-2: 空數據保護)
+        
+        參數:
+            data: 待驗證的數據字典
+            required_fields: 必需字段列表
+        
+        返回:
+            dict: {
+                'is_valid': bool,
+                'missing_fields': List[str],
+                'error_message': str
+            }
+        """
+        missing_fields = []
+        for field in required_fields:
+            if field not in data or data[field] is None:
+                missing_fields.append(field)
+        
+        is_valid = len(missing_fields) == 0
+        error_message = f"缺少必需字段: {', '.join(missing_fields)}" if not is_valid else None
+        
+        return {
+            'is_valid': is_valid,
+            'missing_fields': missing_fields,
+            'error_message': error_message
+        }
+    
     def run_complete_analysis(self, ticker: str, expiration: str = None, 
                              confidence: float = 1.0, use_ibkr: bool = None,
                              strike: float = None, premium: float = None, 
@@ -173,8 +202,77 @@ class OptionsAnalysisSystem:
             report_progress(1, 28, "正在獲取市場數據...", "數據獲取")
             logger.info("→ 第1步: 獲取市場數據...")
             analysis_data = self.fetcher.get_complete_analysis_data(ticker, expiration)
+            
+            # US-2: 空數據保護 - 檢查 stock_data
             if not analysis_data:
-                raise ValueError(f"無法獲取 {ticker} 數據")
+                error_msg = f"無法獲取 {ticker} 的股票數據"
+                logger.error(error_msg)
+                return {
+                    'success': False,
+                    'error': error_msg,
+                    'error_type': 'no_data',
+                    'ticker': ticker,
+                    'timestamp': datetime.now().isoformat()
+                }
+            
+            # US-2: 檢查 current_price 是否存在
+            if not analysis_data.get('current_price'):
+                error_msg = f"無法獲取 {ticker} 的當前股價"
+                logger.error(error_msg)
+                return {
+                    'success': False,
+                    'error': error_msg,
+                    'error_type': 'missing_price',
+                    'ticker': ticker,
+                    'timestamp': datetime.now().isoformat()
+                }
+            
+            # US-2: 檢查 option_chain 數據
+            option_chain = analysis_data.get('option_chain', {})
+            if not option_chain:
+                error_msg = f"無法獲取 {ticker} 的期權鏈數據"
+                logger.error(error_msg)
+                # 嘗試獲取可用的到期日列表
+                available_expirations = []
+                try:
+                    available_expirations = self.fetcher.get_available_expirations(ticker)
+                except Exception as e:
+                    logger.warning(f"無法獲取可用到期日: {e}")
+                
+                return {
+                    'success': False,
+                    'error': error_msg,
+                    'error_type': 'no_option_chain',
+                    'ticker': ticker,
+                    'available_expirations': available_expirations,
+                    'timestamp': datetime.now().isoformat()
+                }
+            
+            # US-2: 檢查 calls_df 和 puts_df
+            calls_df = option_chain.get('calls')
+            puts_df = option_chain.get('puts')
+            
+            if calls_df is None or (hasattr(calls_df, 'empty') and calls_df.empty):
+                logger.warning(f"{ticker} 的 Call 期權數據為空")
+            
+            if puts_df is None or (hasattr(puts_df, 'empty') and puts_df.empty):
+                logger.warning(f"{ticker} 的 Put 期權數據為空")
+            
+            # 如果 calls 和 puts 都為空，返回錯誤
+            calls_empty = calls_df is None or (hasattr(calls_df, 'empty') and calls_df.empty)
+            puts_empty = puts_df is None or (hasattr(puts_df, 'empty') and puts_df.empty)
+            
+            if calls_empty and puts_empty:
+                error_msg = f"{ticker} 的期權數據完全為空（Call 和 Put 都無數據）"
+                logger.error(error_msg)
+                return {
+                    'success': False,
+                    'error': error_msg,
+                    'error_type': 'empty_options',
+                    'ticker': ticker,
+                    'expiration': expiration,
+                    'timestamp': datetime.now().isoformat()
+                }
             
             # 如果提供了 strike/premium/type，更新 analysis_data
             if strike is not None:
@@ -189,6 +287,23 @@ class OptionsAnalysisSystem:
             logger.info("\n→ 第2步: 驗證數據完整性...")
             if not self.validator.validate_stock_data(analysis_data):
                 raise ValueError("數據驗證失敗")
+            
+            # US-1 Task 2.4.1: 獲取股息收益率（用於 Module 15 和 Module 19）
+            logger.info("\n→ 獲取股息數據...")
+            dividend_yield = 0.0  # 默認值
+            try:
+                dividend_yield = self.fetcher.get_dividend_yield(ticker)
+                if dividend_yield > 0:
+                    logger.info(f"  * 股息收益率: {dividend_yield:.4f} ({dividend_yield*100:.2f}%)")
+                    # 將股息數據添加到 analysis_data 中
+                    analysis_data['dividend_yield'] = dividend_yield
+                else:
+                    logger.info(f"  * {ticker} 無股息或股息數據不可用")
+                    analysis_data['dividend_yield'] = 0.0
+            except Exception as e:
+                logger.warning(f"  ! 獲取股息數據失敗: {e}，使用默認值 0.0")
+                dividend_yield = 0.0
+                analysis_data['dividend_yield'] = 0.0
             
             # 第3步: 運行計算模塊
             report_progress(3, 28, "開始運行計算模塊...", "Module 1: 支持/阻力位")
@@ -1072,7 +1187,8 @@ class OptionsAnalysisSystem:
                             risk_free_rate=risk_free_rate,
                             time_to_expiration=time_to_expiration_years,
                             volatility=volatility_estimate,
-                            option_type='call'
+                            option_type='call',
+                            dividend_yield=dividend_yield  # US-1 Task 2.4.2: 傳遞股息率
                         )
                         
                         # 計算 Put 期權理論價格
@@ -1082,7 +1198,8 @@ class OptionsAnalysisSystem:
                             risk_free_rate=risk_free_rate,
                             time_to_expiration=time_to_expiration_years,
                             volatility=volatility_estimate,
-                            option_type='put'
+                            option_type='put',
+                            dividend_yield=dividend_yield  # US-1 Task 2.4.2: 傳遞股息率
                         )
                         
                         self.analysis_results['module15_black_scholes'] = {
@@ -1093,9 +1210,11 @@ class OptionsAnalysisSystem:
                                 'strike_price': strike_price,
                                 'risk_free_rate': risk_free_rate,
                                 'time_to_expiration': time_to_expiration_years,
-                                'volatility': volatility_estimate
+                                'volatility': volatility_estimate,
+                                'dividend_yield': dividend_yield  # US-1 Task 2.4.4: 包含股息信息
                             },
-                            'data_source': data_source
+                            'data_source': data_source,
+                            'dividend_adjusted': dividend_yield > 0  # US-1 Task 2.4.4: 標識是否使用股息調整
                         }
                         logger.info(f"* 模塊15完成: Black-Scholes 定價 (Call=${bs_call_result.option_price:.2f}, Put=${bs_put_result.option_price:.2f}) [{data_source}]")
                     else:
@@ -1105,22 +1224,28 @@ class OptionsAnalysisSystem:
                                 'option_price': api_call_price,
                                 'stock_price': current_price,
                                 'strike_price': strike_price,
-                                'model': 'Black-Scholes'
+                                'model': 'Black-Scholes',
+                                'dividend_yield': dividend_yield,  # US-1 Task 2.4.4: 包含股息信息
+                                'dividend_adjusted': dividend_yield > 0
                             },
                             'put': {
                                 'option_price': api_put_price,
                                 'stock_price': current_price,
                                 'strike_price': strike_price,
-                                'model': 'Black-Scholes'
+                                'model': 'Black-Scholes',
+                                'dividend_yield': dividend_yield,  # US-1 Task 2.4.4: 包含股息信息
+                                'dividend_adjusted': dividend_yield > 0
                             },
                             'parameters': {
                                 'stock_price': current_price,
                                 'strike_price': strike_price,
                                 'risk_free_rate': risk_free_rate,
                                 'time_to_expiration': time_to_expiration_years,
-                                'volatility': volatility_estimate
+                                'volatility': volatility_estimate,
+                                'dividend_yield': dividend_yield  # US-1 Task 2.4.4: 包含股息信息
                             },
-                            'data_source': data_source
+                            'data_source': data_source,
+                            'dividend_adjusted': dividend_yield > 0  # US-1 Task 2.4.4: 標識是否使用股息調整
                         }
                         logger.info(f"* 模塊15完成: Black-Scholes 定價 (Call=${api_call_price:.2f}, Put=${api_put_price:.2f}) [{data_source}]")
             except Exception as exc:
@@ -1360,7 +1485,8 @@ class OptionsAnalysisSystem:
                                 time_to_expiration=time_to_expiration_years,
                                 market_iv=volatility_estimate,
                                 atm_iv=atm_iv,
-                                option_type='call'
+                                option_type='call',
+                                dividend_yield=dividend_yield  # US-1 Task 2.4.2: 傳遞股息率
                             )
                             
                             # 使用 ATM IV 重新計算 Put 期權理論價格
@@ -1371,7 +1497,8 @@ class OptionsAnalysisSystem:
                                 time_to_expiration=time_to_expiration_years,
                                 market_iv=volatility_estimate,
                                 atm_iv=atm_iv,
-                                option_type='put'
+                                option_type='put',
+                                dividend_yield=dividend_yield  # US-1 Task 2.4.2: 傳遞股息率
                             )
                             
                             # 更新 Module 15 結果，添加 ATM IV 信息
@@ -1709,6 +1836,7 @@ class OptionsAnalysisSystem:
                         strike_price=strike_price,
                         risk_free_rate=risk_free_rate,
                         time_to_expiration=time_to_expiration_years,
+                        dividend_yield=dividend_yield,  # US-1 Task 2.4.3: 傳遞股息率
                         transaction_cost=0.10  # 假設交易成本 $0.10
                     )
                     
@@ -1718,7 +1846,8 @@ class OptionsAnalysisSystem:
                         strike_price=strike_price,
                         risk_free_rate=risk_free_rate,
                         time_to_expiration=time_to_expiration_years,
-                        volatility=volatility_estimate
+                        volatility=volatility_estimate,
+                        dividend_yield=dividend_yield  # US-1 Task 2.4.3: 傳遞股息率
                     )
                     
                     self.analysis_results['module19_put_call_parity'] = {
@@ -1732,6 +1861,54 @@ class OptionsAnalysisSystem:
                         logger.info(f"* 模塊19完成: Put-Call Parity 驗證 (無套利機會, 偏離=${parity_result.deviation:.4f})")
             except Exception as exc:
                 logger.warning("! 模塊19執行失敗: %s", exc)
+            
+            # ========== US-3: Module 11 & 19 邏輯綁定 ==========
+            # Task 3.1.1-3.1.4: 檢測 Module 19 套利機會，自動觸發 Module 11 分析
+            try:
+                if 'module19_put_call_parity' in self.analysis_results:
+                    parity_data = self.analysis_results['module19_put_call_parity']
+                    market_parity = parity_data.get('market_prices', {})
+                    
+                    # Task 3.1.1: 檢測套利機會
+                    if market_parity.get('arbitrage_opportunity', False):
+                        logger.info("\n→ US-3: 檢測到 Put-Call Parity 失效，觸發合成正股分析...")
+                        logger.info(f"  偏離: ${market_parity.get('deviation', 0):.4f}")
+                        logger.info(f"  理論利潤: ${market_parity.get('theoretical_profit', 0):.4f}")
+                        
+                        # Task 3.1.2-3.1.3: 自動觸發 Module 11
+                        synthetic_result = self._run_module11_with_parity_context(
+                            parity_result=market_parity,
+                            stock_price=current_price,
+                            strike_price=strike_price,
+                            call_premium=call_last_price,
+                            put_premium=put_last_price,
+                            risk_free_rate=risk_free_rate,
+                            time_to_expiration=time_to_expiration_years,
+                            dividend_yield=dividend_yield
+                        )
+                        
+                        # Task 3.1.4: 合併結果並添加標識
+                        if synthetic_result:
+                            # Task 3.2: 生成套利策略
+                            arbitrage_strategy = self._generate_arbitrage_strategy(
+                                parity_result=market_parity,
+                                synthetic_result=synthetic_result,
+                                stock_price=current_price,
+                                strike_price=strike_price
+                            )
+                            
+                            self.analysis_results['module11_synthetic'] = {
+                                **synthetic_result,
+                                'triggered_by_parity': True,
+                                'parity_deviation': market_parity.get('deviation'),
+                                'arbitrage_strategy': arbitrage_strategy
+                            }
+                            
+                            logger.info("* US-3: Module 11 & 19 綁定完成")
+                            logger.info(f"  策略類型: {arbitrage_strategy.get('strategy_type')}")
+                            logger.info(f"  理論利潤: ${arbitrage_strategy.get('theoretical_profit', 0):.4f}")
+            except Exception as exc:
+                logger.warning(f"! US-3: Module 11 & 19 綁定失敗: {exc}")
             
             # ========== 模塊21: 動量過濾器 (新增) ==========
             report_progress(20, 28, "計算基本面健康...", "Module 20: 基本面健康")
@@ -2703,6 +2880,166 @@ class OptionsAnalysisSystem:
             return {
                 'status': 'error',
                 'message': str(e)
+            }
+    
+    def _run_module11_with_parity_context(
+        self,
+        parity_result: dict,
+        stock_price: float,
+        strike_price: float,
+        call_premium: float,
+        put_premium: float,
+        risk_free_rate: float,
+        time_to_expiration: float,
+        dividend_yield: float = 0.0
+    ) -> dict:
+        """
+        Task 3.1.3: 在 Parity 失效時運行 Module 11 合成正股分析
+        
+        參數:
+            parity_result: Module 19 的 Parity 驗證結果
+            stock_price: 當前股價
+            strike_price: 行使價
+            call_premium: Call 期權金
+            put_premium: Put 期權金
+            risk_free_rate: 無風險利率
+            time_to_expiration: 到期時間（年）
+            dividend_yield: 股息率
+        
+        返回:
+            dict: Module 11 計算結果
+        """
+        try:
+            logger.info("  運行 Module 11: 合成正股分析...")
+            
+            synthetic_calc = SyntheticStockCalculator()
+            
+            # 計算預期股息（如果有）
+            expected_dividend = 0.0
+            if dividend_yield > 0:
+                expected_dividend = stock_price * dividend_yield * time_to_expiration
+            
+            synthetic_result = synthetic_calc.calculate(
+                strike_price=strike_price,
+                call_premium=call_premium,
+                put_premium=put_premium,
+                current_stock_price=stock_price,
+                risk_free_rate=risk_free_rate,
+                time_to_expiration=time_to_expiration,
+                expected_dividend=expected_dividend,
+                dividend_time=time_to_expiration / 2.0 if expected_dividend > 0 else None
+            )
+            
+            logger.info(f"  * Module 11 完成")
+            logger.info(f"    合成價格: ${synthetic_result.synthetic_price:.2f}")
+            logger.info(f"    差異: ${synthetic_result.difference:.2f}")
+            
+            return synthetic_result.to_dict()
+            
+        except Exception as e:
+            logger.error(f"  x Module 11 執行失敗: {e}")
+            return None
+    
+    def _generate_arbitrage_strategy(
+        self,
+        parity_result: dict,
+        synthetic_result: dict,
+        stock_price: float,
+        strike_price: float
+    ) -> dict:
+        """
+        Task 3.2: 生成完整的套利策略建議
+        
+        參數:
+            parity_result: Module 19 的 Parity 驗證結果
+            synthetic_result: Module 11 的合成正股結果
+            stock_price: 當前股價
+            strike_price: 行使價
+        
+        返回:
+            dict: 套利策略詳情
+        """
+        try:
+            deviation = parity_result.get('deviation', 0)
+            theoretical_profit = parity_result.get('theoretical_profit', 0)
+            
+            # Task 3.2.2-3.2.3: 根據偏離方向確定策略類型
+            if deviation > 0:
+                # Call 相對高估 → Short Synthetic
+                strategy_type = 'short_synthetic'
+                strategy_name = '合成 Short Stock'
+                
+                # Task 3.2.1: 生成策略腿
+                legs = [
+                    {'action': '沽出', 'type': 'Call', 'strike': strike_price, 'quantity': 1},
+                    {'action': '買入', 'type': 'Put', 'strike': strike_price, 'quantity': 1},
+                    {'action': '買入', 'type': 'Stock', 'strike': None, 'quantity': 100}
+                ]
+                
+                # Task 3.2.5: 風險分析
+                risks = [
+                    '執行風險：需要同時執行多個交易',
+                    '流動性風險：期權市場流動性不足可能導致滑點',
+                    '時間風險：價格可能在執行過程中變化',
+                    '保證金風險：沽出 Call 需要保證金'
+                ]
+                
+            else:
+                # Put 相對高估 → Long Synthetic
+                strategy_type = 'long_synthetic'
+                strategy_name = '合成 Long Stock'
+                
+                legs = [
+                    {'action': '買入', 'type': 'Call', 'strike': strike_price, 'quantity': 1},
+                    {'action': '沽出', 'type': 'Put', 'strike': strike_price, 'quantity': 1},
+                    {'action': '沽出', 'type': 'Stock', 'strike': None, 'quantity': 100}
+                ]
+                
+                risks = [
+                    '執行風險：需要同時執行多個交易',
+                    '流動性風險：期權市場流動性不足可能導致滑點',
+                    '時間風險：價格可能在執行過程中變化',
+                    '融券風險：需要融券賣出股票',
+                    '保證金風險：沽出 Put 需要保證金'
+                ]
+            
+            # Task 3.2.4: 計算理論利潤
+            max_profit = theoretical_profit
+            max_loss = 0.0  # 理論上無風險（實際有執行風險）
+            break_even = stock_price
+            
+            # Task 3.2.6: 生成執行步驟
+            execution_steps = [
+                f'1. 同時下單：{legs[0]["action"]} {legs[0]["type"]} + {legs[1]["action"]} {legs[1]["type"]} + {legs[2]["action"]} {legs[2]["type"]}',
+                '2. 確保所有訂單以限價單執行，避免滑點',
+                '3. 持有至到期日或 Parity 恢復正常',
+                f'4. 理論利潤約 ${theoretical_profit:.2f}（扣除交易成本前）'
+            ]
+            
+            strategy = {
+                'strategy_type': strategy_type,
+                'strategy_name': strategy_name,
+                'legs': legs,
+                'theoretical_profit': theoretical_profit,
+                'risk_analysis': {
+                    'max_profit': max_profit,
+                    'max_loss': max_loss,
+                    'break_even': break_even,
+                    'risks': risks
+                },
+                'execution_steps': execution_steps,
+                'note': '此為理論套利策略，實際執行需考慮交易成本、滑點和市場流動性'
+            }
+            
+            logger.info(f"  * 套利策略生成完成: {strategy_name}")
+            
+            return strategy
+            
+        except Exception as e:
+            logger.error(f"  x 套利策略生成失敗: {e}")
+            return {
+                'strategy_type': 'unknown',
+                'error': str(e)
             }
     
     def run_manual_analysis(self, ticker: str, manual_data: dict, confidence: float = 1.0):

@@ -591,6 +591,122 @@ class TestGreeksCalculator(unittest.TestCase):
         # Vega 應該為正且合理
         self.assertGreater(result.vega, 0, msg="Vega 應該 > 0")
         self.assertLess(result.vega, 100, msg="Vega 應該在合理範圍內")
+    
+    # ========== 交叉 Greeks 測試 ==========
+    
+    def test_vanna_calculation(self):
+        """測試 Vanna 計算"""
+        vanna = self.calculator.calculate_vanna(
+            stock_price=100.0,
+            strike_price=100.0,
+            risk_free_rate=0.05,
+            time_to_expiration=1.0,
+            volatility=0.2
+        )
+        
+        # Vanna 應該是有限值
+        self.assertFalse(math.isnan(vanna), msg="Vanna 不應該是 NaN")
+        self.assertFalse(math.isinf(vanna), msg="Vanna 不應該是 Inf")
+        
+        # ATM 期權的 Vanna 應該在合理範圍內
+        self.assertLess(abs(vanna), 1.0, msg="ATM Vanna 應該在合理範圍內")
+    
+    def test_volga_calculation(self):
+        """測試 Volga 計算"""
+        volga = self.calculator.calculate_volga(
+            stock_price=100.0,
+            strike_price=100.0,
+            risk_free_rate=0.05,
+            time_to_expiration=1.0,
+            volatility=0.2
+        )
+        
+        # Volga 應該是正值（Vega 的凸性）
+        self.assertGreater(volga, 0, msg="Volga 應該 > 0")
+        
+        # Volga 應該在合理範圍內
+        self.assertLess(volga, 100, msg="Volga 應該在合理範圍內")
+    
+    def test_charm_calculation(self):
+        """測試 Charm 計算"""
+        charm_call = self.calculator.calculate_charm(
+            stock_price=100.0,
+            strike_price=100.0,
+            risk_free_rate=0.05,
+            time_to_expiration=1.0,
+            volatility=0.2,
+            option_type='call'
+        )
+        
+        # Charm 應該是有限值
+        self.assertFalse(math.isnan(charm_call), msg="Charm 不應該是 NaN")
+        self.assertFalse(math.isinf(charm_call), msg="Charm 不應該是 Inf")
+        
+        # ATM Call 的 Charm 通常是負值
+        self.assertLess(charm_call, 0, msg="ATM Call Charm 通常為負")
+    
+    def test_calculate_all_cross_greeks(self):
+        """測試 calculate_all_cross_greeks 方法"""
+        cross_greeks = self.calculator.calculate_all_cross_greeks(
+            stock_price=100.0,
+            strike_price=100.0,
+            risk_free_rate=0.05,
+            time_to_expiration=1.0,
+            volatility=0.2,
+            option_type='call'
+        )
+        
+        # 驗證返回字典包含所有三個 Greeks
+        self.assertIn('vanna', cross_greeks, msg="應該包含 vanna")
+        self.assertIn('volga', cross_greeks, msg="應該包含 volga")
+        self.assertIn('charm', cross_greeks, msg="應該包含 charm")
+        
+        # 驗證值與單獨計算一致
+        vanna_separate = self.calculator.calculate_vanna(
+            stock_price=100.0,
+            strike_price=100.0,
+            risk_free_rate=0.05,
+            time_to_expiration=1.0,
+            volatility=0.2
+        )
+        
+        self.assertAlmostEqual(
+            cross_greeks['vanna'],
+            vanna_separate,
+            places=6,
+            msg="批量計算的 Vanna 應該與單獨計算一致"
+        )
+    
+    def test_cross_greeks_itm_otm(self):
+        """測試 ITM 和 OTM 期權的交叉 Greeks"""
+        # ITM Call
+        cross_greeks_itm = self.calculator.calculate_all_cross_greeks(
+            stock_price=110.0,
+            strike_price=100.0,
+            risk_free_rate=0.05,
+            time_to_expiration=1.0,
+            volatility=0.2,
+            option_type='call'
+        )
+        
+        # OTM Call
+        cross_greeks_otm = self.calculator.calculate_all_cross_greeks(
+            stock_price=90.0,
+            strike_price=100.0,
+            risk_free_rate=0.05,
+            time_to_expiration=1.0,
+            volatility=0.2,
+            option_type='call'
+        )
+        
+        # 驗證所有值都是有限的
+        for greek_name, value in cross_greeks_itm.items():
+            self.assertFalse(math.isnan(value), msg=f"ITM {greek_name} 不應該是 NaN")
+            self.assertFalse(math.isinf(value), msg=f"ITM {greek_name} 不應該是 Inf")
+        
+        for greek_name, value in cross_greeks_otm.items():
+            self.assertFalse(math.isnan(value), msg=f"OTM {greek_name} 不應該是 NaN")
+            self.assertFalse(math.isinf(value), msg=f"OTM {greek_name} 不應該是 Inf")
 
 
 def run_tests():

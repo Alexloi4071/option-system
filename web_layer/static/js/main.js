@@ -57,9 +57,9 @@ document.addEventListener('DOMContentLoaded', function() {
     // Apply button click feedback
     applyButtonFeedback();
     
-    // Initialize keyboard shortcuts if available
-    if (window.KeyboardShortcuts) {
-        console.log('[Main] Keyboard Shortcuts ready');
+    // Initialize accessibility manager (auto-initialized in accessibility-manager.js)
+    if (window.accessibilityManager) {
+        console.log('[Main] Accessibility Manager ready (includes keyboard shortcuts)');
     }
     
     console.log('[Main] Modern UI initialization complete');
@@ -112,6 +112,42 @@ function applyButtonFeedback() {
 }
 
 /**
+ * US-5: Validate ticker input
+ * Task 4.1.1: Create validateTicker function
+ * 
+ * @param {string} ticker - The ticker symbol to validate
+ * @returns {Object} - Validation result with isValid, ticker, and errors
+ */
+function validateTicker(ticker) {
+    const validation = {
+        isValid: false,
+        ticker: ticker.toUpperCase(),
+        errors: []
+    };
+    
+    // Task 4.1.2: Check length (1-5 characters)
+    if (ticker.length === 0) {
+        validation.errors.push('股票代碼不能為空');
+        return validation;
+    }
+    
+    if (ticker.length > 5) {
+        validation.errors.push('股票代碼不能超過5個字符');
+        return validation;
+    }
+    
+    // Task 4.1.3: Check characters (only letters, numbers, dots, hyphens)
+    const validPattern = /^[A-Z0-9.-]+$/;
+    if (!validPattern.test(validation.ticker)) {
+        validation.errors.push('股票代碼只能包含字母、數字、點(.)和連字符(-)');
+        return validation;
+    }
+    
+    validation.isValid = true;
+    return validation;
+}
+
+/**
  * Initialize analysis form and related functionality
  */
 function initializeAnalysisForm() {
@@ -119,8 +155,10 @@ function initializeAnalysisForm() {
     const analyzeBtn = document.getElementById('analyzeBtn');
     const loadingState = document.getElementById('loadingState');
     const resultsArea = document.getElementById('resultsArea');
-    const errorAlert = document.getElementById('errorAlert');
-    const errorMessage = document.getElementById('errorMessage');
+    // US-2: 更新錯誤提示元素 ID
+    const errorAlert = document.getElementById('error-alert');
+    const errorMessage = document.getElementById('error-message');
+    const errorDetails = document.getElementById('error-details');
     
     // Expiration Date Logic
     const tickerInput = document.getElementById('ticker');
@@ -137,6 +175,29 @@ function initializeAnalysisForm() {
     
     let availableExpirations = []; // 存儲所有可用到期日
 
+    // US-5 Task 4.1.5: Add real-time validation event listener
+    tickerInput.addEventListener('input', function() {
+        const ticker = this.value;
+        const validation = validateTicker(ticker);
+        
+        // Task 4.1.4: Auto-convert to uppercase
+        this.value = validation.ticker;
+        
+        // Display validation errors
+        const tickerError = document.getElementById('ticker-error');
+        if (!validation.isValid && ticker.length > 0) {
+            tickerError.textContent = validation.errors.join(', ');
+            tickerError.style.display = 'block';
+            analyzeBtn.disabled = true;
+        } else {
+            tickerError.style.display = 'none';
+            analyzeBtn.disabled = false;
+        }
+        
+        // Continue with existing debounced fetch
+        debouncedFetchExpirations(validation.ticker);
+    });
+
     // Auto-fetch dates when ticker changes (debounced for performance)
     // Validates: Requirements 13.4
     const debouncedFetchExpirations = debounce(function(ticker) {
@@ -144,11 +205,6 @@ function initializeAnalysisForm() {
             fetchExpirations(ticker);
         }
     }, 800);
-    
-    tickerInput.addEventListener('input', function() {
-        const ticker = this.value.trim();
-        debouncedFetchExpirations(ticker);
-    });
 
     refreshDatesBtn.addEventListener('click', function() {
         const ticker = tickerInput.value.trim();
@@ -303,8 +359,18 @@ function initializeAnalysisForm() {
 
             const data = await response.json();
 
+            // US-2: 檢查後端返回的 success 標識
+            if (data.success === false) {
+                // 創建包含詳細錯誤信息的錯誤對象
+                const error = new Error(data.error || '分析失敗');
+                error.response = data;
+                throw error;
+            }
+
             if (!response.ok) {
-                throw new Error(data.message || '分析請求失敗');
+                const error = new Error(data.message || '分析請求失敗');
+                error.response = data;
+                throw error;
             }
 
             // 4. 渲染數據
@@ -313,7 +379,45 @@ function initializeAnalysisForm() {
 
         } catch (error) {
             console.error('Error:', error);
-            errorMessage.textContent = error.message;
+            
+            // US-2: 增強錯誤處理 - 顯示友好的錯誤消息
+            let errorMsg = error.message || '分析請求失敗';
+            let detailsMsg = '';
+            
+            // 如果錯誤響應包含詳細信息
+            if (error.response) {
+                const errorData = error.response;
+                
+                // 根據錯誤類型顯示不同的消息
+                if (errorData.error_type === 'no_data') {
+                    errorMsg = `無法獲取 ${errorData.ticker} 的數據，請檢查股票代碼是否正確`;
+                } else if (errorData.error_type === 'missing_price') {
+                    errorMsg = `無法獲取 ${errorData.ticker} 的當前股價`;
+                } else if (errorData.error_type === 'no_option_chain') {
+                    errorMsg = `無法獲取 ${errorData.ticker} 的期權鏈數據`;
+                    if (errorData.available_expirations && errorData.available_expirations.length > 0) {
+                        detailsMsg = `可用的到期日: ${errorData.available_expirations.join(', ')}`;
+                    }
+                } else if (errorData.error_type === 'empty_options') {
+                    errorMsg = `${errorData.ticker} 的期權數據為空（Call 和 Put 都無數據）`;
+                    if (errorData.expiration) {
+                        detailsMsg = `到期日: ${errorData.expiration}`;
+                    }
+                } else if (errorData.error) {
+                    errorMsg = errorData.error;
+                }
+            }
+            
+            errorMessage.textContent = errorMsg;
+            
+            // 顯示詳細信息（如果有）
+            if (detailsMsg && errorDetails) {
+                errorDetails.textContent = detailsMsg;
+                errorDetails.style.display = 'block';
+            } else if (errorDetails) {
+                errorDetails.style.display = 'none';
+            }
+            
             errorAlert.classList.remove('d-none');
         } finally {
             analyzeBtn.disabled = false;
@@ -467,8 +571,47 @@ function initializeAnalysisForm() {
                 `;
             };
 
+            // US-4: Mobile card view rendering for Greeks
+            const renderGreeksCards = (type, data, priceData) => {
+                if (!data) return '<p class="text-muted text-center">無數據</p>';
+                const price = priceData ? priceData.option_price : 0;
+                
+                return `
+                    <div class="data-card">
+                        <div class="data-card-header">${type} Option Greeks</div>
+                        <div class="data-card-row">
+                            <span class="data-card-label">理論價</span>
+                            <span class="data-card-value numeric">${price.toFixed(2)}</span>
+                        </div>
+                        <div class="data-card-row">
+                            <span class="data-card-label">Delta</span>
+                            <span class="data-card-value numeric">${data.delta.toFixed(4)}</span>
+                        </div>
+                        <div class="data-card-row">
+                            <span class="data-card-label">Gamma</span>
+                            <span class="data-card-value numeric">${data.gamma.toFixed(4)}</span>
+                        </div>
+                        <div class="data-card-row">
+                            <span class="data-card-label">Theta</span>
+                            <span class="data-card-value numeric ${data.theta < 0 ? 'negative' : 'positive'}">${data.theta.toFixed(4)}</span>
+                        </div>
+                        <div class="data-card-row">
+                            <span class="data-card-label">Vega</span>
+                            <span class="data-card-value numeric">${data.vega.toFixed(4)}</span>
+                        </div>
+                        <div class="data-card-row">
+                            <span class="data-card-label">Rho</span>
+                            <span class="data-card-value numeric">${data.rho.toFixed(4)}</span>
+                        </div>
+                    </div>
+                `;
+            };
+
+            // Render both desktop and mobile views
             document.getElementById('callGreeks').innerHTML = renderGreeks('Call', greeks.call, bs?.call);
             document.getElementById('putGreeks').innerHTML = renderGreeks('Put', greeks.put, bs?.put);
+            document.getElementById('callGreeksCards').innerHTML = renderGreeksCards('Call', greeks.call, bs?.call);
+            document.getElementById('putGreeksCards').innerHTML = renderGreeksCards('Put', greeks.put, bs?.put);
         }
 
         // --- 6. 監察崗位 (Module 14) ---

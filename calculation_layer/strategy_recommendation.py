@@ -20,6 +20,9 @@ class StrategyRecommendation:
     key_levels: Dict[str, float]
     suggested_strike: Optional[float] = None
     suggested_expiry: Optional[str] = None
+    risk_reward_ratio: Optional[float] = None  # 風險回報比 (R/R Ratio)
+    max_profit: Optional[float] = None         # 最大利潤
+    max_loss: Optional[float] = None           # 最大損失
     
     def to_dict(self) -> Dict:
         return {
@@ -29,7 +32,10 @@ class StrategyRecommendation:
             'reasoning': self.reasoning,
             'key_levels': self.key_levels,
             'suggested_strike': self.suggested_strike,
-            'suggested_expiry': self.suggested_expiry
+            'suggested_expiry': self.suggested_expiry,
+            'risk_reward_ratio': self.risk_reward_ratio,
+            'max_profit': self.max_profit,
+            'max_loss': self.max_loss
         }
 
 class StrategyRecommender:
@@ -62,6 +68,123 @@ class StrategyRecommender:
             interval = 5.0
             
         return round(price / interval) * interval
+
+    def _calculate_risk_reward_ratio(
+        self,
+        strategy_name: str,
+        current_price: float,
+        strike: float,
+        premium: float,
+        target_price: Optional[float] = None,
+        stop_loss: Optional[float] = None
+    ) -> Dict:
+        """
+        計算風險回報比
+        
+        參數:
+            strategy_name: 策略名稱
+            current_price: 當前股價
+            strike: 行使價
+            premium: 期權金（估算值，使用 ATM 期權金的 2-3%）
+            target_price: 目標價格
+            stop_loss: 止損價格
+        
+        返回:
+            dict: {
+                'risk_reward_ratio': float,  # R/R 比率
+                'max_profit': float,         # 最大利潤
+                'max_loss': float,           # 最大損失
+                'break_even': float          # 盈虧平衡點
+            }
+        """
+        # 估算期權金（如果未提供）
+        # 使用簡化估算：ATM 期權金約為股價的 2-3%
+        if premium is None or premium <= 0:
+            premium = current_price * 0.025  # 2.5% 作為默認值
+        
+        # 根據策略類型計算 R/R
+        if 'Long Call' in strategy_name:
+            # Long Call: 最大損失 = 期權金，潛在利潤 = 目標價 - 行使價 - 期權金
+            max_loss = premium
+            if target_price and target_price > strike:
+                potential_profit = max(0, target_price - strike - premium)
+            else:
+                # 如果沒有目標價或目標價不高於行使價，假設上漲 10%
+                potential_profit = max(0, current_price * 1.10 - strike - premium)
+            break_even = strike + premium
+            
+        elif 'Long Put' in strategy_name:
+            # Long Put: 最大損失 = 期權金，潛在利潤 = 行使價 - 目標價 - 期權金
+            max_loss = premium
+            if target_price and target_price < strike:
+                potential_profit = max(0, strike - target_price - premium)
+            else:
+                # 如果沒有目標價或目標價不低於行使價，假設下跌 10%
+                potential_profit = max(0, strike - current_price * 0.90 - premium)
+            break_even = strike - premium
+            
+        elif 'Short Put' in strategy_name:
+            # Short Put: 最大利潤 = 期權金，最大損失 = 行使價 - 期權金
+            max_loss = strike - premium
+            potential_profit = premium
+            break_even = strike - premium
+            
+        elif 'Short Call' in strategy_name:
+            # Short Call: 最大利潤 = 期權金，最大損失 = 無限（用 inf 表示）
+            max_loss = float('inf')
+            potential_profit = premium
+            break_even = strike + premium
+            
+        elif 'Spread' in strategy_name or 'Iron Condor' in strategy_name:
+            # 價差策略：使用簡化計算
+            # 假設價差寬度為 5% 的股價
+            spread_width = current_price * 0.05
+            if 'Bull' in strategy_name or 'Bear' in strategy_name:
+                # 垂直價差
+                max_loss = spread_width - premium
+                potential_profit = premium
+            else:
+                # Iron Condor 或其他複雜策略
+                max_loss = spread_width * 0.5
+                potential_profit = premium
+            break_even = current_price
+            
+        elif 'Straddle' in strategy_name:
+            # Straddle 策略
+            if 'Long' in strategy_name:
+                # Long Straddle: 最大損失 = 2 * 期權金
+                max_loss = 2 * premium
+                # 潛在利潤：假設波動 15%
+                potential_profit = current_price * 0.15 - 2 * premium
+            else:
+                # Short Straddle: 最大利潤 = 2 * 期權金，最大損失 = 無限
+                max_loss = float('inf')
+                potential_profit = 2 * premium
+            break_even = current_price
+            
+        else:
+            # 其他策略：使用目標價和止損價
+            if target_price and stop_loss:
+                max_loss = abs(stop_loss - current_price)
+                potential_profit = abs(target_price - current_price)
+            else:
+                # 默認值
+                max_loss = current_price * 0.05  # 5% 損失
+                potential_profit = current_price * 0.10  # 10% 利潤
+            break_even = current_price
+        
+        # 計算 R/R 比率
+        if max_loss > 0 and max_loss != float('inf'):
+            risk_reward_ratio = potential_profit / max_loss
+        else:
+            risk_reward_ratio = None
+        
+        return {
+            'risk_reward_ratio': risk_reward_ratio,
+            'max_profit': potential_profit,
+            'max_loss': max_loss,
+            'break_even': break_even
+        }
 
     def recommend(self,
                  current_price: float,
@@ -294,6 +417,45 @@ class StrategyRecommender:
                 
         # 排序推薦 (按信心度)
         confidence_map = {'High': 3, 'Medium': 2, 'Low': 1}
+        
+        # 為每個推薦計算 R/R 比率並調整信心度
+        for rec in recommendations:
+            # 估算期權金（使用股價的 2.5%）
+            premium = current_price * 0.025
+            
+            # 獲取目標價和止損價
+            target_price = rec.key_levels.get('target', None)
+            stop_loss = rec.key_levels.get('stop_loss', None)
+            
+            # 計算 R/R 比率
+            if rec.suggested_strike:
+                rr_result = self._calculate_risk_reward_ratio(
+                    strategy_name=rec.strategy_name,
+                    current_price=current_price,
+                    strike=rec.suggested_strike,
+                    premium=premium,
+                    target_price=target_price,
+                    stop_loss=stop_loss
+                )
+                
+                # 更新推薦結果
+                rec.risk_reward_ratio = rr_result['risk_reward_ratio']
+                rec.max_profit = rr_result['max_profit']
+                rec.max_loss = rr_result['max_loss']
+                
+                # 根據 R/R 比率調整信心度
+                if rec.risk_reward_ratio:
+                    if rec.risk_reward_ratio > 2.0 and rec.confidence == 'Medium':
+                        rec.confidence = 'High'
+                        rec.reasoning.append(f"風險回報比優秀 ({rec.risk_reward_ratio:.2f}:1)")
+                        logger.info(f"  提升信心度: {rec.strategy_name} R/R={rec.risk_reward_ratio:.2f}")
+                    elif rec.risk_reward_ratio < 1.0 and rec.confidence == 'High':
+                        rec.confidence = 'Medium'
+                        rec.reasoning.append(f"風險回報比偏低 ({rec.risk_reward_ratio:.2f}:1)")
+                        logger.info(f"  降低信心度: {rec.strategy_name} R/R={rec.risk_reward_ratio:.2f}")
+                    elif rec.risk_reward_ratio >= 1.0:
+                        rec.reasoning.append(f"風險回報比 {rec.risk_reward_ratio:.2f}:1")
+        
         recommendations.sort(key=lambda x: confidence_map.get(x.confidence, 0), reverse=True)
         
         logger.info(f"* 策略推薦完成: 生成 {len(recommendations)} 個建議")

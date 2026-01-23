@@ -8,6 +8,7 @@
 - 使用 Newton-Raphson 迭代法
 - 提供收斂性驗證
 - 異常值檢測
+- 魯棒計算（多初值回退策略）
 - 作為 API 數據驗證工具
 
 隱含波動率 (IV) 說明:
@@ -27,6 +28,11 @@ Newton-Raphson 迭代法:
 
 收斂條件:
   |BS_Price(IV(n)) - Market_Price| < tolerance
+
+魯棒計算策略:
+  當標準方法失敗時，自動嘗試多個初始猜測值：
+  [0.2, 0.1, 0.5, 0.05, 1.0]（按優先級排序）
+  提高困難案例（深度 ITM/OTM、短期期權）的成功率
 ─────────────────────────────────────
 
 參考文獻:
@@ -368,6 +374,156 @@ class ImpliedVolatilityCalculator:
         except Exception as e:
             logger.error(f"x 隱含波動率計算失敗: {e}")
             raise
+    
+    def calculate_iv_robust(
+        self,
+        market_price: float,
+        stock_price: float,
+        strike_price: float,
+        risk_free_rate: float,
+        time_to_expiration: float,
+        option_type: str = 'call',
+        calculation_date: Optional[str] = None
+    ) -> Dict:
+        """
+        魯棒的隱含波動率計算（多初值回退策略）
+        
+        此方法使用多個初始猜測值嘗試計算隱含波動率，提高困難案例的成功率。
+        當一個初值失敗時，自動嘗試下一個初值，直到成功或所有初值都失敗。
+        
+        參數:
+            market_price: 市場期權價格（美元）
+            stock_price: 當前股價（美元）
+            strike_price: 行使價（美元）
+            risk_free_rate: 無風險利率（年化，小數形式）
+            time_to_expiration: 到期時間（年）
+            option_type: 期權類型 ('call' 或 'put')
+            calculation_date: 計算日期（YYYY-MM-DD 格式）
+        
+        返回:
+            Dict: 包含以下字段的字典
+                - iv: float - 隱含波動率（小數形式）
+                - status: str - 計算狀態 ('success' 或 'failed')
+                - initial_guess: float - 成功的初始猜測值
+                - iterations: int - 迭代次數
+                - tried_guesses: List[float] - 嘗試過的所有初值
+                - converged: bool - 是否收斂
+                - price_difference: float - 最終價格差異
+                - bs_price: float - BS 模型計算的價格
+        
+        初值策略:
+            按優先級嘗試以下初值：
+            1. 0.2 (20%) - 最常見的波動率水平
+            2. 0.1 (10%) - 低波動率情況
+            3. 0.5 (50%) - 高波動率情況
+            4. 0.05 (5%) - 極低波動率
+            5. 1.0 (100%) - 極高波動率
+        
+        結果驗證:
+            - IV 必須在 [0.01, 5.0] 範圍內
+            - 價格差異必須小於容差
+            - 迭代必須收斂
+        
+        示例:
+            >>> calc = ImpliedVolatilityCalculator()
+            >>> result = calc.calculate_iv_robust(
+            ...     market_price=10.45,
+            ...     stock_price=100,
+            ...     strike_price=100,
+            ...     risk_free_rate=0.05,
+            ...     time_to_expiration=1.0,
+            ...     option_type='call'
+            ... )
+            >>> if result['status'] == 'success':
+            ...     print(f"IV: {result['iv']*100:.2f}%")
+            ...     print(f"使用初值: {result['initial_guess']*100:.2f}%")
+            ...     print(f"嘗試次數: {len(result['tried_guesses'])}")
+        """
+        try:
+            logger.info(f"開始魯棒 IV 計算（多初值策略）...")
+            logger.info(f"  市場價格: ${market_price:.4f}")
+            logger.info(f"  股價: ${stock_price:.2f}, 行使價: ${strike_price:.2f}")
+            
+            # 定義初值列表（按優先級排序）
+            initial_guesses = [0.2, 0.1, 0.5, 0.05, 1.0]
+            tried_guesses = []
+            
+            logger.info(f"  初值策略: {[f'{g*100:.0f}%' for g in initial_guesses]}")
+            
+            # 嘗試每個初值
+            for guess in initial_guesses:
+                tried_guesses.append(guess)
+                logger.info(f"  嘗試初值: {guess*100:.2f}%")
+                
+                try:
+                    # 使用當前初值計算 IV
+                    result = self.calculate_implied_volatility(
+                        market_price=market_price,
+                        stock_price=stock_price,
+                        strike_price=strike_price,
+                        risk_free_rate=risk_free_rate,
+                        time_to_expiration=time_to_expiration,
+                        option_type=option_type,
+                        initial_guess=guess,
+                        calculation_date=calculation_date
+                    )
+                    
+                    # 驗證結果
+                    if result.converged and 0.01 <= result.implied_volatility <= 5.0:
+                        logger.info(f"  * 成功！IV = {result.implied_volatility*100:.2f}%")
+                        logger.info(f"    使用初值: {guess*100:.2f}%")
+                        logger.info(f"    迭代次數: {result.iterations}")
+                        logger.info(f"    嘗試初值數: {len(tried_guesses)}")
+                        
+                        return {
+                            'iv': result.implied_volatility,
+                            'status': 'success',
+                            'initial_guess': guess,
+                            'iterations': result.iterations,
+                            'tried_guesses': tried_guesses,
+                            'converged': True,
+                            'price_difference': result.price_difference,
+                            'bs_price': result.bs_price,
+                            'market_price': market_price
+                        }
+                    else:
+                        logger.debug(f"    初值 {guess*100:.2f}% 未收斂或結果無效")
+                        
+                except Exception as e:
+                    logger.debug(f"    初值 {guess*100:.2f}% 計算失敗: {e}")
+                    continue
+            
+            # 所有初值都失敗
+            logger.warning(f"! 所有初值都失敗，無法計算 IV")
+            logger.warning(f"  嘗試的初值: {[f'{g*100:.0f}%' for g in tried_guesses]}")
+            
+            return {
+                'iv': None,
+                'status': 'failed',
+                'initial_guess': None,
+                'iterations': 0,
+                'tried_guesses': tried_guesses,
+                'converged': False,
+                'price_difference': None,
+                'bs_price': None,
+                'market_price': market_price,
+                'error': 'All initial guesses failed to converge'
+            }
+            
+        except Exception as e:
+            logger.error(f"x 魯棒 IV 計算失敗: {e}")
+            return {
+                'iv': None,
+                'status': 'failed',
+                'initial_guess': None,
+                'iterations': 0,
+                'tried_guesses': [],
+                'converged': False,
+                'price_difference': None,
+                'bs_price': None,
+                'market_price': market_price,
+                'error': str(e)
+            }
     
     @staticmethod
     def _validate_inputs(

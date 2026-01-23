@@ -10,6 +10,7 @@ Module 17 單元測試: 隱含波動率計算器
 4. 異常值檢測
 5. Call 和 Put 期權測試
 6. 不同波動率水平測試
+7. 魯棒 IV 計算測試（多初值策略）
 """
 
 import unittest
@@ -382,10 +383,248 @@ class TestImpliedVolatilityCalculator(unittest.TestCase):
         )
 
 
+class TestIVRobust(unittest.TestCase):
+    """魯棒 IV 計算測試類（多初值策略）"""
+    
+    def setUp(self):
+        """測試前準備"""
+        self.iv_calculator = ImpliedVolatilityCalculator()
+        self.bs_calculator = BlackScholesCalculator()
+    
+    def test_robust_iv_standard_case(self):
+        """測試標準 ATM 期權的魯棒 IV 計算"""
+        known_iv = 0.25
+        
+        # 使用 BS 模型計算期權價格
+        bs_result = self.bs_calculator.calculate_option_price(
+            stock_price=100.0,
+            strike_price=100.0,
+            risk_free_rate=0.05,
+            time_to_expiration=1.0,
+            volatility=known_iv,
+            option_type='call'
+        )
+        
+        # 使用魯棒方法計算 IV
+        result = self.iv_calculator.calculate_iv_robust(
+            market_price=bs_result.option_price,
+            stock_price=100.0,
+            strike_price=100.0,
+            risk_free_rate=0.05,
+            time_to_expiration=1.0,
+            option_type='call'
+        )
+        
+        # 驗證成功
+        self.assertEqual(result['status'], 'success', "應該成功計算 IV")
+        self.assertTrue(result['converged'], "應該收斂")
+        self.assertIsNotNone(result['iv'], "IV 不應為 None")
+        self.assertAlmostEqual(result['iv'], known_iv, places=2, msg="IV 應該接近已知值")
+        
+        # 驗證返回字段
+        self.assertIn('initial_guess', result)
+        self.assertIn('iterations', result)
+        self.assertIn('tried_guesses', result)
+        self.assertIsInstance(result['tried_guesses'], list)
+    
+    def test_robust_iv_deep_itm_call(self):
+        """測試深度 ITM Call 期權（困難案例）"""
+        known_iv = 0.30
+        
+        bs_result = self.bs_calculator.calculate_option_price(
+            stock_price=150.0,  # 深度 ITM
+            strike_price=100.0,
+            risk_free_rate=0.05,
+            time_to_expiration=0.5,
+            volatility=known_iv,
+            option_type='call'
+        )
+        
+        result = self.iv_calculator.calculate_iv_robust(
+            market_price=bs_result.option_price,
+            stock_price=150.0,
+            strike_price=100.0,
+            risk_free_rate=0.05,
+            time_to_expiration=0.5,
+            option_type='call'
+        )
+        
+        # 魯棒方法應該能處理困難案例
+        self.assertEqual(result['status'], 'success', "魯棒方法應該成功")
+        self.assertIsNotNone(result['iv'])
+        self.assertGreater(result['iv'], 0.01, "IV 應該 > 1%")
+        self.assertLess(result['iv'], 5.0, "IV 應該 < 500%")
+    
+    def test_robust_iv_deep_otm_call(self):
+        """測試深度 OTM Call 期權（困難案例）"""
+        known_iv = 0.35
+        
+        bs_result = self.bs_calculator.calculate_option_price(
+            stock_price=50.0,  # 深度 OTM
+            strike_price=100.0,
+            risk_free_rate=0.05,
+            time_to_expiration=0.5,
+            volatility=known_iv,
+            option_type='call'
+        )
+        
+        result = self.iv_calculator.calculate_iv_robust(
+            market_price=bs_result.option_price,
+            stock_price=50.0,
+            strike_price=100.0,
+            risk_free_rate=0.05,
+            time_to_expiration=0.5,
+            option_type='call'
+        )
+        
+        # 魯棒方法應該能處理困難案例
+        self.assertEqual(result['status'], 'success', "魯棒方法應該成功")
+        self.assertIsNotNone(result['iv'])
+        self.assertGreater(result['iv'], 0.01)
+        self.assertLess(result['iv'], 5.0)
+    
+    def test_robust_iv_short_term_option(self):
+        """測試短期期權（困難案例）"""
+        known_iv = 0.40
+        
+        bs_result = self.bs_calculator.calculate_option_price(
+            stock_price=100.0,
+            strike_price=100.0,
+            risk_free_rate=0.05,
+            time_to_expiration=0.02,  # 約 1 週
+            volatility=known_iv,
+            option_type='call'
+        )
+        
+        result = self.iv_calculator.calculate_iv_robust(
+            market_price=bs_result.option_price,
+            stock_price=100.0,
+            strike_price=100.0,
+            risk_free_rate=0.05,
+            time_to_expiration=0.02,
+            option_type='call'
+        )
+        
+        # 短期期權可能較難收斂，但魯棒方法應該提高成功率
+        if result['status'] == 'success':
+            self.assertIsNotNone(result['iv'])
+            self.assertGreater(result['iv'], 0.01)
+            self.assertLess(result['iv'], 5.0)
+    
+    def test_robust_iv_failure_case(self):
+        """測試失敗場景（無效市場價格）"""
+        result = self.iv_calculator.calculate_iv_robust(
+            market_price=0.0,  # 無效價格
+            stock_price=100.0,
+            strike_price=100.0,
+            risk_free_rate=0.05,
+            time_to_expiration=1.0,
+            option_type='call'
+        )
+        
+        # 應該返回失敗狀態
+        self.assertEqual(result['status'], 'failed', "無效價格應該失敗")
+        self.assertIsNone(result['iv'], "失敗時 IV 應為 None")
+        self.assertIn('error', result, "應該包含錯誤信息")
+    
+    def test_robust_iv_initial_guess_priority(self):
+        """測試初值優先級"""
+        known_iv = 0.25
+        
+        bs_result = self.bs_calculator.calculate_option_price(
+            stock_price=100.0,
+            strike_price=100.0,
+            risk_free_rate=0.05,
+            time_to_expiration=1.0,
+            volatility=known_iv,
+            option_type='call'
+        )
+        
+        result = self.iv_calculator.calculate_iv_robust(
+            market_price=bs_result.option_price,
+            stock_price=100.0,
+            strike_price=100.0,
+            risk_free_rate=0.05,
+            time_to_expiration=1.0,
+            option_type='call'
+        )
+        
+        # 驗證優先使用 0.2 (20%)
+        self.assertEqual(result['status'], 'success')
+        self.assertIn(0.2, result['tried_guesses'], "應該嘗試 0.2 初值")
+        
+        # 對於標準案例，應該第一個初值就成功
+        self.assertEqual(len(result['tried_guesses']), 1, "標準案例應該第一個初值就成功")
+        self.assertEqual(result['initial_guess'], 0.2, "應該使用第一個初值 0.2")
+    
+    def test_robust_iv_multiple_guesses(self):
+        """測試多初值嘗試"""
+        # 使用一個可能需要多個初值的案例
+        known_iv = 0.80  # 高波動率
+        
+        bs_result = self.bs_calculator.calculate_option_price(
+            stock_price=100.0,
+            strike_price=100.0,
+            risk_free_rate=0.05,
+            time_to_expiration=0.25,
+            volatility=known_iv,
+            option_type='call'
+        )
+        
+        result = self.iv_calculator.calculate_iv_robust(
+            market_price=bs_result.option_price,
+            stock_price=100.0,
+            strike_price=100.0,
+            risk_free_rate=0.05,
+            time_to_expiration=0.25,
+            option_type='call'
+        )
+        
+        # 應該成功
+        self.assertEqual(result['status'], 'success')
+        self.assertIsNotNone(result['iv'])
+        
+        # 驗證嘗試了初值
+        self.assertGreater(len(result['tried_guesses']), 0, "應該至少嘗試一個初值")
+        self.assertLessEqual(len(result['tried_guesses']), 5, "最多嘗試 5 個初值")
+    
+    def test_robust_iv_put_option(self):
+        """測試 Put 期權的魯棒 IV 計算"""
+        known_iv = 0.30
+        
+        bs_result = self.bs_calculator.calculate_option_price(
+            stock_price=100.0,
+            strike_price=100.0,
+            risk_free_rate=0.05,
+            time_to_expiration=1.0,
+            volatility=known_iv,
+            option_type='put'
+        )
+        
+        result = self.iv_calculator.calculate_iv_robust(
+            market_price=bs_result.option_price,
+            stock_price=100.0,
+            strike_price=100.0,
+            risk_free_rate=0.05,
+            time_to_expiration=1.0,
+            option_type='put'
+        )
+        
+        # Put 期權也應該成功
+        self.assertEqual(result['status'], 'success')
+        self.assertIsNotNone(result['iv'])
+        self.assertAlmostEqual(result['iv'], known_iv, places=2)
+
+
 def run_tests():
     """運行所有測試"""
     loader = unittest.TestLoader()
-    suite = loader.loadTestsFromTestCase(TestImpliedVolatilityCalculator)
+    suite = unittest.TestSuite()
+    
+    # 添加所有測試類
+    suite.addTests(loader.loadTestsFromTestCase(TestImpliedVolatilityCalculator))
+    suite.addTests(loader.loadTestsFromTestCase(TestIVRobust))
+    
     runner = unittest.TextTestRunner(verbosity=2)
     result = runner.run(suite)
     return result.wasSuccessful()

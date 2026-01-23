@@ -1,0 +1,96 @@
+/* 表單間距修復 - Form Spacing Fix */
+/* 修復左側表單標籤和輸入框的行距問題 */
+
+/* 表單標籤間距 */
+.form-label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-weight: 500;
+    line-height: 1.5;
+}
+
+/* 表單控制項間距 */
+.form-control,
+.form-select {
+    margin-bottom: 0.25rem;
+    line-height: 1.5;
+}
+
+/* 表單文字說明間距 */
+.form-text {
+    display: block;
+    margin-top: 0.25rem;
+    margin-bottom: 0.5rem;
+    font-size: 0.875rem;
+    line-height: 1.4;
+}
+
+/* 輸入組間距 */
+.input-group {
+    margin-bottom: 0.25rem;
+}
+
+/* 列間距 */
+.col-md-2,
+.col-md-3,
+.col-md-4 {
+    margin-bottom: 1rem;
+}
+
+/* 行間距 */
+.row.g-3 {
+    row-gap: 1rem;
+}
+
+/* 多到期日選擇區域間距 */
+#multiExpirySection {
+    margin-top: 0.75rem;
+}
+
+#multiExpirySection .form-label {
+    margin-bottom: 0.5rem;
+}
+
+#expirationCheckboxes {
+    margin-bottom: 0.5rem;
+}
+
+/* 錯誤提示間距 */
+#ticker-error {
+    display: block;
+    margin-top: 0.25rem;
+    margin-bottom: 0.25rem;
+}
+
+/* 幫助文字間距 */
+#tickerHelp,
+#expirationStatus {
+    display: block;
+    margin-top: 0.25rem;
+    line-height: 1.4;
+}
+
+/* 確保所有表單元素有適當的垂直間距 */
+.card-body form > .row > [class*="col-"] > * {
+    margin-bottom: 0.5rem;
+}
+
+.card-body form > .row > [class*="col-"] > *:last-child {
+    margin-bottom: 0;
+}
+
+/* 按鈕組間距 */
+.btn-group {
+    margin-top: 0.5rem;
+}
+
+/* 選擇框下方的文字說明 */
+.form-select + .form-text {
+    margin-top: 0.5rem;
+}
+
+/* 輸入組下方的文字說明 */
+.input-group + .form-text,
+.input-group + div {
+    margin-top: 0.5rem;
+}

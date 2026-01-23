@@ -577,3 +577,19 @@ class AccessibilityManager {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = AccessibilityManager;
 }
+
+// Auto-initialize in browser environment
+// This ensures the accessibility manager is always available
+if (typeof window !== 'undefined') {
+  // Wait for DOM to be ready
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {
+      window.accessibilityManager = new AccessibilityManager();
+      console.log('[Accessibility] Manager initialized with keyboard shortcuts');
+    });
+  } else {
+    // DOM already loaded
+    window.accessibilityManager = new AccessibilityManager();
+    console.log('[Accessibility] Manager initialized with keyboard shortcuts');
+  }
+}

@@ -74,12 +74,14 @@
     <link rel="preload" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
     <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
     <link rel="preload" href="/static/css/main.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
+    <link rel="preload" href="/static/css/form-spacing-fix.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
     
     <!-- Fallback for browsers that don't support preload -->
     <noscript>
         <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
         <link rel="stylesheet" href="/static/css/main.css">
+        <link rel="stylesheet" href="/static/css/form-spacing-fix.css">
     </noscript>
     
     <!-- Polyfill for CSS preload -->
@@ -110,7 +112,16 @@
                     <div class="row g-3">
                         <div class="col-md-3">
                             <label for="ticker" class="form-label">股票代碼 (Ticker)</label>
-                            <input type="text" class="form-control" id="ticker" placeholder="例如: AAPL" required aria-required="true" aria-describedby="tickerHelp">
+                            <input type="text" 
+                                   class="form-control" 
+                                   id="ticker" 
+                                   placeholder="例如: AAPL" 
+                                   maxlength="5"
+                                   required 
+                                   aria-required="true" 
+                                   aria-describedby="tickerHelp ticker-error">
+                            <small id="ticker-error" class="form-text text-danger" style="display: none;"></small>
+                            <small id="tickerHelp" class="form-text text-muted">輸入美股代碼（1-5個字符）</small>
                         </div>
                         <div class="col-md-4">
                             <label for="expiration" class="form-label">主要到期日 (可選)</label>
@@ -223,6 +234,18 @@
                     </div>
                 </form>
             </div>
+        </div>
+
+        <!-- US-2: 錯誤提示區域 -->
+        <div id="error-alert" class="alert alert-danger alert-dismissible fade show d-none" role="alert" aria-live="assertive" data-component="error-alert">
+            <div class="d-flex align-items-start">
+                <i class="fas fa-exclamation-triangle me-3 mt-1" aria-hidden="true"></i>
+                <div class="flex-grow-1">
+                    <strong>錯誤：</strong> <span id="error-message"></span>
+                    <div id="error-details" class="mt-2 small text-muted" style="display: none;"></div>
+                </div>
+            </div>
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="關閉錯誤提示"></button>
         </div>
 
         <!-- 載入中提示 (增強版進度顯示) -->
@@ -368,11 +391,17 @@
                             <div class="row">
                                 <div class="col-md-6 border-end">
                                     <h6 class="text-center text-success mb-3">Call Option</h6>
-                                    <div id="callGreeks"></div>
+                                    <!-- Desktop: Table view -->
+                                    <div id="callGreeks" class="data-table"></div>
+                                    <!-- Mobile: Card view -->
+                                    <div id="callGreeksCards" class="data-cards" style="display: none;"></div>
                                 </div>
                                 <div class="col-md-6">
                                     <h6 class="text-center text-danger mb-3">Put Option</h6>
-                                    <div id="putGreeks"></div>
+                                    <!-- Desktop: Table view -->
+                                    <div id="putGreeks" class="data-table"></div>
+                                    <!-- Mobile: Card view -->
+                                    <div id="putGreeksCards" class="data-cards" style="display: none;"></div>
                                 </div>
                             </div>
                         </div>

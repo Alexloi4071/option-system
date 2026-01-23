@@ -384,16 +384,47 @@ class GreeksCalculator:
             volatility: 波動率
         
         返回:
-            float: Vega 值（對 1% 波動率變化的敏感度）
+            float: Vega 值（單位：美元/百分點 或 $/%)
+                   表示隱含波動率(IV)變化 1 個百分點時，期權價格的變化金額
         
         公式:
-            ν = S × N'(d1) × √T
+            ν = S × N'(d1) × √T / 100
         
-        解釋:
-            - Vega 總是正數
+        單位說明:
+            **重要**: 本函數返回的 Vega 單位為「美元/百分點」($/%)
+            
+            - Vega = 0.20 表示：
+              * 當 IV 從 20% 變為 21% 時（變化 1 個百分點），期權價格增加 $0.20
+              * 當 IV 從 30% 變為 31% 時（變化 1 個百分點），期權價格增加 $0.20
+            
+            - 計算 IV 變化對價格的影響：
+              * ΔPrice = Vega × ΔIV_百分點
+              * 例如：Vega = 0.25，IV 從 25% 升至 30%（變化 5 個百分點）
+                       ΔPrice = 0.25 × 5 = $1.25
+            
+            - **注意**: 已經除以 100，無需再次除以 100
+              * ✓ 正確: price_change = vega * iv_change_in_percentage_points
+              * ✗ 錯誤: price_change = vega * iv_change_in_percentage_points / 100
+        
+        使用示例:
+            >>> calc = GreeksCalculator()
+            >>> vega = calc.calculate_vega(
+            ...     stock_price=100, strike_price=100,
+            ...     risk_free_rate=0.05, time_to_expiration=1.0,
+            ...     volatility=0.20
+            ... )
+            >>> # vega ≈ 0.3989
+            >>> 
+            >>> # 計算 IV 從 20% 升至 25% 的價格變化
+            >>> iv_change = 5  # 5 個百分點
+            >>> price_change = vega * iv_change
+            >>> # price_change ≈ 0.3989 * 5 = 1.9945
+        
+        特性:
+            - Vega 總是正數（買入期權總是做多波動率）
             - ATM 期權的 Vega 最大
             - 長期期權的 Vega 更大
-            - Vega = 0.2 表示波動率上升 1%，期權價格上升 $0.20
+            - Call 和 Put 的 Vega 相同（相同行使價和到期日）
         """
         try:
             # 計算 d1
@@ -404,7 +435,19 @@ class GreeksCalculator:
             
             # 計算 Vega
             # ν = S × N'(d1) × √T / 100
-            # 除以 100 是因為 Vega 表示 IV 變化 1 個百分點（如 31% → 32%）的期權價格變化
+            # 
+            # 單位說明：
+            # - 除以 100 是因為 Vega 表示 IV 變化 1 個百分點時的期權價格變化
+            # - 例如：IV 從 20% 變為 21%（變化 1 個百分點），不是變化 1%（即 0.2% → 0.202%）
+            # - 返回值單位：美元/百分點 ($/%)
+            # 
+            # 使用方式：
+            # - 正確：price_change = vega * iv_change_in_percentage_points
+            # - 例如：vega = 0.25, IV 從 25% 升至 30%（變化 5 個百分點）
+            #         price_change = 0.25 * 5 = $1.25
+            # 
+            # 常見錯誤：
+            # - 錯誤：price_change = vega * iv_change / 100  # 不要再除以 100！
             sqrt_t = math.sqrt(time_to_expiration)
             vega = stock_price * self.bs_calculator.normal_pdf(d1) * sqrt_t / 100
             
@@ -630,6 +673,293 @@ class GreeksCalculator:
             raise
 
 
+    # ========== 交叉 Greeks (Cross Greeks) ==========
+    
+    def calculate_vanna(
+        self,
+        stock_price: float,
+        strike_price: float,
+        risk_free_rate: float,
+        time_to_expiration: float,
+        volatility: float,
+        dividend_yield: float = 0.0
+    ) -> float:
+        """
+        計算 Vanna (∂Delta/∂σ 或 ∂Vega/∂S)
+        
+        Vanna 衡量 Delta 對波動率變化的敏感度，或 Vega 對股價變化的敏感度。
+        Vanna 對 Call 和 Put 期權都是相同的。
+        
+        參數:
+            stock_price: 當前股價
+            strike_price: 行使價
+            risk_free_rate: 無風險利率（年化，小數形式）
+            time_to_expiration: 到期時間（年）
+            volatility: 波動率（年化，小數形式）
+            dividend_yield: 股息率（年化，小數形式），默認 0
+        
+        返回:
+            float: Vanna 值
+        
+        公式:
+            Vanna = -N'(d1) × d2 / σ
+            
+            其中:
+            - N'(d1) = 標準正態概率密度函數
+            - d2 = d1 - σ√T
+            - σ = 波動率
+        
+        解釋:
+            - Vanna 衡量波動率變化時 Delta 的變化
+            - ATM 期權的 Vanna 接近 0
+            - Vanna 用於動態對沖策略調整
+        
+        示例:
+            >>> calc = GreeksCalculator()
+            >>> vanna = calc.calculate_vanna(
+            ...     stock_price=100,
+            ...     strike_price=100,
+            ...     risk_free_rate=0.05,
+            ...     time_to_expiration=1.0,
+            ...     volatility=0.20
+            ... )
+            >>> print(f"Vanna: {vanna:.6f}")
+        """
+        try:
+            # 計算 d1, d2
+            d1, d2 = self.bs_calculator.calculate_d1_d2(
+                stock_price, strike_price, risk_free_rate,
+                time_to_expiration, volatility, dividend_yield
+            )
+            
+            # Vanna = -N'(d1) × d2 / σ
+            vanna = -self.bs_calculator.normal_pdf(d1) * d2 / volatility
+            
+            logger.debug(f"  Vanna: {vanna:.6f}")
+            
+            return vanna
+            
+        except Exception as e:
+            logger.error(f"✗ 計算 Vanna 失敗: {e}")
+            raise
+    
+    def calculate_volga(
+        self,
+        stock_price: float,
+        strike_price: float,
+        risk_free_rate: float,
+        time_to_expiration: float,
+        volatility: float,
+        dividend_yield: float = 0.0
+    ) -> float:
+        """
+        計算 Volga (∂Vega/∂σ 或 ∂²C/∂σ²)
+        
+        Volga 衡量 Vega 對波動率變化的敏感度（Vega 的凸性）。
+        Volga 對 Call 和 Put 期權都是相同的，且總是正值。
+        
+        參數:
+            stock_price: 當前股價
+            strike_price: 行使價
+            risk_free_rate: 無風險利率（年化，小數形式）
+            time_to_expiration: 到期時間（年）
+            volatility: 波動率（年化，小數形式）
+            dividend_yield: 股息率（年化，小數形式），默認 0
+        
+        返回:
+            float: Volga 值（總是正數）
+        
+        公式:
+            Volga = S × N'(d1) × d1 × d2 / σ
+            
+            其中:
+            - S = 股價
+            - N'(d1) = 標準正態概率密度函數
+            - d1, d2 = Black-Scholes 參數
+            - σ = 波動率
+        
+        解釋:
+            - Volga 總是正值（Vega 的凸性）
+            - ATM 期權的 Volga 最大
+            - Volga 用於分析 Vega 的非線性特性
+            - 高 Volga 意味著 Vega 對波動率變化敏感
+        
+        示例:
+            >>> calc = GreeksCalculator()
+            >>> volga = calc.calculate_volga(
+            ...     stock_price=100,
+            ...     strike_price=100,
+            ...     risk_free_rate=0.05,
+            ...     time_to_expiration=1.0,
+            ...     volatility=0.20
+            ... )
+            >>> print(f"Volga: {volga:.6f}")
+        """
+        try:
+            # 計算 d1, d2
+            d1, d2 = self.bs_calculator.calculate_d1_d2(
+                stock_price, strike_price, risk_free_rate,
+                time_to_expiration, volatility, dividend_yield
+            )
+            
+            # Volga = S × N'(d1) × d1 × d2 / σ
+            volga = stock_price * self.bs_calculator.normal_pdf(d1) * d1 * d2 / volatility
+            
+            logger.debug(f"  Volga: {volga:.6f}")
+            
+            # 驗證 Volga 為正數
+            if volga < 0:
+                logger.warning(f"⚠ Volga 應該為正數，但得到: {volga}")
+            
+            return volga
+            
+        except Exception as e:
+            logger.error(f"✗ 計算 Volga 失敗: {e}")
+            raise
+    
+    def calculate_charm(
+        self,
+        stock_price: float,
+        strike_price: float,
+        risk_free_rate: float,
+        time_to_expiration: float,
+        volatility: float,
+        option_type: str = 'call',
+        dividend_yield: float = 0.0
+    ) -> float:
+        """
+        計算 Charm (∂Delta/∂T 或 Delta Decay)
+        
+        Charm 衡量 Delta 對時間流逝的變化（Delta 的時間衰減）。
+        
+        參數:
+            stock_price: 當前股價
+            strike_price: 行使價
+            risk_free_rate: 無風險利率（年化，小數形式）
+            time_to_expiration: 到期時間（年）
+            volatility: 波動率（年化，小數形式）
+            option_type: 期權類型 ('call' 或 'put')
+            dividend_yield: 股息率（年化，小數形式），默認 0
+        
+        返回:
+            float: Charm 值（每日 Delta 變化）
+        
+        公式:
+            Charm = -N'(d1) × [2rT - d2×σ×√T] / (2T×σ×√T)
+            
+            其中:
+            - N'(d1) = 標準正態概率密度函數
+            - r = 無風險利率
+            - T = 到期時間
+            - σ = 波動率
+        
+        解釋:
+            - Charm 衡量時間流逝對 Delta 的影響
+            - ATM Call 的 Charm 通常為負值
+            - ATM Put 的 Charm 通常為正值
+            - Charm 用於預測對沖組合的 Delta 變化
+        
+        示例:
+            >>> calc = GreeksCalculator()
+            >>> charm = calc.calculate_charm(
+            ...     stock_price=100,
+            ...     strike_price=100,
+            ...     risk_free_rate=0.05,
+            ...     time_to_expiration=1.0,
+            ...     volatility=0.20,
+            ...     option_type='call'
+            ... )
+            >>> print(f"Charm: {charm:.6f}")
+        """
+        try:
+            # 計算 d1, d2
+            d1, d2 = self.bs_calculator.calculate_d1_d2(
+                stock_price, strike_price, risk_free_rate,
+                time_to_expiration, volatility, dividend_yield
+            )
+            
+            sqrt_t = math.sqrt(time_to_expiration)
+            
+            # Charm = -N'(d1) × [2rT - d2×σ×√T] / (2T×σ×√T)
+            numerator = 2 * risk_free_rate * time_to_expiration - d2 * volatility * sqrt_t
+            denominator = 2 * time_to_expiration * volatility * sqrt_t
+            
+            charm = -self.bs_calculator.normal_pdf(d1) * numerator / denominator
+            
+            # Call 和 Put 的 Charm 公式相同（在 Black-Scholes 框架下）
+            # 但符號可能不同
+            
+            logger.debug(f"  Charm ({option_type}): {charm:.6f}")
+            
+            return charm
+            
+        except Exception as e:
+            logger.error(f"✗ 計算 Charm 失敗: {e}")
+            raise
+    
+    def calculate_all_cross_greeks(
+        self,
+        stock_price: float,
+        strike_price: float,
+        risk_free_rate: float,
+        time_to_expiration: float,
+        volatility: float,
+        option_type: str = 'call',
+        dividend_yield: float = 0.0
+    ) -> Dict[str, float]:
+        """
+        計算所有交叉 Greeks
+        
+        一次性計算 Vanna, Volga, Charm 三個交叉 Greeks。
+        
+        參數:
+            stock_price: 當前股價
+            strike_price: 行使價
+            risk_free_rate: 無風險利率（年化，小數形式）
+            time_to_expiration: 到期時間（年）
+            volatility: 波動率（年化，小數形式）
+            option_type: 期權類型 ('call' 或 'put')
+            dividend_yield: 股息率（年化，小數形式），默認 0
+        
+        返回:
+            Dict[str, float]: {
+                'vanna': float,  # ∂Delta/∂σ
+                'volga': float,  # ∂Vega/∂σ
+                'charm': float   # ∂Delta/∂T
+            }
+        
+        示例:
+            >>> calc = GreeksCalculator()
+            >>> cross_greeks = calc.calculate_all_cross_greeks(
+            ...     stock_price=100,
+            ...     strike_price=100,
+            ...     risk_free_rate=0.05,
+            ...     time_to_expiration=1.0,
+            ...     volatility=0.20,
+            ...     option_type='call'
+            ... )
+            >>> print(f"Vanna: {cross_greeks['vanna']:.6f}")
+            >>> print(f"Volga: {cross_greeks['volga']:.6f}")
+            >>> print(f"Charm: {cross_greeks['charm']:.6f}")
+        """
+        logger.info(f"開始計算交叉 Greeks...")
+        
+        return {
+            'vanna': self.calculate_vanna(
+                stock_price, strike_price, risk_free_rate,
+                time_to_expiration, volatility, dividend_yield
+            ),
+            'volga': self.calculate_volga(
+                stock_price, strike_price, risk_free_rate,
+                time_to_expiration, volatility, dividend_yield
+            ),
+            'charm': self.calculate_charm(
+                stock_price, strike_price, risk_free_rate,
+                time_to_expiration, volatility, option_type, dividend_yield
+            )
+        }
+
+
 # 使用示例和測試
 if __name__ == "__main__":
     import logging
@@ -662,8 +992,8 @@ if __name__ == "__main__":
     print(f"  Delta:  {result1.delta:>10.6f}  (股價變化 $1 → 期權價格變化 ${result1.delta:.2f})")
     print(f"  Gamma:  {result1.gamma:>10.6f}  (股價變化 $1 → Delta 變化 {result1.gamma:.6f})")
     print(f"  Theta:  {result1.theta:>10.6f}  (每日時間衰減 $/天)")
-    print(f"  Vega:   {result1.vega:>10.6f}  (波動率變化 1% → 期權價格變化 ${result1.vega/100:.2f})")
-    print(f"  Rho:    {result1.rho:>10.6f}  (利率變化 1% → 期權價格變化 ${result1.rho/100:.2f})")
+    print(f"  Vega:   {result1.vega:>10.6f}  (IV 變化 1 個百分點 → 期權價格變化 ${result1.vega:.4f})")
+    print(f"  Rho:    {result1.rho:>10.6f}  (利率變化 1 個百分點 → 期權價格變化 ${result1.rho/100:.4f})")
     
     # 例子2: ATM Put 期權的 Greeks
     print("\n【例子2】ATM Put 期權的 Greeks")
