@@ -22,6 +22,14 @@ from typing import Dict, List, Optional, Any
 from datetime import datetime
 from functools import lru_cache
 
+# 導入異動偵測模塊
+try:
+    from calculation_layer.module30_unusual_activity import UnusualActivityAnalyzer
+    from calculation_layer.module31_advanced_metrics import AdvancedMetricsAnalyzer
+except ImportError:
+    UnusualActivityAnalyzer = None
+    AdvancedMetricsAnalyzer = None
+
 # 導入統一的數據標準化工具
 try:
     from utils.data_normalization import normalize_numeric_value, is_valid_numeric
@@ -158,6 +166,11 @@ class StrikeAnalysis:
     # Short Put 安全概率 (Requirements 2.5)
     safety_probability: float = 0.0  # 安全概率 (1 - |Delta|)
     
+    # 異動偵測字段 (Module 30)
+    unusual_activity_score: float = 0.0  # 異動強度 (0-100)
+    unusual_activity_signals: List[str] = field(default_factory=list)  # 具體信號描述
+    bonus_score: float = 0.0  # 額外加分 (用於綜合評分)
+    
     def to_dict(self) -> Dict:
         return {
             'strike': self.strike,
@@ -235,8 +248,24 @@ class OptimalStrikeCalculator:
         logger.info("* 最佳行使價計算器已初始化")
         self._iv_calculator = None
         self._greeks_calculator = None  # 添加 Greeks 計算器
+        self._uoa_analyzer = None       # 添加異動偵測器
         self._cache_hits = 0  # 緩存命中計數
         self._cache_misses = 0  # 緩存未命中計數
+    
+    def _get_uoa_analyzer(self):
+        """延遲初始化異動偵測器"""
+        if self._uoa_analyzer is None and UnusualActivityAnalyzer:
+            self._uoa_analyzer = UnusualActivityAnalyzer()
+        return self._uoa_analyzer
+        
+    def _get_advanced_metrics_analyzer(self):
+        """延遲初始化高級指標分析器"""
+        if not hasattr(self, '_advanced_metrics_analyzer'):
+            self._advanced_metrics_analyzer = None
+            
+        if self._advanced_metrics_analyzer is None and AdvancedMetricsAnalyzer:
+            self._advanced_metrics_analyzer = AdvancedMetricsAnalyzer()
+        return self._advanced_metrics_analyzer
     
     def _get_iv_calculator(self):
         """延遲初始化 IV 計算器"""
@@ -474,7 +503,9 @@ class OptimalStrikeCalculator:
         strategy_type: str,
         days_to_expiration: int = 30,
         iv_rank: float = 50.0,
-        target_price: Optional[float] = None
+        target_price: Optional[float] = None,
+        support_resistance_data: Optional[Dict] = None,
+        enable_max_profit_analysis: bool = False
     ) -> Dict[str, Any]:
         """
         分析多個行使價並計算綜合評分
@@ -512,6 +543,31 @@ class OptimalStrikeCalculator:
             if not options_data:
                 logger.warning("! 期權鏈數據為空")
                 return self._create_empty_result("期權鏈數據為空")
+            
+            # --- 異動偵測 (Module 30) ---
+            # 在過濾行使價之前進行全鏈分析，以免漏掉遠價外的大單
+            uoa_signals = {}
+            try:
+                uoa_analyzer = self._get_uoa_analyzer()
+                if uoa_analyzer:
+                    # 構建 DataFrame 用於分析
+                    calls_df = pd.DataFrame(option_chain.get('calls', []))
+                    puts_df = pd.DataFrame(option_chain.get('puts', []))
+                    
+                    uoa_results = uoa_analyzer.analyze_chain(calls_df, puts_df)
+                    
+                    # 建立索引：(strike, option_type) -> [signals]
+                    for signal in uoa_results.get('calls', []):
+                        key = (signal.strike, 'call')
+                        if key not in uoa_signals: uoa_signals[key] = []
+                        uoa_signals[key].append(signal)
+                        
+                    for signal in uoa_results.get('puts', []):
+                        key = (signal.strike, 'put')
+                        if key not in uoa_signals: uoa_signals[key] = []
+                        uoa_signals[key].append(signal)
+            except Exception as e:
+                logger.warning(f"! 異動偵測失敗: {e}")
             
             # 新邏輯：從 ATM 行使價向上和向下各取最多 20 個行使價
             # 1. 先按行使價排序所有期權
@@ -568,7 +624,8 @@ class OptimalStrikeCalculator:
                 # 創建分析對象
                 analysis = self._analyze_single_strike(
                     option, option_type, current_price, strategy_type,
-                    days_to_expiration, iv_rank, target_price
+                    days_to_expiration, iv_rank, target_price,
+                    uoa_signals.get((strike, option_type), [])  # 傳入對應的異動信號
                 )
                 
                 if analysis:
@@ -654,6 +711,21 @@ class OptimalStrikeCalculator:
                 risk_free_rate=0.045
             )
             
+            # --- 高級指標分析 (Module 31) ---
+            # Requirements: 6.1 (Advanced Metrics)
+            advanced_metrics = None
+            try:
+                am_analyzer = self._get_advanced_metrics_analyzer()
+                if am_analyzer:
+                    # 使用完整數據計算鏈級指標
+                    calls_df = pd.DataFrame(option_chain.get('calls', []))
+                    puts_df = pd.DataFrame(option_chain.get('puts', []))
+                    
+                    if not calls_df.empty and not puts_df.empty:
+                        advanced_metrics = am_analyzer.calculate_metrics(calls_df, puts_df, current_price)
+            except Exception as e:
+                logger.warning(f"! 高級指標計算失敗: {e}")
+            
             result = {
                 'analyzed_strikes': [s.to_dict() for s in analyzed_strikes],
                 'top_recommendations': top_recommendations,
@@ -674,7 +746,8 @@ class OptimalStrikeCalculator:
                 'analysis_summary': self._generate_summary(analyzed_strikes[0], strategy_type) if analyzed_strikes else "無推薦",
                 'calculation_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                 'parity_validation': parity_validation,
-                'volatility_smile': volatility_smile_result
+                'volatility_smile': volatility_smile_result,
+                'advanced_metrics': advanced_metrics.to_dict() if advanced_metrics else None  # 新增字段
             }
             
             logger.info(f"* 最佳行使價分析完成")
@@ -748,7 +821,8 @@ class OptimalStrikeCalculator:
         strategy_type: str,
         days_to_expiration: int,
         iv_rank: float,
-        target_price: Optional[float]
+        target_price: Optional[float],
+        uoa_signals: List[Any] = None  # 新增參數
     ) -> Optional[StrikeAnalysis]:
         """分析單個行使價"""
         try:
@@ -869,6 +943,25 @@ class OptimalStrikeCalculator:
                 iv_rank=iv_rank,
                 iv_source=iv_source  # 記錄 IV 來源
             )
+            
+            # --- 處理異動信號 ---
+            if uoa_signals:
+                max_strength = 0.0
+                descriptions = []
+                for signal in uoa_signals:
+                    max_strength = max(max_strength, signal.strength)
+                    descriptions.append(f"[{signal.signal_type}] {signal.description}")
+                
+                analysis.unusual_activity_score = max_strength
+                analysis.unusual_activity_signals = descriptions
+                
+                # 計算 Bonus Score (最多 20 分)
+                # 強度 100 -> 20 分
+                # 強度 50  -> 10 分
+                analysis.bonus_score = min(20.0, max_strength * 0.2)
+                
+                if analysis.bonus_score > 0:
+                    logger.debug(f"  行使價 ${strike:.2f} 獲得異動加分: +{analysis.bonus_score:.1f} (強度: {max_strength:.1f})")
             
             # 計算各項評分
             analysis.liquidity_score = self._calculate_liquidity_score(analysis)
@@ -1254,13 +1347,18 @@ class OptimalStrikeCalculator:
         - IV分數: 20%
         - 風險回報分數: 20%
         """
-        composite = (
+        weighted_score = (
             analysis.liquidity_score * self.WEIGHT_LIQUIDITY +
             analysis.greeks_score * self.WEIGHT_GREEKS +
             analysis.iv_score * self.WEIGHT_IV +
             analysis.risk_reward_score * self.WEIGHT_RISK_REWARD
         )
-        return min(100.0, max(0.0, composite))
+        
+        # 添加 Bonus Score (如 UOA 加分)
+        # 允許總分超過 100 分 (Extra Credit)
+        final_score = weighted_score + analysis.bonus_score
+        
+        return round(final_score, 2)
     
     def _generate_recommendation_reason(self, analysis: StrikeAnalysis, strategy_type: str) -> str:
         """
@@ -1270,6 +1368,13 @@ class OptimalStrikeCalculator:
         Requirements: 2.5 - 在推薦理由中顯示安全概率
         """
         reasons = []
+        
+        # 1. 異動信號 (最高優先級)
+        if analysis.unusual_activity_score > 50:
+            if analysis.unusual_activity_signals:
+                # 取第一個異動信號的關鍵詞 (e.g., "成交量爆炸")
+                signal_desc = analysis.unusual_activity_signals[0].split(':')[0]
+                reasons.append(f"🔥 {signal_desc}")
         
         # Short Put 安全概率顯示
         # Requirements: 2.5

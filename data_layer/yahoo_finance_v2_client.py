@@ -16,6 +16,7 @@ import re
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta
 import requests
+from requests.adapters import HTTPAdapter
 
 # 導入優化工具
 from .utils.user_agent_rotator import UserAgentRotator
@@ -40,8 +41,8 @@ class CrumbManager:
     Requirements: 2.1, 2.2, 2.3
     """
     
-    # Crumb 有效期（默認 30 分鐘）
-    CRUMB_TTL_MINUTES = 30
+    # Crumb 有效期（默認 5 分鐘 - 避免 429 錯誤）
+    CRUMB_TTL_MINUTES = 5
     
     def __init__(self, session: requests.Session, ua_rotator: UserAgentRotator):
         """
@@ -160,12 +161,33 @@ class CrumbManager:
         api_headers['Sec-Fetch-Site'] = 'same-site'
         
         crumb_url = 'https://query1.finance.yahoo.com/v1/test/getcrumb'
+        # 備用 crumb URL（如果第一個失效）
+        backup_crumb_url = 'https://query2.finance.yahoo.com/v1/test/getcrumb'
+        
+        # 先嘗試第一個 URL
         response = self.session.get(crumb_url, headers=api_headers, timeout=15)
         
         if response.status_code == 200:
             crumb = response.text.strip()
-            return crumb if crumb else None
+            if crumb and len(crumb) > 5:  # 確保 crumb 不為空且有足夠長度
+                logger.info(f"✓ Crumb 獲取成功（主URL）: {crumb[:10]}...")
+                return crumb
+            else:
+                logger.warning("  主URL 返回空 crumb，嘗試備用URL")
         
+        # 嘗試備用 URL
+        logger.info("  嘗試備用 crumb URL...")
+        response = self.session.get(backup_crumb_url, headers=api_headers, timeout=15)
+        
+        if response.status_code == 200:
+            crumb = response.text.strip()
+            if crumb and len(crumb) > 5:
+                logger.info(f"✓ Crumb 獲取成功（備用URL）: {crumb[:10]}...")
+                return crumb
+            else:
+                logger.warning("  備用URL 也返回空 crumb")
+        
+        logger.error("  無法獲取有效 crumb")
         return None
     
     def _get_crumb_from_page(self) -> Optional[str]:
@@ -307,9 +329,6 @@ class YahooFinanceV2Client:
         self.session = requests.Session()
         
         # 配置連接適配器（連接池復用）
-        from requests.adapters import HTTPAdapter
-        from urllib3.util.retry import Retry
-        
         adapter = HTTPAdapter(
             pool_connections=self.connection_config.pool_connections,
             pool_maxsize=self.connection_config.pool_maxsize,
@@ -420,258 +439,162 @@ class YahooFinanceV2Client:
         """
         刷新 Session（清除 cookies 並重新建立連接）
         
-        當遇到 429 錯誤時調用，重新建立乾淨的 Session。
-        這是 Stack Overflow 上推薦的解決方案之一。
+        Requirements: 2.1
         """
-        logger.info("正在刷新 Session...")
+        logger.info("刷新 Session...")
         
-        # 保存當前的 headers
-        saved_headers = self.headers.copy()
-        
-        # 關閉舊 Session
         try:
+            # 關閉舊的 session
             self.session.close()
+            
+            # 創建全新的 session（徹底清除所有 cookies）
+            self.session = requests.Session()
+            
+            # 清除所有可能的 cookies
+            self.session.cookies.clear()
+            
+            # 重新配置連接池
+            adapter = HTTPAdapter(
+                pool_connections=self.connection_config.pool_connections,
+                pool_maxsize=self.connection_config.pool_maxsize,
+                max_retries=self.connection_config.max_retries
+            )
+            self.session.mount('http://', adapter)
+            self.session.mount('https://', adapter)
+            
+            # 重新設置 headers（使用默認 User-Agent）
+            self.session.headers.update(self.headers)
+            
+            # 設置額外的反追蹤 headers
+            self.session.headers.update({
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+                'Accept-Encoding': 'gzip, deflate',
+                'DNT': '1',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
+                'Cache-Control': 'max-age=0'
+            })
+            
+            # 更新 CrumbManager 的 session 引用
+            self.crumb_manager.session = self.session
+            
+            # 重置時間戳
+            self._session_created_at = datetime.now()
+            
+            # 等待一小段時間避免立即請求
+            time.sleep(2)
+            
+            # 立即獲取新的 Crumb
+            # self.crumb_manager.get_crumb()  # 暫時禁用
+            
+            logger.info("* Session 已刷新（清除所有 cookies 和追蹤信息）")
+            
         except Exception as e:
-            logger.debug(f"關閉舊 Session 時出錯: {e}")
+            logger.error(f"Session 刷新失敗: {e}")
+            raise
         
-        # 創建新 Session
-        self.session = requests.Session()
+    def _handle_429_error(self, url: str) -> None:
+        """處理 429 錯誤的專用方法"""
+        logger.error("x HTTP Error 429 - Too Many Requests")
+        logger.error("  立即刷新 session 以清除追蹤信息")
         
-        # 重新配置連接適配器
-        from requests.adapters import HTTPAdapter
-        adapter = HTTPAdapter(
-            pool_connections=self.connection_config.pool_connections,
-            pool_maxsize=self.connection_config.pool_maxsize,
-            max_retries=0
-        )
-        self.session.mount('http://', adapter)
-        self.session.mount('https://', adapter)
+        # 強制刷新 session
+        self._refresh_session()
         
-        # 恢復 headers（使用新的 User-Agent）
-        saved_headers['User-Agent'] = self.ua_rotator.get_next()
-        self.headers = saved_headers
-        self.session.headers.update(self.headers)
+        # 等待更長時間
+        time.sleep(15)
         
-        # 更新 CrumbManager 的 session 引用
-        self.crumb_manager.session = self.session
-        
-        # 更新 Session 創建時間
-        self._session_created_at = datetime.now()
-        
-        logger.info("* Session 已刷新")
+        logger.info("  Session 已刷新，可以重試請求")
     
-    def _make_request(
-        self, 
-        endpoint: str, 
-        params: Optional[Dict[str, Any]] = None,
-        retry_count: int = 0,
-        use_v2: bool = False
-    ) -> Dict[str, Any]:
+    def _make_request(self, endpoint: str, params: dict = None, retry_count: int = 0, use_v2: bool = True) -> dict:
         """
-        发送 API 请求（優化版：包含 UA 輪換、智能重試和 Crumb 驗證）
+        發送 HTTP 請求並處理錯誤
         
         Args:
-            endpoint: API 端点路径
-            params: 查询参数
-            retry_count: 当前重试次数
-            use_v2: 是否使用 query2 端點
-            
+            endpoint: API 端點
+            params: 請求參數
+            retry_count: 重試次數
+            use_v2: 是否使用 V2 API
+        
         Returns:
-            API 响应（JSON）
-            
-        Raises:
-            requests.exceptions.RequestException: API 错误
-            
-        Requirements: 2.4, 3.1, 3.2, 3.3, 3.4
+            dict: 響應數據
         """
-        self._rate_limit_delay()
-        
-        # 每次請求輪換 User-Agent
-        current_ua = self._rotate_user_agent()
-        
-        base_url = self.API_BASE_URL_V2 if use_v2 else self.API_BASE_URL
-        url = f"{base_url}{endpoint}"
         start_time = time.time()
         
-        # 添加 crumb 參數（如果有）
-        if params is None:
-            params = {}
-        
-        # 從 CrumbManager 獲取 crumb
-        crumb = self.crumb_manager.crumb
-        if crumb:
-            params['crumb'] = crumb
-        
         try:
-            logger.info(f"Requesting {url}")
-            logger.debug(f"  Params: {params}")
-            logger.debug(f"  User-Agent: {current_ua[:50]}...")
+            # 設置請求間隔以避免 429
+            elapsed = time.time() - getattr(self, '_last_request_time', 0)
+            if elapsed < 8.0:  # 8秒間隔
+                wait_time = 8.0 - elapsed
+                logger.info(f"  等待 {wait_time:.1f} 秒避免 429 錯誤...")
+                time.sleep(wait_time)
             
-            response = self.session.get(url, params=params, timeout=self.connection_config.timeout)
+            self._last_request_time = time.time()
+            
+            # 添加 crumb 到參數（所有 V1/V2 API 都需要）
+            if hasattr(self, 'crumb_manager'):
+                crumb = self.crumb_manager.get_crumb()
+                if crumb:
+                    if not params:
+                        params = {}
+                    params['crumb'] = crumb
+                    logger.info(f"  使用 crumb: {crumb[:10]}...")
+                else:
+                    logger.warning("  Crumb 為空，可能導致 401 錯誤")
+            
+            # 確保 params 不為 None
+            if params is None:
+                params = {}
+            
+            logger.info(f"Requesting {endpoint} (attempt {retry_count + 1})")
+            
+            response = self.session.get(
+                endpoint,
+                params=params,
+                timeout=self.connection_config.timeout
+            )
+            
+            # 處理 429 錯誤
+            if response.status_code == 429:
+                logger.error(f"x HTTP 429 - Too Many Requests: {endpoint}")
+                if retry_count < 2:  # 最多重試 2 次
+                    self._handle_429_error(endpoint)
+                    return self._make_request(endpoint, params, retry_count + 1, use_v2)
+                else:
+                    logger.error("x 已達到最大重試次數，放棄請求")
+                    raise Exception("429 錯誤重試失敗")
+            
+            # 處理其他 HTTP 錯誤
             response.raise_for_status()
             
-            elapsed_time = time.time() - start_time
+            # 解析 JSON 響應
+            data = response.json()
             
-            # 記錄成功的重試
-            self.retry_handler.record_attempt(
-                attempt=retry_count + 1,
-                status_code=response.status_code,
-                delay=0,
-                success=True
-            )
+            logger.info(f"✓ 請求成功: {endpoint}")
+            return data
             
-            if retry_count > 0:
-                logger.info(
-                    f"* Request succeeded after {retry_count} retries. "
-                    f"Response time: {elapsed_time:.2f}s"
-                )
-            else:
-                logger.info(f"* Request succeeded. Response time: {elapsed_time:.2f}s")
-            
-            return response.json()
-            
-        except requests.exceptions.HTTPError as e:
-            status_code = e.response.status_code
-            response_body = e.response.text[:500] if hasattr(e.response, 'text') else 'N/A'
-            
-            # 完整的錯誤日誌
-            logger.error(
-                f"x HTTP Error {status_code} - URL: {url} - "
-                f"Response: {response_body[:100]}..."
-            )
-            
-            # 使用 RetryHandler 判斷是否應該重試
-            if self.retry_handler.should_retry(status_code, retry_count):
-                # 獲取推薦的策略和延遲
-                strategy = self.retry_handler.get_strategy_for_status(status_code)
-                
-                # 429: 速率限制 - 優先使用 Retry-After header
-                if status_code == 429:
-                    # 嘗試從 Retry-After header 獲取等待時間
-                    retry_after = e.response.headers.get('Retry-After')
-                    
-                    if retry_after:
-                        try:
-                            # Retry-After 可能是秒數或日期
-                            wait_time = float(retry_after)
-                            logger.warning(
-                                f"Rate limit (429) - Server requested wait: {wait_time:.1f}s"
-                            )
-                        except ValueError:
-                            # 如果是日期格式，使用默認延遲
-                            wait_time = 60.0
-                            logger.warning(
-                                f"Rate limit (429) - Retry-After is date format, using default {wait_time}s"
-                            )
-                    else:
-                        # 沒有 Retry-After，使用指數退避（初始 60 秒）
-                        temp_config = RetryConfig(
-                            initial_delay=60.0,  # 增加到 60 秒
-                            max_delay=180.0,     # 最大 3 分鐘
-                            exponential_base=2.0,
-                            jitter=True
-                        )
-                        temp_handler = RetryHandler(temp_config)
-                        wait_time = temp_handler.calculate_delay(retry_count + 1, strategy)
-                    
-                    logger.warning(
-                        f"Rate limit (429) - Retry {retry_count + 1}/{self.max_retries}. "
-                        f"Waiting {wait_time:.1f}s ({strategy} backoff)..."
-                    )
-                    
-                    # 429 時刷新 Session 和 Crumb
-                    logger.warning(f"  Refreshing session and crumb for next request...")
-                    self._refresh_session()
-                    self.crumb_manager.invalidate()
-                    new_crumb = self.crumb_manager.get_crumb(force_refresh=True)
-                    
-                    # 檢查 Crumb 獲取結果，如果失敗則降級到 query2 API
-                    if not new_crumb and not use_v2:
-                        logger.warning("! Crumb 獲取失敗，降級到 query2 API...")
-                        time.sleep(wait_time)
-                        return self._make_request(endpoint, params, retry_count + 1, use_v2=True)
-                    
-                # 5xx: 服务器错误
-                elif 500 <= status_code < 600:
-                    wait_time = self.retry_handler.calculate_delay(retry_count + 1, 'linear')
-                    
-                    logger.warning(
-                        f"Server error ({status_code}) - Retry {retry_count + 1}/{self.max_retries}. "
-                        f"Waiting {wait_time:.1f}s (linear backoff)..."
-                    )
-                else:
-                    wait_time = self.retry_handler.calculate_delay(retry_count + 1, strategy)
-                
-                # 記錄重試
-                self.retry_handler.record_attempt(
-                    attempt=retry_count + 1,
-                    status_code=status_code,
-                    delay=wait_time,
-                    success=False
-                )
-                
-                time.sleep(wait_time)
-                return self._make_request(endpoint, params, retry_count + 1, use_v2)
-            
-            # 401: Unauthorized - 可能是 Crumb 過期
-            elif status_code == 401:
-                if retry_count < self.max_retries:
-                    logger.warning(f"! 401 Unauthorized - 嘗試重新獲取 Crumb...")
-                    
-                    # 使 Crumb 失效並重新獲取
-                    self.crumb_manager.invalidate()
-                    new_crumb = self.crumb_manager.get_crumb(force_refresh=True)
-                    
-                    if new_crumb:
-                        logger.info("* 成功獲取新 Crumb，重試請求...")
-                        time.sleep(2)
-                        return self._make_request(endpoint, params, retry_count + 1, use_v2)
-                    else:
-                        # 嘗試使用 query2 端點
-                        if not use_v2:
-                            logger.warning("! 嘗試使用 query2 端點...")
-                            time.sleep(2)
-                            return self._make_request(endpoint, params, retry_count + 1, use_v2=True)
-                
-                logger.error(
-                    f"x Client error ({status_code}) - No retry. "
-                    f"URL: {url}"
-                )
-                raise
-            
-            # 其他 4xx: 不重试
-            else:
-                logger.error(
-                    f"x Client error ({status_code}) - No retry. "
-                    f"URL: {url}"
-                )
-                raise
-        
         except requests.exceptions.Timeout as e:
             elapsed = time.time() - start_time
-            logger.error(f"x Request timeout after {elapsed:.2f}s - URL: {url}")
-            
-            # 超時也可以重試
-            if retry_count < self.max_retries:
-                wait_time = self.retry_handler.calculate_delay(retry_count + 1, 'linear')
-                logger.warning(f"  Retrying after {wait_time:.1f}s...")
-                time.sleep(wait_time)
+            logger.error(f"x Request timeout after {elapsed:.2f}s - URL: {endpoint}")
+            if retry_count < 2:
+                time.sleep(5)
                 return self._make_request(endpoint, params, retry_count + 1, use_v2)
             raise
-        
+            
         except requests.exceptions.ConnectionError as e:
-            logger.error(f"x Connection error - URL: {url}, Error: {str(e)}")
-            
-            # 連接錯誤也可以重試
-            if retry_count < self.max_retries:
-                wait_time = self.retry_handler.calculate_delay(retry_count + 1, 'exponential')
-                logger.warning(f"  Retrying after {wait_time:.1f}s...")
-                time.sleep(wait_time)
+            logger.error(f"x Connection error - URL: {endpoint}")
+            if retry_count < 2:
+                time.sleep(5)
                 return self._make_request(endpoint, params, retry_count + 1, use_v2)
             raise
-        
+            
         except requests.exceptions.RequestException as e:
-            logger.error(f"x Network error - URL: {url}, Error: {str(e)}")
+            logger.error(f"x Network error - URL: {endpoint}")
+            raise
+            
+        except Exception as e:
+            logger.error(f"x Unexpected error - URL: {endpoint}: {e}")
             raise
     
     # ==================== 股票数据 API ====================
@@ -687,7 +610,7 @@ class YahooFinanceV2Client:
             dict: 报价数据
         """
         # 使用 chart API 获取报价数据
-        endpoint = f"{self.CHART_ENDPOINT}/{symbol}"
+        endpoint = f"{self.API_BASE_URL_V2}{self.CHART_ENDPOINT}/{symbol}"
         params = {
             'interval': '1d',
             'range': '1d'
@@ -712,7 +635,7 @@ class YahooFinanceV2Client:
         Returns:
             dict: 历史数据
         """
-        endpoint = f"{self.CHART_ENDPOINT}/{symbol}"
+        endpoint = f"{self.API_BASE_URL_V2}{self.CHART_ENDPOINT}/{symbol}"
         params = {
             'interval': interval,
             'range': period
@@ -735,7 +658,7 @@ class YahooFinanceV2Client:
         Returns:
             dict: 期权链数据
         """
-        endpoint = f"{self.OPTIONS_ENDPOINT}/{symbol}"
+        endpoint = f"{self.API_BASE_URL}{self.OPTIONS_ENDPOINT}/{symbol}"
         params = {}
         
         # 將日期轉換為 Unix 時間戳
@@ -772,7 +695,7 @@ class YahooFinanceV2Client:
             list: 可用的到期日列表（Unix timestamp）
         """
         try:
-            endpoint = f"{self.OPTIONS_ENDPOINT}/{symbol}"
+            endpoint = f"{self.API_BASE_URL}{self.OPTIONS_ENDPOINT}/{symbol}"
             response = self._make_request(endpoint, {})
             
             if not response:

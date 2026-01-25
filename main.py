@@ -9,12 +9,20 @@ from datetime import datetime
 import sys
 import os
 
+# 獲取項目根目錄
+current_dir = os.path.dirname(os.path.abspath(__file__))
+root_dir = current_dir  # main.py 在根目錄
+
+# 確保 logs 目錄存在
+logs_dir = os.path.join(root_dir, 'logs')
+os.makedirs(logs_dir, exist_ok=True)
+
 # 配置日誌（使用 UTF-8 編碼）
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler(f"logs/main_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log", encoding='utf-8'),
+        logging.FileHandler(os.path.join(logs_dir, f"main_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"), encoding='utf-8'),
         logging.StreamHandler(sys.stdout)
     ]
 )
@@ -68,10 +76,18 @@ from calculation_layer.module26_long_option_analysis import LongOptionAnalyzer
 from calculation_layer.module27_multi_expiry_comparison import MultiExpiryAnalyzer
 # Module 28: 資金倉位計算器
 from calculation_layer.module28_position_calculator import PositionCalculator
+# Module 30: 異動期權分析
+from calculation_layer.module30_unusual_activity import UnusualActivityAnalyzer
+# Module 31: 高級市場指標
+from calculation_layer.module31_advanced_metrics import AdvancedMetricsAnalyzer
+# Module 32: 高級組合策略
+from calculation_layer.module32_complex_strategies import ComplexStrategyAnalyzer
 # 新增: 策略推薦
 from calculation_layer.strategy_recommendation import StrategyRecommender
 from output_layer.report_generator import ReportGenerator
 from output_layer.output_manager import OutputPathManager
+from output_layer.history_manager import HistoryManager
+from output_layer.delta_analyzer import DeltaAnalyzer
 from output_layer.strategy_scenario_generator import StrategyScenarioGenerator
 
 
@@ -105,6 +121,15 @@ class OptionsAnalysisSystem:
         # 初始化 OutputPathManager 用於按股票代號分類存儲
         self.output_manager = OutputPathManager(base_output_dir="output")
         self.report_generator = ReportGenerator(output_manager=self.output_manager)
+        # 初始化輸出管理器
+        self.output_manager = OutputPathManager(settings.OUTPUT_DIR)
+        
+        # 初始化報告生成器
+        self.report_generator = ReportGenerator(settings.OUTPUT_DIR, self.output_manager)
+        
+        # 初始化歷史管理器和差異分析器
+        self.history_manager = HistoryManager(self.output_manager)
+        self.delta_analyzer = DeltaAnalyzer()
         self.analysis_results = {}
     
     def validate_data_completeness(self, data: dict, required_fields: list) -> dict:
@@ -140,6 +165,9 @@ class OptionsAnalysisSystem:
                              confidence: float = 1.0, use_ibkr: bool = None,
                              strike: float = None, premium: float = None, 
                              option_type: str = None, selected_expirations: list = None,
+                             iv: float = None, delta: float = None, gamma: float = None,
+                             theta: float = None, vega: float = None, rho: float = None,
+                             risk_free_rate: float = None,
                              progress_callback=None):
         """
         運行完整分析
@@ -153,6 +181,9 @@ class OptionsAnalysisSystem:
             premium: 期權價格 (可選)
             option_type: 期權類型 'C' (Call) 或 'P' (Put) (可選)
             selected_expirations: 用戶選擇的多個到期日列表 (用於 Module 27)
+            iv: 隱含波動率覆蓋 (可選)
+            delta, gamma, theta, vega, rho: Greeks 覆蓋 (可選)
+            risk_free_rate: 無風險利率覆蓋 (可選)
             progress_callback: 進度回調函數 (step, total, message, module_name)
         
         返回:
@@ -282,6 +313,19 @@ class OptionsAnalysisSystem:
             if option_type is not None:
                 analysis_data['option_type'] = option_type.upper()
             
+            # 使用者覆蓋參數注入 (Phase 8.1)
+            if iv is not None:
+                analysis_data['implied_volatility'] = iv
+                # 同時嘗試更新 option chain 中選定合約的 IV (如果稍後選定的話)
+                
+            if risk_free_rate is not None:
+                analysis_data['risk_free_rate'] = risk_free_rate
+            
+            # Greeks 覆蓋暫存 - 稍後注入到 selected_option 中
+            self.greeks_override = {
+                'delta': delta, 'gamma': gamma, 'theta': theta, 'vega': vega, 'rho': rho
+            }
+            
             # 第2步: 驗證數據
             report_progress(2, 28, "驗證數據完整性...", "數據驗證")
             logger.info("\n→ 第2步: 驗證數據完整性...")
@@ -374,11 +418,46 @@ class OptionsAnalysisSystem:
             # 共享數據準備
             atm_option = analysis_data.get('atm_option', {}) or {}
             atm_strike = atm_option.get('strike')
-            atm_call = atm_option.get('call', {}) or {}
-            atm_put = atm_option.get('put', {}) or {}
+            
+            # 優先使用用戶指定的行使價
+            selected_call = atm_option.get('call', {}) or {}
+            selected_put = atm_option.get('put', {}) or {}
+            selected_strike = atm_strike
+            
             option_chain = analysis_data.get('option_chain', {})
-            calls_df = option_chain.get('calls')
-            puts_df = option_chain.get('puts')
+            calls_df = option_chain.get('calls', [])
+            puts_df = option_chain.get('puts', [])
+            
+            if strike is not None and strike > 0:
+                logger.info(f"  用戶指定行使價: ${strike}")
+                # 轉換為列表格式以便搜尋
+                import pandas as pd
+                calls_list = calls_df.to_dict('records') if hasattr(calls_df, 'to_dict') else (list(calls_df) if calls_df else [])
+                puts_list = puts_df.to_dict('records') if hasattr(puts_df, 'to_dict') else (list(puts_df) if puts_df else [])
+                
+                # 確保每個元素都是字典
+                if calls_list and isinstance(calls_list[0], dict):
+                    found_call = next((c for c in calls_list if abs(c.get('strike', 0) - strike) < 0.01), None)
+                else:
+                    found_call = None
+                
+                if puts_list and isinstance(puts_list[0], dict):
+                    found_put = next((p for p in puts_list if abs(p.get('strike', 0) - strike) < 0.01), None)
+                else:
+                    found_put = None
+                
+                if found_call and found_put:
+                    selected_call = found_call
+                    selected_put = found_put
+                    selected_strike = float(strike)
+                    logger.info(f"  ✓ 成功鎖定用戶行使價: ${selected_strike}")
+                else:
+                    logger.warning(f"  ! 未能在期權鏈中找到行使價 ${strike}，將使用 ATM ${atm_strike}")
+
+            atm_call = selected_call
+            atm_put = selected_put
+            atm_strike = selected_strike
+            
             call_bid = float(atm_call.get('bid', 0) or 0)
             call_ask = float(atm_call.get('ask', 0) or 0)
             put_bid = float(atm_put.get('bid', 0) or 0)
@@ -416,7 +495,12 @@ class OptionsAnalysisSystem:
             # 新增 Put 成交量和未平倉量 (Requirements: 2.1, 2.2)
             put_volume = int(atm_put.get('volume', 0) or 0)
             put_open_interest = int(atm_put.get('openInterest', 0) or 0)
-            call_delta = atm_call.get('delta')
+            # Check user override first
+            if hasattr(self, 'greeks_override') and self.greeks_override.get('delta') is not None:
+                call_delta = self.greeks_override.get('delta')
+            else:
+                call_delta = atm_call.get('delta')
+
             if call_delta is not None:
                 try:
                     call_delta = float(call_delta)
@@ -438,12 +522,16 @@ class OptionsAnalysisSystem:
                 else:
                     moneyness = f"OTM（價外 ${-diff:.2f}）"
                 
+                selection_note = "選擇最接近當前股價的行使價"
+                if strike is not None and strike > 0 and abs(strike_price - strike) < 0.01:
+                    selection_note = "用戶指定行使價"
+
                 self.analysis_results['strike_selection'] = {
                     'strike_price': strike_price,
                     'current_price': current_price,
                     'difference': diff,
                     'moneyness': moneyness,
-                    'note': f"選擇最接近當前股價的行使價"
+                    'note': selection_note
                 }
                 logger.info(f"* 行使價選擇: ${strike_price:.2f} ({moneyness})")
                 logger.info(f"  當前股價: ${current_price:.2f}")
@@ -1333,6 +1421,27 @@ class OptionsAnalysisSystem:
             except Exception as exc:
                 logger.warning("! 模塊16執行失敗: %s", exc)
             
+            # Module 16 Override Injection
+            if hasattr(self, 'greeks_override'):
+                greeks_res = self.analysis_results.get('module16_greeks', {})
+                if greeks_res:
+                    overridden_keys = []
+                    # Apply to Call
+                    if 'call' in greeks_res and isinstance(greeks_res['call'], dict):
+                        for k, v in self.greeks_override.items():
+                            if v is not None:
+                                greeks_res['call'][k] = v
+                                overridden_keys.append(k)
+                    
+                    # Apply to Put
+                    if 'put' in greeks_res and isinstance(greeks_res['put'], dict):
+                        for k, v in self.greeks_override.items():
+                            if v is not None:
+                                greeks_res['put'][k] = v
+                    
+                    if overridden_keys:
+                        logger.info(f"* Greeks Override Applied: {list(set(overridden_keys))}")
+            
             # 模塊17: 隱含波動率計算
             # 修復：優先使用 Yahoo Finance 提供的 IV，而非自己計算
             # 原因：Newton-Raphson 在市場價格與理論價差距大時會失敗
@@ -1694,6 +1803,49 @@ class OptionsAnalysisSystem:
                                             atm_iv_for_rank = m17_result['call'].get('implied_volatility')
                                             iv_source_for_rank = 'ATM IV (Module 17)'
                                             logger.info(f"  使用 ATM IV ({atm_iv_for_rank*100:.2f}%) 計算 IV Rank")
+                                            
+                                            # ======================================================================
+                                            # 修正: IV 差異過大時更新全局數據並重跑關鍵模塊 (Module 1)
+                                            # ======================================================================
+                                            current_iv_pct = atm_iv_for_rank * 100
+                                            original_iv = analysis_data.get('implied_volatility', 0)
+                                            
+                                            # 如果新舊 IV 差異超過 10% (絕對值)，則更新並重跑
+                                            if original_iv > 0 and abs(current_iv_pct - original_iv) / original_iv > 0.1:
+                                                logger.warning(f"  ! 發現 IV 差異顯著: API IV={original_iv:.2f}% vs ATM IV={current_iv_pct:.2f}%")
+                                                logger.warning(f"  ! 更新全局 IV 並重跑 Module 1 (支持/阻力位)...")
+                                                
+                                                # 1. 更新全局數據
+                                                analysis_data['implied_volatility'] = current_iv_pct
+                                                volatility_estimate = current_iv_pct
+                                                
+                                                # 2. 重跑 Module 1
+                                                try:
+                                                    sr_calc = SupportResistanceCalculator()
+                                                    days = analysis_data.get('days_to_expiration') or 30
+                                                    # 多信心度
+                                                    sr_results_multi = sr_calc.calculate_multi_confidence(
+                                                        stock_price=analysis_data['current_price'],
+                                                        implied_volatility=current_iv_pct,
+                                                        days_to_expiration=int(days),
+                                                        confidence_levels=['68%', '80%', '90%', '95%', '99%']
+                                                    )
+                                                    self.analysis_results['module1_support_resistance_multi'] = sr_results_multi
+                                                    
+                                                    # 單一信心度 (90%)
+                                                    is_cal = not getattr(self.fetcher, 'trading_days_calc', None)
+                                                    sr_result_single = sr_calc.calculate(
+                                                        stock_price=analysis_data['current_price'],
+                                                        implied_volatility=current_iv_pct,
+                                                        days_to_expiration=int(days),
+                                                        z_score=1.645,
+                                                        is_calendar_days=is_cal
+                                                    )
+                                                    self.analysis_results['module1_support_resistance'] = sr_result_single.to_dict()
+                                                    logger.info("  ✓ Module 1 重跑完成 (使用更新後的 IV)")
+                                                except Exception as re_err:
+                                                    logger.warning(f"  ! Module 1 重跑失敗: {re_err}")
+                                            # ======================================================================
                                     
                                     # 如果 ATM IV 不可用，使用 Market IV
                                     if atm_iv_for_rank is None:
@@ -2382,6 +2534,73 @@ class OptionsAnalysisSystem:
                     'reason': str(exc)
                 }
             
+                self.analysis_results['module22_optimal_strike'] = {
+                    'status': 'error',
+                    'reason': str(exc)
+                }
+            
+            # ========== Module 32: 高級組合策略 (Complex Strategies) ==========
+            # Phase 3 Item: 位於 Module 22 之後，利用 IV 和預處理過的數據
+            report_progress(30, 40, "分析高級組合策略...", "Module 32: 組合策略")
+            logger.info("\n→ 運行 Module 32: 高級組合策略分析...")
+            try:
+                import pandas as pd
+                complex_analyzer = ComplexStrategyAnalyzer()
+                
+                # 準備 DataFrames (從 option_chain_converted 重建)
+                calls_df_complex = None
+                puts_df_complex = None
+                
+                if option_chain_converted.get('calls'):
+                    calls_df_complex = pd.DataFrame(option_chain_converted['calls'])
+                if option_chain_converted.get('puts'):
+                    puts_df_complex = pd.DataFrame(option_chain_converted['puts'])
+                    
+                if calls_df_complex is not None and not calls_df_complex.empty and \
+                   puts_df_complex is not None and not puts_df_complex.empty:
+                    
+                    # 1. 垂直價差
+                    vertical_results = complex_analyzer.analyze_vertical_spreads(
+                        calls_df_complex, puts_df_complex, current_price
+                    )
+                    
+                    # 2. 鐵兀鷹
+                    condor_results = complex_analyzer.analyze_iron_condor(
+                        calls_df_complex, puts_df_complex, current_price
+                    )
+                    
+                    # 3. 跨式/寬跨式
+                    straddle_results = complex_analyzer.analyze_straddle_strangle(
+                        calls_df_complex, puts_df_complex, current_price
+                    )
+                    
+                    self.analysis_results['module32_complex_strategies'] = {
+                        'vertical': {
+                            'bull_put': [s.to_dict() for s in vertical_results.get('bull_put', [])],
+                            'bear_call': [s.to_dict() for s in vertical_results.get('bear_call', [])]
+                        },
+                        'iron_condor': [s.to_dict() for s in condor_results],
+                        'straddle_strangle': {
+                            'straddle': [s.to_dict() for s in straddle_results.get('straddle', [])],
+                            'strangle': [s.to_dict() for s in straddle_results.get('strangle', [])]
+                        }
+                    }
+                    
+                    logger.info(f"* 模塊32完成: 高級組合策略")
+                    logger.info(f"  Bull Put: {len(vertical_results.get('bull_put', []))} | Bear Call: {len(vertical_results.get('bear_call', []))}")
+                    logger.info(f"  Iron Condor: {len(condor_results)}")
+                    logger.info(f"  Straddle/Strangle: {len(straddle_results.get('straddle', [])) + len(straddle_results.get('strangle', []))}")
+                    
+                else:
+                    logger.warning("! 模塊32跳過: 數據不足 (DataFrame 為空)")
+                    self.analysis_results['module32_complex_strategies'] = {'status': 'skipped', 'reason': 'Data unavailable'}
+                    
+            except Exception as exc:
+                logger.warning(f"! 模塊32執行失敗: {exc}")
+                import traceback
+                traceback.print_exc()
+                self.analysis_results['module32_complex_strategies'] = {'status': 'error', 'reason': str(exc)}
+
             # ========== 模塊24: 技術方向分析 ==========
             report_progress(24, 28, "分析技術方向...", "Module 24: 技術方向")
             logger.info("\n→ 運行 Module 24: 技術方向分析...")
@@ -2470,37 +2689,43 @@ class OptionsAnalysisSystem:
             try:
                 long_analyzer = LongOptionAnalyzer()
                 
-                # 獲取 ATM 期權數據
-                atm_call = None
-                atm_put = None
+                # 優先使用用戶指定的行使價，否則使用 ATM
+                target_strike = strike if strike and strike > 0 else atm_strike
+                
+                target_call = None
+                target_put = None
                 
                 if option_chain and 'calls' in option_chain and 'puts' in option_chain:
                     calls_df = option_chain['calls']
                     puts_df = option_chain['puts']
                     
-                    # 找到最接近 ATM 的期權
+                    # 找到指定行使價的期權（用戶指定或 ATM）
                     if hasattr(calls_df, 'iloc') and len(calls_df) > 0:
-                        calls_df['distance'] = abs(calls_df['strike'] - current_price)
+                        calls_df['distance'] = abs(calls_df['strike'] - target_strike)
                         atm_idx = calls_df['distance'].idxmin()
-                        atm_call = calls_df.loc[atm_idx].to_dict()
+                        target_call = calls_df.loc[atm_idx].to_dict()
+                        logger.info(f"  使用 Call 行使價: ${target_call.get('strike', target_strike)}" + 
+                                  (" (用戶指定)" if strike and strike > 0 else " (ATM)"))
                     
                     if hasattr(puts_df, 'iloc') and len(puts_df) > 0:
-                        puts_df['distance'] = abs(puts_df['strike'] - current_price)
+                        puts_df['distance'] = abs(puts_df['strike'] - target_strike)
                         atm_idx = puts_df['distance'].idxmin()
-                        atm_put = puts_df.loc[atm_idx].to_dict()
+                        target_put = puts_df.loc[atm_idx].to_dict()
+                        logger.info(f"  使用 Put 行使價: ${target_put.get('strike', target_strike)}" +
+                                  (" (用戶指定)" if strike and strike > 0 else " (ATM)"))
                 
-                if atm_call and atm_put:
+                if target_call and target_put:
                     # 獲取權利金（優先使用 lastPrice，否則用 mid price）
-                    call_premium = atm_call.get('lastPrice') or atm_call.get('last') or \
-                                   ((atm_call.get('bid', 0) + atm_call.get('ask', 0)) / 2)
-                    put_premium = atm_put.get('lastPrice') or atm_put.get('last') or \
-                                  ((atm_put.get('bid', 0) + atm_put.get('ask', 0)) / 2)
+                    call_premium = target_call.get('lastPrice') or target_call.get('last') or \
+                                   ((target_call.get('bid', 0) + target_call.get('ask', 0)) / 2)
+                    put_premium = target_put.get('lastPrice') or target_put.get('last') or \
+                                  ((target_put.get('bid', 0) + target_put.get('ask', 0)) / 2)
                     
                     # 獲取 Greeks
-                    call_delta = atm_call.get('delta', 0.5)
-                    put_delta = atm_put.get('delta', -0.5)
-                    call_theta = atm_call.get('theta', 0)
-                    put_theta = atm_put.get('theta', 0)
+                    call_delta = target_call.get('delta', 0.5)
+                    put_delta = target_put.get('delta', -0.5)
+                    call_theta = target_call.get('theta', 0)
+                    put_theta = target_put.get('theta', 0)
                     
                     # 獲取 IV
                     iv = analysis_data.get('implied_volatility', 30)
@@ -2508,9 +2733,9 @@ class OptionsAnalysisSystem:
                     # 分析 Long Call 和 Long Put
                     module26_result = long_analyzer.analyze_both(
                         stock_price=current_price,
-                        call_strike=atm_call.get('strike', current_price),
+                        call_strike=target_call.get('strike', target_strike),
                         call_premium=call_premium if call_premium else 1.0,
-                        put_strike=atm_put.get('strike', current_price),
+                        put_strike=target_put.get('strike', target_strike),
                         put_premium=put_premium if put_premium else 1.0,
                         days_to_expiration=int(days_to_expiration) if days_to_expiration else 30,
                         call_delta=call_delta if call_delta else 0.5,
@@ -2532,10 +2757,10 @@ class OptionsAnalysisSystem:
                     logger.info(f"  推薦: {better}")
                     logger.info("* 模塊26完成: Long 期權成本效益分析")
                 else:
-                    logger.warning("! 模塊26跳過: 無法獲取 ATM 期權數據")
+                    logger.warning("! 模塊26跳過: 無法獲取指定行使價期權數據")
                     self.analysis_results['module26_long_option_analysis'] = {
                         'status': 'skipped',
-                        'reason': '無法獲取 ATM 期權數據'
+                        'reason': '無法獲取指定行使價期權數據'
                     }
             except Exception as exc:
                 logger.warning(f"! 模塊26執行失敗: {exc}")
@@ -2560,7 +2785,7 @@ class OptionsAnalysisSystem:
                 user_selected = getattr(self, 'selected_expirations', None)
                 
                 # 過濾 ≤90 天的到期日
-                from datetime import datetime, timedelta
+                from datetime import timedelta
                 import time as time_module
                 today = datetime.now().date()
                 max_days = 90
@@ -2774,6 +2999,134 @@ class OptionsAnalysisSystem:
                     'reason': str(exc)
                 }
             
+            # ========== Module 30: 異動期權分析 ==========
+            logger.info("\n→ 運行 Module 30: 異動期權分析...")
+            try:
+                if calls_df is not None and puts_df is not None:
+                    import pandas as pd
+                    calls_df_pd = pd.DataFrame(calls_df) if not isinstance(calls_df, pd.DataFrame) else calls_df
+                    puts_df_pd = pd.DataFrame(puts_df) if not isinstance(puts_df, pd.DataFrame) else puts_df
+                    
+                    if not calls_df_pd.empty and not puts_df_pd.empty:
+                        uoa_analyzer = UnusualActivityAnalyzer()
+                        uoa_result = uoa_analyzer.analyze_chain(calls_df_pd, puts_df_pd)
+                        
+                        self.analysis_results['module30_unusual_activity'] = {
+                            'status': 'success',
+                            'calls': [s.to_dict() if hasattr(s, 'to_dict') else s for s in uoa_result.get('calls', [])],
+                            'puts': [s.to_dict() if hasattr(s, 'to_dict') else s for s in uoa_result.get('puts', [])],
+                            'total_signals': len(uoa_result.get('calls', [])) + len(uoa_result.get('puts', []))
+                        }
+                        logger.info(f"* 模塊30完成: 發現 {len(uoa_result.get('calls', []))} 個 Call 異動, {len(uoa_result.get('puts', []))} 個 Put 異動")
+                    else:
+                        logger.warning("! 模塊30跳過: 期權鏈數據為空")
+                        self.analysis_results['module30_unusual_activity'] = {'status': 'skipped', 'reason': '期權鏈數據為空'}
+                else:
+                    logger.warning("! 模塊30跳過: 無期權鏈數據")
+                    self.analysis_results['module30_unusual_activity'] = {'status': 'skipped', 'reason': '無期權鏈數據'}
+            except Exception as exc:
+                logger.warning(f"! 模塊30執行失敗: {exc}")
+                self.analysis_results['module30_unusual_activity'] = {'status': 'error', 'reason': str(exc)}
+            
+            # ========== Module 31: 高級市場指標 ==========
+            logger.info("\n→ 運行 Module 31: 高級市場指標...")
+            try:
+                if calls_df is not None and puts_df is not None:
+                    import pandas as pd
+                    calls_df_pd = pd.DataFrame(calls_df) if not isinstance(calls_df, pd.DataFrame) else calls_df
+                    puts_df_pd = pd.DataFrame(puts_df) if not isinstance(puts_df, pd.DataFrame) else puts_df
+                    
+                    if not calls_df_pd.empty and not puts_df_pd.empty:
+                        adv_analyzer = AdvancedMetricsAnalyzer()
+                        adv_result = adv_analyzer.calculate_metrics(calls_df_pd, puts_df_pd, current_price)
+                        
+                        # 將 MarketMetrics 對象轉換為字典
+                        if hasattr(adv_result, 'to_dict'):
+                            result_dict = adv_result.to_dict()
+                        else:
+                            result_dict = adv_result
+                        
+                        self.analysis_results['module31_advanced_metrics'] = {
+                            'status': 'success',
+                            'put_call_ratio': {
+                                'oi_ratio': result_dict.get('pcr_oi', 0),
+                                'volume_ratio': result_dict.get('pcr_volume', 0),
+                                'sentiment': 'Bearish' if result_dict.get('pcr_oi', 0) > 1 else 'Bullish' if result_dict.get('pcr_oi', 0) < 0.7 else 'Neutral'
+                            },
+                            'max_pain': {
+                                'max_pain_strike': result_dict.get('max_pain', 0),
+                                'total_pain': 0  # 簡化
+                            },
+                            'gamma_exposure': {
+                                'net_gex': result_dict.get('total_gex', 0),
+                                'zero_gamma_point': None  # 需額外計算
+                            }
+                        }
+                        
+                        logger.info(f"  Put/Call Ratio (OI): {result_dict.get('pcr_oi', 'N/A')}")
+                        logger.info(f"  Max Pain: ${result_dict.get('max_pain', 'N/A')}")
+                        logger.info("* 模塊31完成: 高級市場指標")
+                    else:
+                        logger.warning("! 模塊31跳過: 期權鏈數據為空")
+                        self.analysis_results['module31_advanced_metrics'] = {'status': 'skipped', 'reason': '期權鏈數據為空'}
+                else:
+                    logger.warning("! 模塊31跳過: 無期權鏈數據")
+                    self.analysis_results['module31_advanced_metrics'] = {'status': 'skipped', 'reason': '無期權鏈數據'}
+            except Exception as exc:
+                logger.warning(f"! 模塊31執行失敗: {exc}")
+                self.analysis_results['module31_advanced_metrics'] = {'status': 'error', 'reason': str(exc)}
+            
+            # ========== Module 32: 複雜策略分析 ==========
+            logger.info("\n→ 運行 Module 32: 複雜策略分析...")
+            try:
+                if calls_df is not None and puts_df is not None:
+                    import pandas as pd
+                    calls_df_pd = pd.DataFrame(calls_df) if not isinstance(calls_df, pd.DataFrame) else calls_df
+                    puts_df_pd = pd.DataFrame(puts_df) if not isinstance(puts_df, pd.DataFrame) else puts_df
+                    
+                    if not calls_df_pd.empty and not puts_df_pd.empty:
+                        complex_analyzer = ComplexStrategyAnalyzer()
+                        
+                        # 分析垂直價差
+                        vertical_spreads = complex_analyzer.analyze_vertical_spreads(calls_df_pd, puts_df_pd, current_price)
+                        
+                        # 分析鐵兀鷹
+                        iron_condors = complex_analyzer.analyze_iron_condor(calls_df_pd, puts_df_pd, current_price)
+                        
+                        # 分析跨式/寬跨式
+                        straddles = complex_analyzer.analyze_straddle_strangle(calls_df_pd, puts_df_pd, current_price)
+                        
+                        self.analysis_results['module32_complex_strategies'] = {
+                            'status': 'success',
+                            'vertical_spreads': {
+                                'bull_put': [s.to_dict() for s in vertical_spreads.get('bull_put', [])],
+                                'bear_call': [s.to_dict() for s in vertical_spreads.get('bear_call', [])]
+                            },
+                            'iron_condors': [s.to_dict() for s in iron_condors],
+                            'straddles': [s.to_dict() for s in straddles.get('straddle', [])],
+                            'strangles': [s.to_dict() for s in straddles.get('strangle', [])]
+                        }
+                        
+                        total_strategies = (
+                            len(vertical_spreads.get('bull_put', [])) +
+                            len(vertical_spreads.get('bear_call', [])) +
+                            len(iron_condors) +
+                            len(straddles.get('straddle', [])) +
+                            len(straddles.get('strangle', []))
+                        )
+                        logger.info(f"* 模塊32完成: 發現 {total_strategies} 個複雜策略")
+                    else:
+                        logger.warning("! 模塊32跳過: 期權鏈數據為空")
+                        self.analysis_results['module32_complex_strategies'] = {'status': 'skipped', 'reason': '期權鏈數據為空'}
+                else:
+                    logger.warning("! 模塊32跳過: 無期權鏈數據")
+                    self.analysis_results['module32_complex_strategies'] = {'status': 'skipped', 'reason': '無期權鏈數據'}
+            except Exception as exc:
+                logger.warning(f"! 模塊32執行失敗: {exc}")
+                import traceback
+                traceback.print_exc()
+                self.analysis_results['module32_complex_strategies'] = {'status': 'error', 'reason': str(exc)}
+            
             # 新增: 策略推薦引擎（整合 Module 24 技術方向）
             logger.info("\n→ 運行策略推薦引擎...")
             try:
@@ -2855,14 +3208,62 @@ class OptionsAnalysisSystem:
 
             # 第4步: 生成報告
             logger.info("\n→ 第4步: 生成分析報告...")
+            # 歷史記錄對比
+            delta_report = None
+            try:
+                # 獲取上次運行結果
+                last_run = self.history_manager.get_last_run(ticker)
+                
+                # 生成當前運行結果的預覽字典 (用於比較)
+                current_run_preview = {
+                    'metadata': {
+                        'generated_at': datetime.now().isoformat(),
+                        'ticker': ticker
+                    },
+                    'raw_data': analysis_data,
+                    'calculations': self.analysis_results
+                }
+                
+                if last_run:
+                    logger.info(f"發現歷史記錄 ({last_run['metadata'].get('generated_at')})，正在對比...")
+                    delta_report = self.delta_analyzer.compare_results(current_run_preview, last_run)
+                    if delta_report['opportunity_alert']:
+                        logger.info(f"發現 {len(delta_report['opportunity_alert'])} 個異動信號!")
+                else:
+                    logger.info("未發現歷史記錄，將建立首次索引")
+                    
+            except Exception as e:
+                logger.warning(f"歷史對比失敗: {e}")
+
+            # 生成報告
             report = self.report_generator.generate(
                 ticker=ticker,
                 analysis_date=analysis_data['analysis_date'],
                 raw_data=analysis_data,
                 calculation_results=self.analysis_results,
-                data_fetcher=self.fetcher  # 傳遞 data_fetcher 以獲取 API 狀態
+                data_fetcher=self.fetcher,
+                delta_report=delta_report  # 傳遞差異報告
             )
             
+            # 保存本次運行記錄
+            try:
+                if report and 'json_file' in report:
+                    # 構建簡單摘要
+                    summary = {
+                        'price': analysis_data.get('current_price'),
+                        'direction': self.analysis_results.get('module24_technical_direction', {}).get('combined_direction'),
+                        'score': self.analysis_results.get('module20_fundamental_health', {}).get('health_score')
+                    }
+                    
+                    self.history_manager.save_run_record(
+                        ticker=ticker,
+                        timestamp=report['timestamp'],
+                        json_path=report['json_file'],
+                        result_summary=summary
+                    )
+            except Exception as e:
+                logger.warning(f"保存歷史索引失敗: {e}")
+
             logger.info(f"\n* 分析完成！結果已生成")
             logger.info("=" * 70)
             
@@ -2872,6 +3273,7 @@ class OptionsAnalysisSystem:
                 'timestamp': datetime.now(),
                 'raw_data': analysis_data,
                 'calculations': self.analysis_results,
+                'delta_report': delta_report,
                 'report': report
             }
             
@@ -3580,9 +3982,10 @@ class OptionsAnalysisSystem:
             
             # 生成報告
             logger.info("\n→ 生成分析報告...")
-            report = self.report_generator.generate_complete_report(
+            report = self.report_generator.generate(
                 ticker=ticker,
-                analysis_data=analysis_data,
+                analysis_date=analysis_date_str,
+                raw_data=analysis_data,
                 calculation_results=self.analysis_results
             )
             
@@ -3785,7 +4188,7 @@ def main():
         )
     
     # 輸出結果
-    if results['status'] == 'success':
+    if results and results.get('status') == 'success':
         print("\n" + "=" * 70)
         print("分析成功！")
         print("=" * 70)
@@ -3818,7 +4221,10 @@ def main():
         
         print("=" * 70)
     else:
-        print(f"\n x 分析失敗: {results['message']}")
+        if results and 'message' in results:
+            print(f"\n x 分析失敗: {results['message']}")
+        else:
+            print(f"\n x 分析失敗: 未知錯誤 (Results: {results})")
         sys.exit(1)
 
 

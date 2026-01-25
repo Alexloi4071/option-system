@@ -1,681 +1,524 @@
 <!DOCTYPE html>
-<html lang="zh-Hant" data-theme="light">
+<html lang="zh-Hant" class="dark">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="期權制勝量化分析系統 - 專業的期權分析工具">
-    <meta name="theme-color" content="#2563eb">
-    <title>期權制勝 - 量化分析系統</title>
-    
-    <!-- Preconnect to CDN origins for faster resource loading -->
-    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
-    <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
-    
-    <!-- Critical CSS - Inline for immediate rendering -->
-    <style>
-        /* Critical CSS for above-the-fold content */
-        /* Minimal styles to prevent FOUC and enable fast first paint */
-        body {
-            margin: 0;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-            background-color: #f8fafc;
-            color: #0f172a;
-        }
-        
-        .navbar {
-            background-color: #2563eb !important;
-            padding: 1rem 0;
-            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-        }
-        
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 0 1rem;
-        }
-        
-        .card {
-            background: white;
-            border-radius: 0.5rem;
-            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
-            margin-bottom: 1.5rem;
-        }
-        
-        .card-header {
-            padding: 1rem 1.5rem;
-            border-bottom: 1px solid #e2e8f0;
-        }
-        
-        .card-body {
-            padding: 1.5rem;
-        }
-        
-        /* Loading state */
-        .spinner-border {
-            width: 2.5rem;
-            height: 2.5rem;
-            border: 0.25rem solid currentColor;
-            border-right-color: transparent;
-            border-radius: 50%;
-            animation: spinner-border 0.75s linear infinite;
-        }
-        
-        @keyframes spinner-border {
-            to { transform: rotate(360deg); }
-        }
-        
-        .d-none { display: none !important; }
-        .text-center { text-align: center; }
-        .mb-3 { margin-bottom: 1rem; }
-        .py-4 { padding-top: 1.5rem; padding-bottom: 1.5rem; }
-    </style>
-    
-    <!-- Load non-critical CSS asynchronously -->
-    <link rel="preload" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
-    <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
-    <link rel="preload" href="/static/css/main.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
-    <link rel="preload" href="/static/css/form-spacing-fix.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
-    
-    <!-- Fallback for browsers that don't support preload -->
-    <noscript>
-        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
-        <link rel="stylesheet" href="/static/css/main.css">
-        <link rel="stylesheet" href="/static/css/form-spacing-fix.css">
-    </noscript>
-    
-    <!-- Polyfill for CSS preload -->
+    <title>期權分析系統 v2.0 PRO</title>
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Outfit:wght@300;400;500;700&display=swap"
+        rel="stylesheet">
+
+    <!-- Scripts & Styles -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="/static/css/custom.css">
+
     <script>
-        /*! loadCSS. [c]2017 Filament Group, Inc. MIT License */
-        !function(e){"use strict";var t=function(t,n,r,o){var i,a=e.document,d=a.createElement("link");if(n)i=n;else{var l=(a.body||a.getElementsByTagName("head")[0]).childNodes;i=l[l.length-1]}var s=a.styleSheets;if(o)for(var f in o)o.hasOwnProperty(f)&&d.setAttribute(f,o[f]);d.rel="stylesheet",d.href=t,d.media="only x",function e(t){if(a.body)return t();setTimeout(function(){e(t)})}(function(){i.parentNode.insertBefore(d,n?i:i.nextSibling)});var u=function(e){for(var t=d.href,n=s.length;n--;)if(s[n].href===t)return e();setTimeout(function(){u(e)})};return d.addEventListener&&d.addEventListener("load",function(){this.media=r||"all"}),d.onloadcssdefined=u,u(function(){d.media!==r&&(d.media=r)}),d};"undefined"!=typeof exports?exports.loadCSS=t:e.loadCSS=t}("undefined"!=typeof global?global:this);
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Outfit', 'Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    },
+                    colors: {
+                        gray: { 850: '#1f2937', 900: '#111827', 950: '#030712' },
+                        violet: { 950: '#2e1065', 1000: '#170636' }
+                    }
+                }
+            }
+        }
     </script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
 </head>
-<body data-js-enabled="false">
-    <!-- JavaScript enabled detection -->
-    <script>document.body.setAttribute('data-js-enabled', 'true');</script>
-    
-    <nav class="navbar navbar-expand-lg navbar-dark bg-primary" role="navigation" aria-label="主導航" data-component="navigation">
-        <div class="container">
-            <a class="navbar-brand" href="#" aria-label="期權制勝分析系統首頁"><i class="fas fa-chart-line me-2" aria-hidden="true"></i>期權制勝分析系統</a>
-            <span class="navbar-text text-white small" aria-label="版本號">v{{ version }}</span>
+
+<body class="bg-[#030712] text-gray-200 font-sans min-h-screen relative selection:bg-violet-500 selection:text-white"
+    x-data="app()" x-init="init()">
+
+    <!-- Floating Nav -->
+    <nav class="fixed top-0 left-0 right-0 z-50 pt-4 pb-2 px-4 transition-all duration-300">
+        <div
+            class="max-w-[90rem] mx-auto w-full bg-[#0f172a]/90 backdrop-blur-xl border border-gray-800 rounded-2xl px-4 py-3 flex justify-between items-center shadow-2xl">
+            <div class="flex items-center gap-4">
+                <div
+                    class="p-2 bg-gradient-to-br from-violet-600 to-indigo-600 rounded-lg shadow-lg shadow-violet-500/30">
+                    <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"></path>
+                    </svg>
+                </div>
+                <div>
+                    <h1 class="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-gray-400">
+                        OptionAlpha</h1>
+                    <p class="text-[10px] text-gray-500 font-mono tracking-[0.2em] uppercase">Pro Analytics V2.0</p>
+                </div>
+            </div>
+
+            <div class="flex items-center gap-6">
+                <!-- Debug Toggle (Visible) -->
+                <button @click="showDebug = !showDebug" class="text-xs text-gray-500 hover:text-white transition-colors"
+                    title="Toggle Debugger">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"></path>
+                    </svg>
+                </button>
+
+                <div class="hidden md:flex items-center gap-4 text-xs font-medium">
+                    <div class="flex items-center gap-2 px-3 py-1.5 rounded-full bg-gray-950/50 border border-gray-800">
+                        <span class="status-dot" :class="status.ibkr ? 'status-success' : 'status-danger'"></span>
+                        <span class="text-gray-400">IBKR TWS</span>
+                    </div>
+                    <div class="flex items-center gap-2 px-3 py-1.5 rounded-full bg-gray-950/50 border border-gray-800">
+                        <span class="status-dot" :class="status.api ? 'status-success' : 'status-danger'"></span>
+                        <span class="text-gray-400">Data API</span>
+                    </div>
+                </div>
+                <div class="text-xs text-gray-500 font-mono" x-text="new Date().toLocaleTimeString()"></div>
+            </div>
         </div>
     </nav>
 
-    <div class="container mt-4" data-component="main-content">
-        <!-- 輸入控制面板 -->
-        <div class="card shadow-sm mb-4" data-component="analysis-form">
-            <div class="card-header bg-light">
-                <h5 class="mb-0"><i class="fas fa-search me-2" aria-hidden="true"></i>分析參數</h5>
-            </div>
-            <div class="card-body">
-                <form id="analysisForm" role="form" aria-label="分析參數表單" data-form="analysis">
-                    <div class="row g-3">
-                        <div class="col-md-3">
-                            <label for="ticker" class="form-label">股票代碼 (Ticker)</label>
-                            <input type="text" 
-                                   class="form-control" 
-                                   id="ticker" 
-                                   placeholder="例如: AAPL" 
-                                   maxlength="5"
-                                   required 
-                                   aria-required="true" 
-                                   aria-describedby="tickerHelp ticker-error">
-                            <small id="ticker-error" class="form-text text-danger" style="display: none;"></small>
-                            <small id="tickerHelp" class="form-text text-muted">輸入美股代碼（1-5個字符）</small>
+    <!-- Main Content Container -->
+    <div class="relative z-10 max-w-[90rem] mx-auto px-4 pb-12 pt-28">
+
+        <!-- Command Bar (Input Section) -->
+        <section class="mb-8 glass p-1 rounded-2xl mx-auto w-full shadow-2xl shadow-violet-900/10">
+            <form @submit.prevent="runAnalysis" class="relative">
+                <div class="flex flex-col md:flex-row items-center gap-2 p-2">
+
+                    <!-- Ticker -->
+                    <div class="relative w-full md:w-48 group">
+                        <div class="absolute inset-y-0 left-3 flex items-center pointer-events-none">
+                            <span class="text-gray-500 font-mono text-xs">$</span>
                         </div>
-                        <div class="col-md-4">
-                            <label for="expiration" class="form-label">主要到期日 (可選)</label>
-                            <div class="input-group">
-                                <select class="form-select" id="expiration" aria-label="選擇到期日">
-                                    <option value="" selected>自動選擇最近期權</option>
-                                </select>
-                                <button class="btn btn-outline-secondary" type="button" id="refreshDatesBtn" title="刷新日期" aria-label="刷新到期日列表">
-                                    <i class="fas fa-sync-alt" aria-hidden="true"></i>
-                                </button>
-                            </div>
-                            <div class="form-text" id="expirationStatus">請先輸入股票代碼</div>
-                            <!-- 多到期日選擇區域 -->
-                            <div class="mt-2" id="multiExpirySection" style="display: none;">
-                                <label class="form-label small text-muted">
-                                    <i class="fas fa-calendar-alt me-1"></i>Module 27 多到期日比較 (可選多個)
-                                </label>
-                                <div id="expirationCheckboxes" class="border rounded p-2 bg-white" style="max-height: 150px; overflow-y: auto;">
-                                    <small class="text-muted">載入到期日後顯示...</small>
-                                </div>
-                                <div class="form-text">
-                                    <span id="selectedExpCount" aria-live="polite">0</span> 個已選 | 
-                                    <a href="#" id="selectAllExp" class="text-decoration-none" aria-label="選擇所有到期日">全選</a> | 
-                                    <a href="#" id="clearAllExp" class="text-decoration-none" aria-label="清除所有選擇">清除</a>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="col-md-2">
-                            <label for="confidence" class="form-label">IV 信心度</label>
-                            <select class="form-select" id="confidence" aria-label="選擇隱含波動率信心度">
-                                <option value="1.0">68% (1.0 σ)</option>
-                                <option value="1.28">80% (1.28 σ)</option>
-                                <option value="1.645" selected>90% (1.645 σ)</option>
-                                <option value="2.0">95% (2.0 σ)</option>
-                            </select>
-                        </div>
-                        <div class="col-md-3">
-                            <label for="useIbkr" class="form-label">數據源</label>
-                            <div class="form-check form-switch mt-2">
-                                <input class="form-check-input" type="checkbox" id="useIbkr" role="switch" aria-label="切換使用 IBKR 數據源">
-                                <label class="form-check-label" for="useIbkr">使用 IBKR (需連接 TWS)</label>
-                            </div>
-                        </div>
+                        <input type="text" x-model="form.ticker" @input="form.ticker = form.ticker.toUpperCase()"
+                            class="input-pro w-full pl-8 pr-4 py-2.5 rounded-xl font-mono font-bold text-center tracking-wide placeholder-gray-600"
+                            placeholder="TICKER">
                     </div>
-                    
-                    <div class="row g-3 mt-2">
-                        <div class="col-md-12">
-                            <button type="button" class="btn btn-link p-0 text-decoration-none" data-bs-toggle="collapse" data-bs-target="#advancedOptions" aria-expanded="false" aria-controls="advancedOptions" aria-label="展開或收起高級選項">
-                                <i class="fas fa-cog me-1" aria-hidden="true"></i>高級選項
-                            </button>
-                        </div>
-                    </div>
-                    
-                    <div class="collapse mt-3" id="advancedOptions">
-                        <div class="card card-body bg-light border-0">
-                            <div class="row g-3">
-                                <div class="col-md-3">
-                                    <label for="strike" class="form-label">指定行使價 (Strike)</label>
-                                    <input type="number" step="0.01" class="form-control" id="strike" placeholder="自動選擇 ATM">
-                                </div>
-                                <div class="col-md-3">
-                                    <label for="premium" class="form-label">期權價格 (Premium)</label>
-                                    <input type="number" step="0.01" class="form-control" id="premium" placeholder="自動獲取">
-                                </div>
-                                <div class="col-md-3">
-                                    <label for="optionType" class="form-label">期權類型</label>
-                                    <select class="form-select" id="optionType">
-                                        <option value="">自動 (Call)</option>
-                                        <option value="C">Call (看漲)</option>
-                                        <option value="P">Put (看跌)</option>
-                                    </select>
-                                </div>
-                                <div class="col-md-3">
-                                    <label for="totalCapital" class="form-label">總資金 (HKD)</label>
-                                    <input type="number" step="1000" class="form-control" id="totalCapital" placeholder="130000" value="130000">
-                                </div>
-                            </div>
-                            <div class="row g-3 mt-2">
-                                <div class="col-md-3">
-                                    <label for="currency" class="form-label">貨幣</label>
-                                    <select class="form-select" id="currency">
-                                        <option value="HKD" selected>HKD (港幣)</option>
-                                        <option value="USD">USD (美元)</option>
-                                    </select>
-                                </div>
-                                <div class="col-md-3">
-                                    <label for="riskLevel" class="form-label">風險偏好</label>
-                                    <select class="form-select" id="riskLevel">
-                                        <option value="conservative">保守 (2%)</option>
-                                        <option value="moderate" selected>穩健 (5%)</option>
-                                        <option value="aggressive">積極 (10%)</option>
-                                    </select>
-                                </div>
-                                <div class="col-md-3">
-                                    <label for="strategyPreference" class="form-label">策略偏好</label>
-                                    <select class="form-select" id="strategyPreference">
-                                        <option value="long" selected>Long (買方)</option>
-                                        <option value="short">Short (賣方)</option>
-                                        <option value="both">兩者皆可</option>
-                                    </select>
-                                </div>
-                            </div>
+
+                    <!-- Expiration -->
+                    <div class="relative w-full md:w-56">
+                        <select x-model="form.target_date"
+                            class="input-pro w-full px-4 py-2.5 rounded-xl font-mono text-sm appearance-none cursor-pointer">
+                            <option value="" disabled selected>EXPIRATION DATE</option>
+                            <template x-for="date in expirations" :key="date">
+                                <option :value="date" x-text="date"></option>
+                            </template>
+                        </select>
+                        <div class="absolute inset-y-0 right-3 flex items-center pointer-events-none text-gray-500">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M19 9l-7 7-7-7"></path>
+                            </svg>
                         </div>
                     </div>
 
-                    <div class="mt-4 text-end">
-                        <button type="submit" class="btn btn-primary px-4" id="analyzeBtn" aria-label="開始分析" data-click-feedback="ripple">
-                            <i class="fas fa-play me-2" aria-hidden="true"></i>開始分析
+                    <!-- Actions -->
+                    <div class="flex items-center gap-2 flex-1 w-full justify-end">
+                        <button type="button" @click="showAdvanced = !showAdvanced"
+                            class="p-2.5 rounded-xl bg-gray-800 hover:bg-gray-700 text-gray-400 transition-colors border border-gray-700"
+                            title="Advanced Settings">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4">
+                                </path>
+                            </svg>
+                        </button>
+
+                        <button type="submit" :disabled="isLoading"
+                            class="flex-1 md:flex-none px-8 py-2.5 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white font-semibold rounded-xl shadow-lg shadow-violet-500/25 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed">
+                            <span x-show="!isLoading" class="flex items-center justify-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                                </svg>
+                                ANALYZE
+                            </span>
+                            <span x-show="isLoading" class="loading-spinner"></span>
                         </button>
                     </div>
-                </form>
+                </div>
+
+                <!-- Advanced Panel (Dropdown) -->
+                <div x-show="showAdvanced" x-collapse
+                    class="border-t border-gray-800 bg-gray-900/50 px-4 py-4 rounded-b-xl space-y-4 backdrop-blur-md">
+
+                    <!-- Row 1: Bias & Strike -->
+                    <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                        <div>
+                            <label class="text-xs uppercase text-gray-500 font-bold mb-1 block">Direction</label>
+                            <select x-model="form.direction" class="input-pro w-full px-3 py-2 text-sm rounded-lg">
+                                <option value="">AUTO DETECT</option>
+                                <option value="CALL">BULLISH (CALL)</option>
+                                <option value="PUT">BEARISH (PUT)</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="text-xs uppercase text-gray-500 font-bold mb-1 block">Target
+                                Strike</label>
+                            <input type="number" step="0.5" x-model="form.strike_price" placeholder="AUTO"
+                                class="input-pro w-full px-3 py-2 text-sm rounded-lg">
+                        </div>
+                        <div>
+                            <label class="text-xs uppercase text-gray-500 font-bold mb-1 block">Override IV</label>
+                            <input type="number" step="0.01" x-model="form.iv" placeholder="AUTO (e.g. 0.25)"
+                                class="input-pro w-full px-3 py-2 text-sm rounded-lg font-mono">
+                        </div>
+                        <div>
+                            <label class="text-xs uppercase text-gray-500 font-bold mb-1 block">Confidence</label>
+                            <select x-model="form.confidence_level"
+                                class="input-pro w-full px-3 py-2 text-sm rounded-lg font-mono">
+                                <option value="0.68">68% (1 SD)</option>
+                                <option value="0.80">80%</option>
+                                <option value="0.95">95% (2 SD)</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Row 2: Greeks Override (Grid) -->
+                    <div>
+                        <div class="text-xs uppercase text-gray-600 font-bold mb-2 tracking-wider">Manual Greeks
+                            Override</div>
+                        <div class="grid grid-cols-5 gap-2">
+                            <div class="space-y-1">
+                                <label class="text-xs text-gray-500 text-center block">Delta</label>
+                                <input type="number" step="0.01" x-model="form.delta"
+                                    class="input-pro w-full px-2 py-1.5 text-sm text-center rounded-lg font-mono"
+                                    placeholder="-">
+                            </div>
+                            <div class="space-y-1">
+                                <label class="text-xs text-gray-500 text-center block">Gamma</label>
+                                <input type="number" step="0.001" x-model="form.gamma"
+                                    class="input-pro w-full px-2 py-1.5 text-sm text-center rounded-lg font-mono"
+                                    placeholder="-">
+                            </div>
+                            <div class="space-y-1">
+                                <label class="text-xs text-gray-500 text-center block">Theta</label>
+                                <input type="number" step="0.01" x-model="form.theta"
+                                    class="input-pro w-full px-2 py-1.5 text-sm text-center rounded-lg font-mono"
+                                    placeholder="-">
+                            </div>
+                            <div class="space-y-1">
+                                <label class="text-xs text-gray-500 text-center block">Vega</label>
+                                <input type="number" step="0.01" x-model="form.vega"
+                                    class="input-pro w-full px-2 py-1.5 text-sm text-center rounded-lg font-mono"
+                                    placeholder="-">
+                            </div>
+                            <div class="space-y-1">
+                                <label class="text-xs text-gray-500 text-center block">Rho</label>
+                                <input type="number" step="0.01" x-model="form.rho"
+                                    class="input-pro w-full px-2 py-1.5 text-sm text-center rounded-lg font-mono"
+                                    placeholder="-">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Progress Bar Line -->
+                <div class="absolute bottom-0 left-0 right-0 h-0.5 bg-gray-800 overflow-hidden rounded-b-xl"
+                    x-show="isLoading">
+                    <div
+                        class="h-full bg-gradient-to-r from-violet-500 via-cyan-400 to-violet-500 animate-pulse w-full">
+                    </div>
+                </div>
+            </form>
+        </section>
+
+        <!-- Global Debug Panel -->
+        <div x-show="showDebug" x-collapse class="mb-8 mx-auto max-w-[90rem] px-4">
+            <div
+                class="p-4 bg-black/80 backdrop-blur rounded-xl border border-red-500/30 text-xs font-mono text-green-400 overflow-x-auto shadow-2xl">
+                <div class="flex justify-between items-center mb-2 border-b border-red-500/30 pb-2">
+                    <span class="font-bold text-red-400">🔧 SYSTEM DIAGNOSTICS</span>
+                    <button @click="showDebug = false" class="text-gray-500 hover:text-white">CLOSE</button>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <div class="text-gray-500 mb-1">DATA STATUS</div>
+                        <div>Raw Data: <span x-text="results?.raw_data ? '✅ OK' : '❌ MISSING'"></span></div>
+                        <div>Calculations: <span
+                                x-text="results?.calculations ? '✅ ' + Object.keys(results.calculations).length + ' modules' : '❌ MISSING'"></span>
+                        </div>
+                        <div class="mt-2 text-gray-400">
+                            Analysis Status: <span
+                                x-text="isLoading ? 'Running...' : (results ? 'Done' : 'Waiting')"></span>
+                        </div>
+                    </div>
+                    <div>
+                        <div class="text-gray-500 mb-1">MODULES LOADED</div>
+                        <template x-if="results?.calculations">
+                            <div class="text-gray-300 break-words"
+                                x-text="Object.keys(results.calculations).join(', ')"></div>
+                        </template>
+                        <template x-if="!results?.calculations">
+                            <div class="text-gray-600 italic">None</div>
+                        </template>
+                    </div>
+                </div>
+                <div class="mt-2 pt-2 border-t border-gray-800">
+                    <div class="text-gray-500">LAST ERROR</div>
+                    <div class="text-red-400" x-text="error || 'No errors logged'"></div>
+                </div>
             </div>
         </div>
 
-        <!-- US-2: 錯誤提示區域 -->
-        <div id="error-alert" class="alert alert-danger alert-dismissible fade show d-none" role="alert" aria-live="assertive" data-component="error-alert">
-            <div class="d-flex align-items-start">
-                <i class="fas fa-exclamation-triangle me-3 mt-1" aria-hidden="true"></i>
-                <div class="flex-grow-1">
-                    <strong>錯誤：</strong> <span id="error-message"></span>
-                    <div id="error-details" class="mt-2 small text-muted" style="display: none;"></div>
+        <!-- Dashboard Content -->
+        <div x-show="results" x-transition.opacity.duration.500ms class="space-y-6 fade-in-up">
+
+            <!-- Row 1: Ticker & AI (1:3 Ratio) -->
+            <div class="grid grid-cols-1 lg:grid-cols-4 gap-6">
+                <!-- Ticker Card -->
+                <div
+                    class="glass-card p-6 rounded-2xl flex flex-col justify-between h-48 border-l-4 border-violet-500 relative overflow-hidden group">
+                    <div
+                        class="absolute right-0 top-0 opacity-10 transform translate-x-4 -translate-y-4 group-hover:scale-110 transition-transform duration-700">
+                        <svg class="w-32 h-32" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6z" />
+                        </svg>
+                    </div>
+                    <div>
+                        <h2 class="text-3xl font-bold text-white tracking-tighter" x-text="results?.raw_data?.ticker">
+                        </h2>
+                        <div class="text-xl font-mono text-gray-300 mt-2"
+                            x-text="'$' + formatNum(results?.raw_data?.current_price)"></div>
+                    </div>
+                    <div class="flex items-center gap-3 mt-4">
+                        <div
+                            class="bg-violet-500/20 text-violet-300 px-3 py-1 rounded-lg text-xs font-bold font-mono border border-violet-500/30">
+                            IV <span x-text="formatNum(results?.raw_data?.implied_volatility) + '%'"></span>
+                        </div>
+                        <div class="text-xs text-gray-400">
+                            Rank <span class="text-gray-200 font-mono"
+                                x-text="formatNum(results?.calculations?.module18_historical_volatility?.iv_rank) + '%'"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- AI Recommendations -->
+                <div class="glass-card p-6 rounded-2xl lg:col-span-3 relative overflow-hidden">
+                    <div
+                        class="absolute inset-0 bg-gradient-to-r from-violet-900/10 to-transparent pointer-events-none">
+                    </div>
+                    <h3 @click="showDebug = !showDebug"
+                        class="text-sm font-bold text-gray-400 uppercase tracking-widest mb-4 flex items-center gap-2 cursor-pointer hover:text-white transition-colors"
+                        title="Click to toggle Data Debugger">
+                        <span class="w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></span>
+                        AI Strategy Engine
+                    </h3>
+
+                    <!-- Debug Panel -->
+                    <div x-show="showDebug" x-collapse
+                        class="mb-4 p-4 bg-black/50 rounded-xl border border-red-500/30 text-xs font-mono text-green-400 overflow-x-auto">
+                        <div class="font-bold text-red-400 mb-2">Build-in Data Debugger</div>
+                        <div>Raw Data: <span x-text="results?.raw_data ? 'OK' : 'MISSING'"></span></div>
+                        <div>Calculations: <span
+                                x-text="results?.calculations ? Object.keys(results.calculations).length + ' modules' : 'MISSING'"></span>
+                        </div>
+                        <template x-if="results?.calculations">
+                            <div class="mt-2 text-gray-500">
+                                Modules: <span x-text="Object.keys(results.calculations).join(', ')"></span>
+                            </div>
+                        </template>
+                        <div class="mt-2 text-gray-500">
+                            Errors: <span x-text="error || 'None'"></span>
+                        </div>
+                    </div>
+
+                    <div class="grid md:grid-cols-2 gap-4">
+                        <template x-if="results?.recommendations?.[0]">
+                            <div
+                                class="bg-gray-900/40 p-4 rounded-xl border border-gray-700/50 hover:bg-gray-800/40 transition-colors">
+                                <div class="flex items-start gap-4">
+                                    <div
+                                        class="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center text-emerald-400 font-bold border border-emerald-500/20">
+                                        1</div>
+                                    <div>
+                                        <div class="font-bold text-emerald-300 text-lg"
+                                            x-text="results.recommendations[0].strategy"></div>
+                                        <div class="text-xs text-gray-400 mt-1 leading-relaxed"
+                                            x-text="results.recommendations[0].rationale"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </template>
+                        <template x-if="results?.recommendations?.[1]">
+                            <div
+                                class="bg-gray-900/40 p-4 rounded-xl border border-gray-700/50 hover:bg-gray-800/40 transition-colors">
+                                <div class="flex items-start gap-4">
+                                    <div
+                                        class="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center text-blue-400 font-bold border border-blue-500/20">
+                                        2</div>
+                                    <div>
+                                        <div class="font-bold text-blue-300 text-lg"
+                                            x-text="results.recommendations[1].strategy"></div>
+                                        <div class="text-xs text-gray-400 mt-1 leading-relaxed"
+                                            x-text="results.recommendations[1].rationale"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
                 </div>
             </div>
-            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="關閉錯誤提示"></button>
-        </div>
 
-        <!-- 載入中提示 (增強版進度顯示) -->
-        <div id="loadingState" class="text-center py-4 d-none" role="status" aria-live="polite" aria-busy="true" data-component="loading-state">
-            <div class="card shadow-sm mx-auto" style="max-width: 500px;" data-animation="fade-in">
-                <div class="card-body">
-                    <div class="spinner-border text-primary mb-3" role="status" style="width: 2.5rem; height: 2.5rem;">
-                        <span class="visually-hidden">Loading...</span>
-                    </div>
-                    <h5 class="mb-2" id="progressTitle">正在分析...</h5>
-                    <p class="text-muted mb-3" id="progressMessage">初始化中...</p>
-                    
-                    <!-- 進度條 -->
-                    <div class="progress mb-2" style="height: 20px;" role="progressbar" aria-label="分析進度">
-                        <div class="progress-bar progress-bar-striped progress-bar-animated bg-primary" 
-                             id="progressBar"
-                             style="width: 0%"
-                             aria-valuenow="0" 
-                             aria-valuemin="0" 
-                             aria-valuemax="100">
-                            <span id="progressPercent">0%</span>
-                        </div>
-                    </div>
-                    
-                    <!-- 進度詳情 -->
-                    <div class="d-flex justify-content-between small text-muted mb-3">
-                        <span id="progressStep">步驟 0/5</span>
-                        <span id="progressTime">預計剩餘: 計算中...</span>
-                    </div>
-                    
-                    <!-- 當前模塊 -->
-                    <div class="bg-light rounded p-2 small" aria-live="polite">
-                        <i class="fas fa-cog fa-spin me-1" aria-hidden="true"></i>
-                        <span id="currentModule">準備開始...</span>
-                    </div>
-                    
-                    <!-- 已完成模塊列表 -->
-                    <div class="mt-3 text-start" id="completedModules" style="max-height: 120px; overflow-y: auto;" aria-live="polite" aria-label="已完成的模塊">
-                    </div>
-                </div>
-            </div>
-        </div>
+            <!-- Row 2: Charts Grid (Bento) -->
+            <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
 
-        <!-- 錯誤提示 -->
-        <div id="errorAlert" class="alert alert-danger d-none" role="alert" data-component="error-alert">
-            <i class="fas fa-exclamation-circle me-2"></i><span id="errorMessage"></span>
-        </div>
-
-        <!-- 分析結果區域 -->
-        <div id="resultsArea" class="d-none" role="region" aria-label="分析結果" data-component="results-area">
-            <!-- 1. 核心概覽 -->
-            <div class="row mb-4" data-module-group="overview">
-                <div class="col-md-12">
-                    <div class="card border-primary h-100" data-module="overview" data-animation="card-entrance">
-                        <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
-                            <h5 class="mb-0">核心概覽</h5>
-                            <span class="badge bg-light text-primary" id="analysisDate" aria-label="分析日期"></span>
-                        </div>
-                        <div class="card-body">
-                            <div class="row text-center">
-                                <div class="col-md-3 border-end">
-                                    <h6 class="text-muted">當前股價</h6>
-                                    <h2 class="text-primary fw-bold" id="currentPrice">-</h2>
-                                </div>
-                                <div class="col-md-3 border-end">
-                                    <h6 class="text-muted">隱含波動率 (IV)</h6>
-                                    <h2 class="text-info fw-bold" id="impliedVolatility">-</h2>
-                                </div>
-                                <div class="col-md-3 border-end">
-                                    <h6 class="text-muted">支持位 / 阻力位</h6>
-                                    <h4 class="text-success" id="supportLevel">-</h4>
-                                    <h4 class="text-danger" id="resistanceLevel">-</h4>
-                                </div>
-                                <div class="col-md-3">
-                                    <h6 class="text-muted">綜合評分</h6>
-                                    <h2 class="text-warning fw-bold" id="healthScore">-</h2>
-                                    <span class="badge bg-secondary" id="healthGrade">-</span>
-                                </div>
-                            </div>
+                <!-- Main Chart -->
+                <div class="glass-card p-6 rounded-2xl xl:col-span-2">
+                    <div class="flex justify-between items-center mb-6">
+                        <h3 class="text-sm font-bold text-gray-300">Price Range Distribution</h3>
+                        <div class="flex gap-2 text-xs">
+                            <!-- Chart Controls if needed -->
                         </div>
                     </div>
-                </div>
-            </div>
-
-            <!-- 2. 詳細模塊卡片 -->
-            <div class="row g-4">
-                <!-- 左側欄 -->
-                <div class="col-lg-8">
-                    <!-- 模塊1: 支持阻力位 -->
-                    <div class="card mb-4 shadow-sm">
-                        <div class="card-header bg-light">
-                            <h6 class="mb-0 fw-bold text-primary">1. 支持位/阻力位 (IV區間)</h6>
-                        </div>
-                        <div class="card-body">
-                            <div class="table-responsive">
-                                <table class="table table-sm table-hover" id="srTable">
-                                    <thead>
-                                        <tr>
-                                            <th>信心度</th>
-                                            <th>Z值</th>
-                                            <th>波動幅度</th>
-                                            <th>支持位</th>
-                                            <th>阻力位</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody></tbody>
-                                </table>
-                            </div>
-                        </div>
+                    <div class="chart-container">
+                        <canvas id="chart-price-range"></canvas>
                     </div>
-
-                    <!-- 模塊2 & 3: 公允值與套戥 -->
-                    <div class="row g-4 mb-4">
-                        <div class="col-md-6">
-                            <div class="card h-100 shadow-sm">
-                                <div class="card-header bg-light">
-                                    <h6 class="mb-0 fw-bold text-primary">2. 公允值 (Fair Value)</h6>
-                                </div>
-                                <div class="card-body">
-                                    <ul class="list-group list-group-flush" id="fairValueList"></ul>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="col-md-6">
-                            <div class="card h-100 shadow-sm">
-                                <div class="card-header bg-light">
-                                    <h6 class="mb-0 fw-bold text-primary">3. 套戥水位</h6>
-                                </div>
-                                <div class="card-body">
-                                    <div id="arbitrageContent"></div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- 模塊15 & 16: 期權定價與Greeks -->
-                    <div class="card mb-4 shadow-sm" id="greeksCard">
-                        <div class="card-header bg-light d-flex justify-content-between align-items-center">
-                            <h6 class="mb-0 fw-bold text-primary">15 & 16. 期權定價與 Greeks</h6>
-                            <span class="badge bg-info text-dark" id="greeksSource"></span>
-                        </div>
-                        <div class="card-body">
-                            <div class="row">
-                                <div class="col-md-6 border-end">
-                                    <h6 class="text-center text-success mb-3">Call Option</h6>
-                                    <!-- Desktop: Table view -->
-                                    <div id="callGreeks" class="data-table"></div>
-                                    <!-- Mobile: Card view -->
-                                    <div id="callGreeksCards" class="data-cards" style="display: none;"></div>
-                                </div>
-                                <div class="col-md-6">
-                                    <h6 class="text-center text-danger mb-3">Put Option</h6>
-                                    <!-- Desktop: Table view -->
-                                    <div id="putGreeks" class="data-table"></div>
-                                    <!-- Mobile: Card view -->
-                                    <div id="putGreeksCards" class="data-cards" style="display: none;"></div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <!-- 模塊14: 監察崗位 -->
-                    <div class="card mb-4 shadow-sm">
-                        <div class="card-header bg-light">
-                            <h6 class="mb-0 fw-bold text-primary">14. 12個監察崗位</h6>
-                        </div>
-                        <div class="card-body">
-                            <div class="row" id="monitoringPosts"></div>
-                        </div>
-                    </div>
-
-                    <!-- 模塊7-10: 單腿策略損益 -->
-                    <div class="card mb-4 shadow-sm">
-                        <div class="card-header bg-light">
-                            <h6 class="mb-0 fw-bold text-primary">7-10. 單腿策略損益預測 (到期日)</h6>
-                        </div>
-                        <div class="card-body">
-                            <div class="table-responsive">
-                                <table class="table table-sm table-hover text-center" id="strategyPnLTable">
-                                    <thead>
-                                        <tr>
-                                            <th>股價場景</th>
-                                            <th>Long Call</th>
-                                            <th>Long Put</th>
-                                            <th>Short Call</th>
-                                            <th>Short Put</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody></tbody>
-                                </table>
-                            </div>
-                            <small class="text-muted">* 基於當前選擇的行使價與期權價格計算</small>
-                        </div>
+                    <!-- Key Stats Footer -->
+                    <div class="mt-6 pt-4 border-t border-gray-800 grid grid-cols-2 md:grid-cols-4 gap-4 text-center"
+                        id="module-1-stats">
+                        <!-- JS Populated -->
                     </div>
                 </div>
 
-                <!-- 右側欄 -->
-                <div class="col-lg-4">
-                    <!-- 策略推薦 (New) -->
-                    <div class="card mb-4 shadow-sm border-success">
-                        <div class="card-header bg-success text-white">
-                            <h6 class="mb-0 fw-bold"><i class="fas fa-chess-knight me-2"></i>策略決策支持</h6>
-                        </div>
-                        <div class="card-body">
-                            <div id="strategyRecommendations">
-                                <div class="text-center text-muted py-3">
-                                    <i class="fas fa-robot fa-2x mb-2"></i>
-                                    <p>分析完成後顯示策略建議</p>
-                                </div>
-                            </div>
-                        </div>
+                <!-- Side Panel (Market Status) -->
+                <div class="space-y-6">
+                    <!-- IV Gauge -->
+                    <div
+                        class="glass-card p-6 rounded-2xl h-[200px] relative flex flex-col items-center justify-center">
+                        <div class="absolute top-4 left-4 text-xs font-bold text-gray-500">IV REGIME</div>
+                        <canvas id="chart-iv-gauge"></canvas>
+                        <div class="absolute bottom-6 text-xl font-bold text-white tracking-wider" id="iv-regime-text">
+                            NORMAL</div>
                     </div>
 
-                    <!-- 模塊20: 基本面健康 -->
-                    <div class="card mb-4 shadow-sm border-warning">
-                        <div class="card-header bg-warning text-dark">
-                            <h6 class="mb-0 fw-bold">20. 基本面健康檢查</h6>
-                        </div>
-                        <div class="card-body">
-                            <div id="fundamentalHealth"></div>
-                        </div>
-                    </div>
-
-                    <!-- 模塊4 & 5: PE 估值 -->
-                    <div class="card mb-4 shadow-sm">
-                        <div class="card-header bg-light">
-                            <h6 class="mb-0 fw-bold text-primary">4 & 5. PE 估值分析</h6>
-                        </div>
-                        <div class="card-body">
-                            <div id="peValuation"></div>
-                        </div>
-                    </div>
-
-                    <!-- 模塊13: 倉位分析 -->
-                    <div class="card mb-4 shadow-sm">
-                        <div class="card-header bg-light">
-                            <h6 class="mb-0 fw-bold text-primary">13. 倉位與籌碼</h6>
-                        </div>
-                        <div class="card-body">
-                            <div id="positionAnalysis"></div>
-                        </div>
-                    </div>
-                    
-                    <!-- 模塊18: 歷史波動率 -->
-                    <div class="card mb-4 shadow-sm">
-                        <div class="card-header bg-light">
-                            <h6 class="mb-0 fw-bold text-primary">18. 歷史波動率 (HV)</h6>
-                        </div>
-                        <div class="card-body">
-                            <div id="hvAnalysis"></div>
-                        </div>
-                    </div>
-
-                    <!-- 模塊6: 對沖量 -->
-                    <div class="card mb-4 shadow-sm">
-                        <div class="card-header bg-light">
-                            <h6 class="mb-0 fw-bold text-primary">6. 對沖量計算</h6>
-                        </div>
-                        <div class="card-body">
-                            <div id="hedgeQuantity"></div>
-                        </div>
-                    </div>
-
-                    <!-- 模塊11: 合成正股 -->
-                    <div class="card mb-4 shadow-sm">
-                        <div class="card-header bg-light">
-                            <h6 class="mb-0 fw-bold text-primary">11. 合成正股套利</h6>
-                        </div>
-                        <div class="card-body">
-                            <div id="syntheticStock"></div>
-                        </div>
-                    </div>
-
-                    <!-- 模塊12: 年息收益率 -->
-                    <div class="card mb-4 shadow-sm">
-                        <div class="card-header bg-light">
-                            <h6 class="mb-0 fw-bold text-primary">12. 年息收益率 (Covered Call)</h6>
-                        </div>
-                        <div class="card-body">
-                            <div id="annualYield"></div>
-                        </div>
-                    </div>
-
-                    <!-- 模塊19: Put-Call Parity -->
-                    <div class="card mb-4 shadow-sm">
-                        <div class="card-header bg-light">
-                            <h6 class="mb-0 fw-bold text-primary">19. Put-Call Parity 驗證</h6>
-                        </div>
-                        <div class="card-body">
-                            <div id="parityCheck"></div>
-                        </div>
-                    </div>
-
-                    <!-- 模塊21: 動量過濾器 -->
-                    <div class="card mb-4 shadow-sm border-info">
-                        <div class="card-header bg-info text-white">
-                            <h6 class="mb-0 fw-bold">21. 動量過濾器</h6>
-                        </div>
-                        <div class="card-body">
-                            <div id="momentumFilter"></div>
-                        </div>
-                    </div>
-
-                    <!-- 模塊23: 動態IV閾值 -->
-                    <div class="card mb-4 shadow-sm border-warning">
-                        <div class="card-header bg-warning text-dark">
-                            <h6 class="mb-0 fw-bold">23. 動態 IV 閾值</h6>
-                        </div>
-                        <div class="card-body">
-                            <div id="dynamicIVThreshold"></div>
-                        </div>
-                    </div>
-
-                    <!-- 模塊28: 資金倉位計算器 -->
-                    <div class="card mb-4 shadow-sm border-success">
-                        <div class="card-header bg-success text-white">
-                            <h6 class="mb-0 fw-bold"><i class="fas fa-calculator me-2"></i>28. 資金倉位計算器</h6>
-                        </div>
-                        <div class="card-body">
-                            <div id="positionCalculator"></div>
+                    <!-- HV Trend -->
+                    <div class="glass-card p-6 rounded-2xl h-[200px]">
+                        <div class="text-xs font-bold text-gray-500 mb-4">HV TREND</div>
+                        <div class="w-full h-[140px]">
+                            <canvas id="chart-hv-trend"></canvas>
                         </div>
                     </div>
                 </div>
             </div>
 
-            <!-- 新增: Module 22, 24, 25, 26, 27 大型模塊區域 -->
-            <div class="row g-4 mt-2">
-                <!-- 模塊22: 最佳行使價分析 -->
-                <div class="col-lg-12">
-                    <div class="card mb-4 shadow-sm border-primary">
-                        <div class="card-header bg-primary text-white">
-                            <h6 class="mb-0 fw-bold"><i class="fas fa-bullseye me-2"></i>22. 最佳行使價分析 (四種策略)</h6>
-                        </div>
-                        <div class="card-body">
-                            <div id="optimalStrike"></div>
+            <!-- Row 3: Core Analysis Modules -->
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                <div id="module-2" class="module-card">
+                    <div class="text-gray-500 text-sm">Module 2: Fair Value</div>
+                </div>
+                <div id="module-3" class="module-card">
+                    <div class="text-gray-500 text-sm">Module 3: Arbitrage</div>
+                </div>
+                <div id="module-4" class="module-card">
+                    <div class="text-gray-500 text-sm">Module 4-5: PE Analysis</div>
+                </div>
+                <div id="module-6" class="module-card">
+                    <div class="text-gray-500 text-sm">Module 6: Hedge Quantity</div>
+                </div>
+            </div>
+
+            <!-- Row 4: Strategy & Vol Surface -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <!-- Strategy PnL -->
+                <div class="glass-card p-6 rounded-2xl">
+                    <div class="flex justify-between items-center mb-6">
+                        <h3 class="text-sm font-bold text-gray-300">P&L Simulation</h3>
+                        <div class="flex bg-gray-900/50 rounded-lg p-1 gap-1">
+                            <button
+                                class="px-3 py-1 rounded-md text-[10px] uppercase font-bold text-white bg-violet-600 strategy-tab"
+                                data-tab="long_call">L.Call</button>
+                            <button
+                                class="px-3 py-1 rounded-md text-[10px] uppercase font-bold text-gray-400 hover:bg-gray-800 strategy-tab"
+                                data-tab="long_put">L.Put</button>
+                            <button
+                                class="px-3 py-1 rounded-md text-[10px] uppercase font-bold text-gray-400 hover:bg-gray-800 strategy-tab"
+                                data-tab="short_call">S.Call</button>
+                            <button
+                                class="px-3 py-1 rounded-md text-[10px] uppercase font-bold text-gray-400 hover:bg-gray-800 strategy-tab"
+                                data-tab="short_put">S.Put</button>
                         </div>
                     </div>
-                </div>
-
-                <!-- 模塊24: 技術方向分析 -->
-                <div class="col-lg-6">
-                    <div class="card mb-4 shadow-sm">
-                        <div class="card-header bg-light">
-                            <h6 class="mb-0 fw-bold text-primary"><i class="fas fa-compass me-2"></i>24. 技術方向分析</h6>
-                        </div>
-                        <div class="card-body">
-                            <div id="technicalDirection"></div>
-                        </div>
+                    <div class="h-[250px]">
+                        <canvas id="chart-strategy-pnl"></canvas>
                     </div>
+                    <div id="strategy-details" class="mt-4 text-xs text-gray-400 font-mono space-y-1"></div>
                 </div>
 
-                <!-- 模塊25: 波動率微笑 -->
-                <div class="col-lg-6">
-                    <div class="card mb-4 shadow-sm">
-                        <div class="card-header bg-light">
-                            <h6 class="mb-0 fw-bold text-primary"><i class="fas fa-smile me-2"></i>25. 波動率微笑分析</h6>
-                        </div>
-                        <div class="card-body">
-                            <div id="volatilitySmile"></div>
-                        </div>
+                <!-- Vol Smile & GEX -->
+                <div class="glass-card p-6 rounded-2xl">
+                    <div class="flex justify-between items-center mb-6">
+                        <h3 class="text-sm font-bold text-gray-300">Smile & GEX</h3>
+                        <span class="text-[10px] text-gray-500 uppercase">Combined View</span>
                     </div>
-                </div>
-
-                <!-- 模塊26: Long 期權成本效益分析 -->
-                <div class="col-lg-12">
-                    <div class="card mb-4 shadow-sm border-info">
-                        <div class="card-header bg-info text-white">
-                            <h6 class="mb-0 fw-bold"><i class="fas fa-chart-bar me-2"></i>26. Long 期權成本效益分析</h6>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 h-[250px]">
+                        <div class="relative">
+                            <div class="absolute top-0 right-0 text-[10px] text-gray-500">SMILE</div>
+                            <canvas id="chart-vol-smile"></canvas>
                         </div>
-                        <div class="card-body">
-                            <div id="longOptionAnalysis"></div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- 模塊27: 多到期日比較 -->
-                <div class="col-lg-12">
-                    <div class="card mb-4 shadow-sm border-success">
-                        <div class="card-header bg-success text-white">
-                            <h6 class="mb-0 fw-bold"><i class="fas fa-calendar-alt me-2"></i>27. 多到期日比較 (四種策略)</h6>
-                        </div>
-                        <div class="card-body">
-                            <div id="multiExpiryComparison"></div>
+                        <div class="relative">
+                            <div class="absolute top-0 right-0 text-[10px] text-gray-500">GEX</div>
+                            <canvas id="chart-gex-oi"></canvas>
                         </div>
                     </div>
                 </div>
             </div>
-        </div>
+
+    <!-- Advanced Modules Grid -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6" id="advanced-modules-grid">
+        <!-- Populated by advanced.js -->
+        <div id="module-6" class="glass-card p-6 rounded-2xl min-h-[200px]"></div>
+        <div id="module-11" class="glass-card p-6 rounded-2xl min-h-[200px]"></div>
+        <div id="module-12" class="glass-card p-6 rounded-2xl min-h-[200px]"></div>
+        <div id="module-13" class="glass-card p-6 rounded-2xl min-h-[200px]"></div>
+        <div id="module-14" class="glass-card p-6 rounded-2xl min-h-[200px]"></div>
+        <div id="module-20" class="glass-card p-6 rounded-2xl min-h-[200px]"></div>
+        <div id="module-21" class="glass-card p-6 rounded-2xl min-h-[200px]"></div>
+        <div id="module-22" class="glass-card p-6 rounded-2xl min-h-[200px]"></div>
+        <div id="module-24" class="glass-card p-6 rounded-2xl min-h-[200px]"></div>
+        <div id="module-26" class="glass-card p-6 rounded-2xl min-h-[200px]"></div>
+        <div id="module-27" class="glass-card p-6 rounded-2xl min-h-[200px]"></div>
+        <div id="module-28" class="glass-card p-6 rounded-2xl min-h-[200px]"></div>
+        <div id="module-30" class="glass-card p-6 rounded-2xl min-h-[200px]"></div>
+        <div id="module-32" class="glass-card p-6 rounded-2xl min-h-[200px]"></div>
     </div>
 
-    <footer class="bg-light py-4 mt-5 border-top">
-        <div class="container text-center text-muted">
-            <p class="mb-0">期權制勝量化系統 &copy; 2025</p>
-            <small>基於《期權制勝》核心思想 | 美股市場專用</small>
-        </div>
-    </footer>
+        </div> <!-- End Dashboard -->
 
-    <!-- CSS Fallback Handler - Load immediately to catch CSS errors -->
-    <script src="/static/js/css-fallback-handler.js"></script>
-    
-    <!-- Module Error Handler - Load early for module rendering -->
-    <script src="/static/js/module-error-handler.js"></script>
-    
-    <!-- Defer non-critical JavaScript for faster page load -->
-    <!-- Bootstrap bundle includes Popper.js -->
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js" defer></script>
-    
-    <!-- Performance monitoring - load early but non-blocking -->
-    <script src="/static/js/performance-monitor.js" defer></script>
-    
-    <!-- Application JavaScript - deferred for non-blocking load -->
-    <script src="/static/js/theme-manager.js" defer></script>
-    <script src="/static/js/animation-controller.js" defer></script>
-    <script src="/static/js/debounce-utility.js" defer></script>
-    <script src="/static/js/lazy-loader.js" defer></script>
-    <script src="/static/js/virtual-scroller.js" defer></script>
-    
-    <!-- UI Component Controllers -->
-    <script src="/static/js/responsive-layout.js" defer></script>
-    <script src="/static/js/navigation-controller.js" defer></script>
-    <script src="/static/js/notification-manager.js" defer></script>
-    <script src="/static/js/progress-controller.js" defer></script>
-    <script src="/static/js/metric-display.js" defer></script>
-    <script src="/static/js/icon-system.js" defer></script>
-    <script src="/static/js/accessibility-manager.js" defer></script>
-    
-    <!-- Module Rendering -->
-    <script src="/static/js/module-renderer.js" defer></script>
-    
-    <!-- Main Application -->
-    <script src="/static/js/main.js" defer></script>
+        <!-- Loading Overlay -->
+        <div x-show="isLoading"
+            class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center flex-col"
+            x-transition.opacity>
+            <div class="w-16 h-16 border-4 border-violet-600/30 border-t-violet-600 rounded-full animate-spin mb-4">
+            </div>
+            <div class="text-violet-400 font-mono tracking-widest text-sm animate-pulse">PROCESSING DATA</div>
+            <div class="text-xs text-gray-600 mt-2 font-mono" x-text="progress.status">Initializing...</div>
+        </div>
+
+    </div>
+
+    <!-- Dynamic Script Loader with Cache Busting -->
+    <!-- Static Scripts with Cache Busting v2.2 -->
+    <script src="/static/js/charts/price-range.js?v=2.2"></script>
+    <script src="/static/js/charts/pnl-curve.js?v=2.2"></script>
+    <script src="/static/js/charts/vol-smile.js?v=2.2"></script>
+    <script src="/static/js/charts/gex-oi.js?v=2.2"></script>
+    <script src="/static/js/charts/hv-trend.js?v=2.2"></script>
+    <script src="/static/js/charts/iv-gauge.js?v=2.2"></script>
+    <script src="/static/js/modules/core.js?v=2.2"></script>
+    <script src="/static/js/modules/strategies.js?v=2.2"></script>
+    <script src="/static/js/modules/greeks.js?v=2.2"></script>
+    <script src="/static/js/modules/advanced.js?v=2.2"></script>
+    <script src="/static/js/modules/signals.js?v=2.2"></script>
+    <script src="/static/js/app.js?v=2.2"></script>
 </body>
+
 </html>

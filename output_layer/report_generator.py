@@ -33,7 +33,7 @@ class ReportGenerator:
     4. 生成純文本報告
     """
     
-    def __init__(self, output_dir='output/', output_manager: OutputPathManager = None):
+    def __init__(self, output_dir='output/',         output_manager = None):
         """
         初始化報告生成器
         
@@ -208,7 +208,8 @@ class ReportGenerator:
                 analysis_date: str,
                 raw_data: dict,
                 calculation_results: dict,
-                data_fetcher=None) -> dict:
+                data_fetcher=None,
+                delta_report=None) -> dict:
         """
         生成完整分析報告（按股票代號分類存儲）
         
@@ -257,7 +258,7 @@ class ReportGenerator:
             
             # 3. 生成純文本報告
             self._generate_text_report_to_path(
-                ticker, analysis_date, raw_data, calculation_results, text_path, api_status
+                ticker, analysis_date, raw_data, calculation_results, text_path, api_status, delta_report
             )
             
             logger.info(f"* 報告已生成 (按股票代號分類)")
@@ -542,7 +543,7 @@ class ReportGenerator:
         self._write_text_report(filepath, ticker, analysis_date, raw_data, calculation_results, api_status)
     
     def _generate_text_report_to_path(self, ticker, analysis_date, raw_data, 
-                                      calculation_results, filepath: str, api_status=None):
+                                      calculation_results, filepath: str, api_status=None, delta_report=None):
         """
         生成純文本報告到指定路徑（使用 OutputPathManager）
         
@@ -552,10 +553,10 @@ class ReportGenerator:
         
         # 確保目錄存在
         self.output_manager.ensure_directory_exists(os.path.dirname(filepath))
-        self._write_text_report(filepath, ticker, analysis_date, raw_data, calculation_results, api_status)
+        self._write_text_report(filepath, ticker, analysis_date, raw_data, calculation_results, api_status, delta_report)
     
     def _write_text_report(self, filepath, ticker, analysis_date, raw_data, 
-                          calculation_results, api_status=None):
+                          calculation_results, api_status=None, delta_report=None):
         """寫入純文本報告內容"""
         
         with open(filepath, 'w', encoding='utf-8') as f:
@@ -586,6 +587,35 @@ class ReportGenerator:
                     f.write("\nAPI 故障記錄:\n")
                     for api_name, failures in api_status['api_failures'].items():
                         f.write(f"  {api_name}: {len(failures)} 次故障\n")
+                f.write("\n")
+            
+            # 異動分析報告 (新增)
+            if delta_report:
+                f.write("=" * 70 + "\n")
+                f.write("異動分析 (Changes vs Last Run)\n")
+                f.write("=" * 70 + "\n")
+                
+                # 顯示警報
+                if delta_report.get('opportunity_alert'):
+                    for alert in delta_report['opportunity_alert']:
+                        f.write(f"{alert}\n")
+                    f.write("\n")
+                else:
+                    f.write("無顯著異動\n\n")
+                    
+                # 詳細對比
+                px = delta_report.get('price_change', {})
+                if px:
+                    f.write(f"價格變化: ${px.get('previous', 0):.2f} -> ${px.get('current', 0):.2f} ({px.get('pct', 0):+.2f}%)\n")
+                    
+                iv = delta_report.get('iv_change', {})
+                if iv:
+                    f.write(f"IV Rank: {iv.get('previous_rank', 0):.0f} -> {iv.get('current_rank', 0):.0f} (變化 {iv.get('rank_diff', 0):+.0f})\n")
+                
+                strat = delta_report.get('strategy_change', {})
+                if strat.get('changed'):
+                    f.write(f"策略變化: {strat.get('previous_top')} -> {strat.get('current_top')}\n")
+                
                 f.write("\n")
             
             # 原始數據摘要
@@ -643,7 +673,19 @@ class ReportGenerator:
                 ))
                 f.write("\n")
             
-            for module_name, module_data in calculation_results.items():
+            # 按模塊編號排序輸出
+            def get_module_number(module_name):
+                """提取模塊編號用於排序"""
+                import re
+                match = re.search(r'module(\d+)', module_name)
+                if match:
+                    return int(match.group(1))
+                # 非模塊項目放在最後
+                return 999
+            
+            sorted_modules = sorted(calculation_results.items(), key=lambda x: get_module_number(x[0]))
+            
+            for module_name, module_data in sorted_modules:
                 # 跳過已處理的多信心度結果
                 if module_name == 'module1_support_resistance_multi':
                     continue
@@ -697,6 +739,12 @@ class ReportGenerator:
                     f.write(self._format_module27_multi_expiry_comparison(module_data))
                 elif module_name == 'module28_position_calculator':
                     f.write(self._format_module28_position_calculator(module_data))
+                elif module_name == 'module30_unusual_activity':
+                    f.write(self._format_module30_unusual_activity(module_data))
+                elif module_name == 'module31_advanced_metrics':
+                    f.write(self._format_module31_advanced_metrics(module_data))
+                elif module_name == 'module32_complex_strategies':
+                    f.write(self._format_complex_strategies(module_data))
                 elif module_name == 'strike_selection':
                     # 顯示行使價選擇說明
                     f.write(self._format_strike_selection(module_data))
@@ -1352,7 +1400,7 @@ class ReportGenerator:
             converged = call.get('converged', False)
             call_iv = call.get('implied_volatility', 0)
             report += f"│ 📈 Call IV:\n"
-            report += f"│   隱含波動率: {call_iv*100:.2f}%\n"
+            report += f"│   隱含波動率: {call_iv*100:.2f}%\n" if call_iv is not None else "│   隱含波動率: N/A\n"
             report += f"│   收斂狀態: {'* 成功' if converged else 'x 失敗'}\n"
             report += f"│   迭代次數: {call.get('iterations', 0)}\n"
             report += f"│   市場價格: ${call.get('market_price', 0):.2f}\n"
@@ -1363,14 +1411,14 @@ class ReportGenerator:
             converged = put.get('converged', False)
             put_iv = put.get('implied_volatility', 0)
             report += f"│ 📉 Put IV:\n"
-            report += f"│   隱含波動率: {put_iv*100:.2f}%\n"
+            report += f"│   隱含波動率: {put_iv*100:.2f}%\n" if put_iv is not None else "│   隱含波動率: N/A\n"
             report += f"│   收斂狀態: {'* 成功' if converged else 'x 失敗'}\n"
             report += f"│   迭代次數: {put.get('iterations', 0)}\n"
             report += f"│   市場價格: ${put.get('market_price', 0):.2f}\n"
             report += "│\n"
         
         # 添加 Call/Put IV 比較分析 (Requirements 6.1, 6.2)
-        iv_comparison = self._get_iv_comparison_analysis(call_iv, put_iv)
+        iv_comparison = self._get_iv_comparison_analysis(call_iv or 0, put_iv or 0)
         if iv_comparison:
             report += "│ 📊 Call/Put IV 比較分析:\n"
             report += f"│   {iv_comparison['comparison_text']}\n"
@@ -1381,12 +1429,12 @@ class ReportGenerator:
         
         # 添加與歷史 IV 比較 (Requirement 6.3)
         if historical_iv is not None and historical_iv > 0:
-            current_iv = call_iv if call_iv else put_iv
+            current_iv = call_iv if call_iv is not None else put_iv
             if current_iv:
                 historical_comparison = self._get_historical_iv_comparison(current_iv, historical_iv)
                 report += "│ 📈 與歷史 IV 比較:\n"
-                report += f"│   當前 IV: {current_iv*100:.2f}%\n"
-                report += f"│   歷史 IV: {historical_iv*100:.2f}%\n"
+                report += f"│   當前 IV: {current_iv*100:.2f}%\n" if current_iv is not None else "│   當前 IV: N/A\n"
+                report += f"│   歷史 IV: {historical_iv*100:.2f}%\n" if historical_iv is not None else "│   歷史 IV: N/A\n"
                 report += f"│   狀態: {historical_comparison['status']}\n"
                 report += "│\n"
         
@@ -3172,6 +3220,28 @@ class ReportGenerator:
         
         if parity_data:
             report += self._format_parity_validation(parity_data)
+            
+        # 添加高級指標分析（如果存在）
+        # Requirements: 6.1 (Advanced Metrics) - 優先顯示
+        advanced_metrics = None
+        for strategy_key in ['long_call', 'long_put', 'short_call', 'short_put']:
+            if strategy_key in results:
+                am = results[strategy_key].get('advanced_metrics')
+                if am is not None and isinstance(am, dict):
+                    advanced_metrics = am
+                    break
+        
+        if advanced_metrics:
+            report += self._format_advanced_metrics(advanced_metrics)
+            
+        # 添加高級組合策略分析（如果存在）
+        # Requirements: Phase 3
+        complex_strategies = results.get('module32_complex_strategies')
+        # Compatibility check: ensure it's not the old module22 results
+        # In main.py we store it in module22 for now? NO, stored in module32_complex_strategies
+        # But here we are inside _format_module22_optimal_strike... 
+        # Wait, I should not add it inside module22 formatter. 
+        # I should add it as a separate section in the main generation loop.
         
         return report
     
@@ -3328,7 +3398,121 @@ class ReportGenerator:
             return f"⚠️ {min_factor}得分偏低 ({min_score:.0f}分)，需注意"
         else:
             return "各項評分均衡"
+            
+    def _format_advanced_metrics(self, data: dict) -> str:
+        """
+        格式化 Module 31 高級指標分析結果
+        
+        Requirements: 6.1 (Advanced Metrics)
+        """
+        report = "\n┌─ 高級市場指標 (Advanced Metrics) ────────────┐\n"
+        report += "│\n"
+        
+        pcr_volume = data.get('pcr_volume', 0)
+        pcr_oi = data.get('pcr_oi', 0)
+        max_pain = data.get('max_pain', 0)
+        total_gex = data.get('total_gex', 0)
+        
+        # 1. PCR 分析
+        report += f"│ 📊 Put/Call Ratio (PCR):\n"
+        report += f"│   PCR (成交量): {pcr_volume:.2f}"
+        if pcr_volume > 1.2:
+            report += " (偏空/超賣)\n"
+        elif pcr_volume < 0.7:
+            report += " (偏多/超買)\n"
+        else:
+            report += " (中性)\n"
+            
+        report += f"│   PCR (持倉量): {pcr_oi:.2f}\n"
+        report += "│\n"
+        
+        # 2. Max Pain 分析
+        report += f"│ 🎯 最大痛點 (Max Pain):\n"
+        report += f"│   價格: ${max_pain:.2f}\n"
+        report += "│   (這是做市商最希望結算的價格，股價常向此靠攏)\n"
+        report += "│\n"
+        
+        # 3. GEX 分析
+        gex_m = total_gex / 1_000_000
+        report += f"│ 🌊 Gamma Exposure (GEX):\n"
+        report += f"│   總額: ${total_gex:,.0f} (${gex_m:.1f}M)\n"
+        
+        if total_gex > 0:
+            report += "│   狀態: 正 GEX (做市商抑制波動，市場較穩定)\n"
+        else:
+            report += "│   狀態: 負 GEX (做市商放大波動，可能暴漲暴跌)\n"
+            
+        report += "└────────────────────────────────────────────────┘\n"
+        return report
     
+    def _format_complex_strategies(self, results: dict) -> str:
+        """
+        格式化 Module 32 高級組合策略分析結果
+        """
+        report = "\n┌─ Module 32: 高級組合策略 (Complex Strategies) ──┐\n"
+        report += "│\n"
+        
+        if results.get('status') in ['skipped', 'error']:
+            report += f"│ ! 狀態: {results.get('status', 'N/A')}\n"
+            report += f"│ 原因: {results.get('reason', 'N/A')}\n"
+            report += "└────────────────────────────────────────────────┘\n"
+            return report
+            
+        # 1. 垂直價差
+        vertical = results.get('vertical', {})
+        bull_puts = vertical.get('bull_put', [])
+        bear_calls = vertical.get('bear_call', [])
+        
+        if bull_puts or bear_calls:
+            report += "│ 📊 垂直價差 (Vertical Spreads):\n"
+            
+            if bull_puts:
+                best = bull_puts[0]
+                report += f"│   📈 Bull Put Spread (看漲 Credit):\n"
+                report += f"│      {best.get('description')}\n"
+                report += f"│      最大收益: ${best.get('max_profit'):.2f}, 最大風險: ${best.get('max_loss'):.2f}\n"
+                report += f"│      勝率: {best.get('win_prob')}%, 回報率: {best.get('risk_reward')*100:.1f}%\n"
+                report += f"│      Greeks: Δ={best.get('greeks', {}).get('delta')}\n"
+                
+            if bear_calls:
+                best = bear_calls[0]
+                report += f"│   📉 Bear Call Spread (看跌 Credit):\n"
+                report += f"│      {best.get('description')}\n"
+                report += f"│      最大收益: ${best.get('max_profit'):.2f}, 最大風險: ${best.get('max_loss'):.2f}\n"
+                report += f"│      勝率: {best.get('win_prob')}%, 回報率: {best.get('risk_reward')*100:.1f}%\n"
+                report += f"│      Greeks: Δ={best.get('greeks', {}).get('delta')}\n"
+            report += "│\n"
+
+        # 2. 鐵兀鷹
+        condors = results.get('iron_condor', [])
+        if condors:
+            best = condors[0]
+            report += "│ 🦅 鐵兀鷹 (Iron Condor - 區間震盪):\n"
+            report += f"│      {best.get('description')}\n"
+            report += f"│      最大收益: ${best.get('max_profit'):.2f}, 最大風險: ${best.get('max_loss'):.2f}\n"
+            report += f"│      勝率: {best.get('win_prob')}%, 回報率: {best.get('risk_reward')*100:.1f}%\n"
+            report += f"│      盈虧平衡: {best.get('breakevens')}\n"
+            report += "│\n"
+            
+        # 3. 跨式/寬跨式
+        straddle_strangle = results.get('straddle_strangle', {})
+        straddles = straddle_strangle.get('straddle', [])
+        strangles = straddle_strangle.get('strangle', [])
+        
+        if straddles or strangles:
+            report += "│ 💥 波動率突破 (Straddle/Strangle):\n"
+            if straddles:
+                best = straddles[0]
+                report += f"│   Long Straddle: {best.get('description')}\n"
+                report += f"│   成本: ${abs(best.get('net_premium')):.2f}, 盈虧平衡: {best.get('breakevens')}\n"
+            if strangles:
+                best = strangles[0]
+                report += f"│   Long Strangle: {best.get('description')}\n"
+                report += f"│   成本: ${abs(best.get('net_premium')):.2f}, 盈虧平衡: {best.get('breakevens')}\n"
+                
+        report += "└────────────────────────────────────────────────┘\n"
+        return report
+
     def _format_volatility_smile(self, smile_data: dict) -> str:
         """
         格式化波動率微笑分析結果
@@ -5745,6 +5929,265 @@ class ReportGenerator:
         except Exception as e:
             logger.error(f"x 套利策略格式化失敗: {e}")
             return f"❌ 套利策略格式化失敗: {str(e)}\n"
+    
+    def _format_module30_unusual_activity(self, data: dict) -> str:
+        """格式化 Module 30: 異動期權分析"""
+        try:
+            if data.get('status') in ['skipped', 'error']:
+                return f"\n⚠️ Module 30 (異動期權分析): {data.get('reason', 'N/A')}\n"
+            
+            report = "\n┌─ Module 30: 異動期權分析 ───────────────────┐\n│\n"
+            
+            calls = data.get('calls', [])
+            puts = data.get('puts', [])
+            total = data.get('total_signals', 0)
+            
+            report += f"│ 📊 異動信號總數: {total}\n│\n"
+            
+            if calls:
+                report += "│ 📈 Call 異動:\n"
+                for c in calls[:5]:  # 只顯示前5個
+                    strike = c.get('strike', 'N/A')
+                    signal_type = c.get('signal_type', 'N/A')
+                    volume = c.get('volume', 'N/A')
+                    oi = c.get('open_interest', 'N/A')
+                    report += f"│   • ${strike}: {signal_type} (Vol: {volume}, OI: {oi})\n"
+                if len(calls) > 5:
+                    report += f"│   ... 及其他 {len(calls)-5} 個信號\n"
+                report += "│\n"
+            
+            if puts:
+                report += "│ 📉 Put 異動:\n"
+                for p in puts[:5]:
+                    strike = p.get('strike', 'N/A')
+                    signal_type = p.get('signal_type', 'N/A')
+                    volume = p.get('volume', 'N/A')
+                    oi = p.get('open_interest', 'N/A')
+                    report += f"│   • ${strike}: {signal_type} (Vol: {volume}, OI: {oi})\n"
+                if len(puts) > 5:
+                    report += f"│   ... 及其他 {len(puts)-5} 個信號\n"
+                report += "│\n"
+            
+            if not calls and not puts:
+                report += "│ ℹ️ 未發現顯著異動\n│\n"
+            
+            report += "└────────────────────────────────────────────┘\n"
+            return report
+            
+        except Exception as e:
+            return f"\n❌ Module 30 格式化失敗: {str(e)}\n"
+    
+    def _format_module31_advanced_metrics(self, data: dict) -> str:
+        """格式化 Module 31: 高級市場指標"""
+        try:
+            if data.get('status') in ['skipped', 'error']:
+                return f"\n⚠️ Module 31 (高級市場指標): {data.get('reason', 'N/A')}\n"
+            
+            report = "\n┌─ Module 31: 高級市場指標 ───────────────────┐\n│\n"
+            
+            # Put/Call Ratio
+            pcr = data.get('put_call_ratio', {})
+            report += "│ 📊 Put/Call Ratio:\n"
+            report += f"│   OI 比率: {pcr.get('oi_ratio', 'N/A')}\n"
+            report += f"│   Volume 比率: {pcr.get('volume_ratio', 'N/A')}\n"
+            report += f"│   市場情緒: {pcr.get('sentiment', 'N/A')}\n│\n"
+            
+            # Max Pain
+            max_pain = data.get('max_pain', {})
+            strike = max_pain.get('max_pain_strike', 'N/A')
+            report += "│ 🎯 Max Pain:\n"
+            report += f"│   Max Pain 行使價: ${strike}\n"
+            report += f"│   總損失: ${max_pain.get('total_pain', 0):,.0f}\n│\n"
+            
+            # GEX
+            gex = data.get('gamma_exposure', {})
+            if gex:
+                report += "│ ⚡ Gamma Exposure (GEX):\n"
+                report += f"│   淨 GEX: {gex.get('net_gex', 'N/A')}\n"
+                report += f"│   零點: ${gex.get('zero_gamma_point', 'N/A')}\n│\n"
+            
+            report += "└────────────────────────────────────────────┘\n"
+            return report
+            
+        except Exception as e:
+            return f"\n❌ Module 31 格式化失敗: {str(e)}\n"
+    
+    def _format_complex_strategies(self, data: dict) -> str:
+        """格式化 Module 32: 複雜策略分析（增強版）"""
+        try:
+            if data.get('status') in ['skipped', 'error']:
+                return f"\n⚠️ Module 32 (複雜策略分析): {data.get('reason', 'N/A')}\n"
+            
+            report = "\n┌─ Module 32: 複雜策略分析 ───────────────────┐\n│\n"
+            
+            # 統計分析的策略數量
+            vs = data.get('vertical_spreads', {})
+            bull_put = vs.get('bull_put', [])
+            bear_call = vs.get('bear_call', [])
+            iron_condors = data.get('iron_condors', [])
+            straddles = data.get('straddles', [])
+            strangles = data.get('strangles', [])
+            
+            total_strategies = len(bull_put) + len(bear_call) + len(iron_condors) + len(straddles) + len(strangles)
+            report += f"│ 📊 分析策略總數: {total_strategies} 個\n│\n"
+            
+            # 收集所有策略並排序
+            all_strategies = []
+            for s in bull_put:
+                s['type'] = 'Bull Put Spread'
+                s['category'] = '看漲/中性'
+                all_strategies.append(s)
+            for s in bear_call:
+                s['type'] = 'Bear Call Spread'
+                s['category'] = '看跌/中性'
+                all_strategies.append(s)
+            for s in iron_condors:
+                s['type'] = 'Iron Condor'
+                s['category'] = '橫盤收租'
+                all_strategies.append(s)
+            for s in straddles:
+                s['type'] = 'Long Straddle'
+                s['category'] = '波動率爆發'
+                all_strategies.append(s)
+            for s in strangles:
+                s['type'] = 'Long Strangle'
+                s['category'] = '波動率爆發(低成本)'
+                all_strategies.append(s)
+            
+            # 按評分排序
+            all_strategies.sort(key=lambda x: x.get('score', 0), reverse=True)
+            
+            if all_strategies:
+                # 最佳推薦
+                best = all_strategies[0]
+                report += "│ ═══════════════════════════════════════════\n"
+                report += f"│ 🏆 最佳推薦: {best.get('type', 'N/A')}\n"
+                report += f"│    適用: {best.get('category', 'N/A')}\n"
+                report += f"│    評分: {best.get('score', 0):.1f}/100\n│\n"
+                
+                # 操作流程
+                report += "│ 📋 操作流程:\n"
+                desc = best.get('description', '')
+                if desc:
+                    # 解析 description 字段 (格式: "策略名 (+1C100, -1P95)")
+                    if '(' in desc and ')' in desc:
+                        legs_str = desc.split('(')[1].split(')')[0]
+                        legs = legs_str.split(', ')
+                        step = 1
+                        for leg in legs:
+                            leg = leg.strip()
+                            if leg.startswith('+'):
+                                action = "買入"
+                                leg = leg[1:]
+                            elif leg.startswith('-'):
+                                action = "賣出"
+                                leg = leg[1:]
+                            else:
+                                action = ""
+                            
+                            # 解析數量、類型、行使價 (e.g., "1C100")
+                            qty = ""
+                            opt_type = ""
+                            strike = ""
+                            for i, c in enumerate(leg):
+                                if c.isdigit():
+                                    if opt_type:
+                                        strike += c
+                                    else:
+                                        qty += c
+                                elif c in ['C', 'P']:
+                                    opt_type = "Call" if c == 'C' else "Put"
+                            
+                            report += f"│   {step}. {action} {qty}張 {opt_type} 行使價 ${strike}\n"
+                            step += 1
+                    else:
+                        report += f"│   {desc}\n"
+                else:
+                    report += "│   (策略細節不可用)\n"
+                
+                report += "│\n"
+                
+                # 風險回報分析
+                net_premium = best.get('net_premium', 0)
+                max_profit = best.get('max_profit', 0)
+                max_loss = best.get('max_loss', 0)
+                breakevens = best.get('breakevens', [])
+                
+                report += "│ 💰 風險回報分析:\n"
+                if net_premium > 0:
+                    report += f"│   淨權金收入: ${net_premium:.2f}\n"
+                else:
+                    report += f"│   淨成本: ${abs(net_premium):.2f}\n"
+                
+                if max_profit == 'Unlimited':
+                    report += "│   最大利潤: 無限 🚀\n"
+                else:
+                    report += f"│   最大利潤: ${max_profit:.2f}\n"
+                
+                if max_loss == 'Unlimited':
+                    report += "│   最大損失: 無限 ⚠️\n"
+                else:
+                    report += f"│   最大損失: ${max_loss:.2f}\n"
+                    
+                rr = best.get('risk_reward', 0)
+                if rr > 0:
+                    report += f"│   風險回報比: {rr:.2f}:1\n"
+                
+                win_prob = best.get('win_prob', 0)
+                if win_prob > 0:
+                    report += f"│   勝率估計: {win_prob:.1f}%\n"
+                
+                report += "│\n"
+                
+                # 盈虧平衡點（含合理性檢查）
+                if breakevens:
+                    report += "│ 📈 盈虧平衡點:\n"
+                    for be in breakevens:
+                        if isinstance(be, (int, float)):
+                            if be < 0:
+                                report += f"│   ⚠️ ${be:.2f} (不合理 - 成本過高)\n"
+                            else:
+                                report += f"│   ${be:.2f}\n"
+                    report += "│\n"
+                
+                # Greeks
+                greeks = best.get('greeks', {})
+                if greeks:
+                    report += "│ 📊 組合 Greeks:\n"
+                    report += f"│   Delta: {greeks.get('delta', 0):.4f}\n"
+                    report += f"│   Gamma: {greeks.get('gamma', 0):.4f}\n"
+                    report += f"│   Theta: {greeks.get('theta', 0):.4f}/天\n"
+                    report += f"│   Vega: {greeks.get('vega', 0):.4f}\n"
+                    report += "│\n"
+                
+                report += "│ ═══════════════════════════════════════════\n│\n"
+                
+                # 其他策略比較（如果有）
+                if len(all_strategies) > 1:
+                    report += "│ 📋 其他備選策略:\n"
+                    for s in all_strategies[1:4]:  # 顯示前3個備選
+                        s_type = s.get('type', 'N/A')
+                        score = s.get('score', 0)
+                        net_p = s.get('net_premium', 0)
+                        if net_p > 0:
+                            cost_str = f"收入 ${net_p:.2f}"
+                        else:
+                            cost_str = f"成本 ${abs(net_p):.2f}"
+                        report += f"│   • {s_type}: 評分 {score:.0f}, {cost_str}\n"
+                    report += "│\n"
+            else:
+                report += "│ ℹ️ 未發現適合的複雜策略\n│\n"
+            
+            # 適用市場環境說明
+            report += "│ 💡 策略適用說明:\n"
+            report += "│   • Bull Put Spread / Bear Call Spread: 高IV收租\n"
+            report += "│   • Iron Condor: 橫盤震盪，高IV環境\n"
+            report += "│   • Long Straddle/Strangle: 波動率爆發預期\n"
+            report += "└────────────────────────────────────────────┘\n"
+            return report
+            
+        except Exception as e:
+            return f"\n❌ Module 32 格式化失敗: {str(e)}\n"
     
     def _format_module12_annual_yield(self, results: dict) -> str:
         """

@@ -1,8 +1,8 @@
-yfinance>=0.2.66
+yfinance==0.2.40
 pandas==2.0.3
 pandas-market-calendars==4.3.1
-numpy>=1.23.0
-scipy>=1.9.0
+numpy==1.23.5
+scipy==1.10.1
 fredapi==0.5.1
 python-dotenv==1.0.0
 requests==2.31.0
@@ -12,3 +12,6 @@ pytz==2023.3
 pytest==7.4.0
 finnhub-python==2.4.19
 ib-insync==0.9.86
+Flask==3.0.0
+flask-cors==4.0.0
+simplejson==3.20.2

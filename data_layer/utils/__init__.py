@@ -34,7 +34,7 @@ class ConnectionConfig:
     pool_maxsize: int = 10         # 連接池最大大小
     
     # 會話過期設置
-    session_ttl_minutes: int = 30  # 會話有效期（分鐘）
+    session_ttl_minutes: int = 5  # 會話有效期（分鐘）- 避免 429 錯誤
     
     @property
     def timeout(self) -> Tuple[float, float]:

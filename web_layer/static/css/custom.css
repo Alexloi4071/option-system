@@ -1,0 +1,230 @@
+/* Pro Max UI Theme - Dark Cosmic Finance */
+
+:root {
+    --bg-dark: #030712;
+    /* Slate 950 */
+    --accent-primary: #7c3aed;
+    /* Violet 600 */
+    --accent-secondary: #06b6d4;
+    /* Cyan 500 */
+    --glass-border: rgba(255, 255, 255, 0.08);
+    --glass-bg: rgba(17, 24, 39, 0.7);
+    /* Gray 900 base */
+    --neon-glow: 0 0 10px rgba(124, 58, 237, 0.5);
+}
+
+body {
+    background-color: var(--bg-dark);
+    background-image:
+        radial-gradient(circle at 15% 50%, rgba(124, 58, 237, 0.08), transparent 25%),
+        radial-gradient(circle at 85% 30%, rgba(6, 182, 212, 0.08), transparent 25%);
+    min-height: 100vh;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    color: #f8fafc;
+}
+
+/* --- Glass Morphism --- */
+.glass {
+    background: var(--glass-bg);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid var(--glass-border);
+    box-shadow: 0 4px 30px rgba(0, 0, 0, 0.3);
+}
+
+.glass-card {
+    background: rgba(30, 41, 59, 0.3);
+    /* Slate 800 subtle */
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.03);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    overflow: hidden;
+}
+
+.glass-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.1), transparent);
+    opacity: 0.5;
+}
+
+.glass-card:hover {
+    background: rgba(30, 41, 59, 0.5);
+    border-color: rgba(255, 255, 255, 0.1);
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.05) inset;
+    transform: translateY(-2px);
+}
+
+/* --- Floating Navbar --- */
+.floating-nav {
+    position: sticky;
+    top: 1rem;
+    z-index: 50;
+    margin: 0 auto;
+    max-width: 80rem;
+    /* 7xl */
+    border-radius: 1rem;
+    background: rgba(15, 23, 42, 0.85);
+    backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
+}
+
+/* --- Input Fields Pro --- */
+.input-pro {
+    background: rgba(15, 23, 42, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    color: #e2e8f0;
+    transition: all 0.2s;
+}
+
+.input-pro:focus {
+    border-color: var(--accent-primary);
+    box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.2);
+    background: rgba(15, 23, 42, 0.9);
+}
+
+/* --- Glow Text --- */
+.text-glow {
+    text-shadow: 0 0 10px rgba(255, 255, 255, 0.3);
+}
+
+.text-glow-accent {
+    text-shadow: 0 0 10px rgba(124, 58, 237, 0.4);
+}
+
+/* --- Scrollbar --- */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #334155;
+    border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #475569;
+}
+
+/* --- Layout Utilities --- */
+.chart-container {
+    position: relative;
+    height: 320px;
+    width: 100%;
+}
+
+.chart-container-sm {
+    position: relative;
+    height: 200px;
+    width: 100%;
+}
+
+.chart-container-lg {
+    position: relative;
+    height: 450px;
+    width: 100%;
+}
+
+/* --- Module Card Layout --- */
+.module-card {
+    @apply glass-card p-6 rounded-2xl;
+    min-height: 200px;
+    display: flex;
+    flex-direction: column;
+}
+
+.module-card-empty {
+    @apply module-card;
+    justify-content: center;
+    align-items: center;
+    color: #64748b;
+    font-size: 0.875rem;
+}
+
+/* --- Responsive Grid Fixes --- */
+@media (max-width: 768px) {
+    .grid-cols-1.md\:grid-cols-3 {
+        grid-template-columns: repeat(1, minmax(0, 1fr));
+    }
+    
+    .grid-cols-1.lg\:grid-cols-3 {
+        grid-template-columns: repeat(1, minmax(0, 1fr));
+    }
+    
+    .grid-cols-1.md\:grid-cols-2 {
+        grid-template-columns: repeat(1, minmax(0, 1fr));
+    }
+}
+
+/* --- Status Dots --- */
+.status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+}
+
+.status-success {
+    background-color: #10b981;
+    box-shadow: 0 0 6px rgba(16, 185, 129, 0.4);
+}
+
+.status-danger {
+    background-color: #ef4444;
+    box-shadow: 0 0 6px rgba(239, 68, 68, 0.4);
+}
+
+.status-warning {
+    background-color: #f59e0b;
+    box-shadow: 0 0 6px rgba(245, 158, 11, 0.4);
+}
+
+/* --- Loading --- */
+.loading-spinner {
+    border: 2px solid rgba(255, 255, 255, 0.1);
+    border-left-color: var(--accent-primary);
+    border-radius: 50%;
+    width: 20px;
+    height: 20px;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* --- Animations --- */
+.fade-in-up {
+    animation: fadeInUp 0.5s ease-out forwards;
+}
+
+@keyframes fadeInUp {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+[x-cloak] {
+    display: none !important;
+}

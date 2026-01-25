@@ -56,12 +56,12 @@ class Settings:
     # 系統會自動添加必需的 User-Agent header
     
     # 數據源設置
-    PRIMARY_DATA_SOURCE = "yahoo_v2"  # 改为使用 Yahoo Finance 2.0
-    FALLBACK_DATA_SOURCE = "yfinance"  # yfinance 作为降级方案
+    PRIMARY_DATA_SOURCE = "yahoo_v2"  # 使用增強版 Yahoo V2 (支持 Crumb/UA 輪換)
+    FALLBACK_DATA_SOURCE = "yfinance"   # yfinance 作為降級方案
     BACKUP_DATA_SOURCE = "finnhub"
     
     # API 请求控制
-    REQUEST_DELAY = float(os.getenv("REQUEST_DELAY", "2.0"))  # API请求间隔（秒）- 增加到2秒避免限流
+    REQUEST_DELAY = float(os.getenv("REQUEST_DELAY", "5.0"))  # API请求间隔（秒）- 增加到5秒避免限流
     MAX_RETRIES = int(os.getenv("MAX_RETRIES", "3"))  # 最大重试次数
     RETRY_DELAY = float(os.getenv("RETRY_DELAY", "5"))  # 重试延迟（秒）
     
