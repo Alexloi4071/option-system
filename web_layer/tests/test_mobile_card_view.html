@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>US-4 Mobile Card View Test</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="../static/css/main.css">
+    <style>
+        body {
+            padding: 20px;
+            background-color: #f8fafc;
+        }
+        .test-section {
+            margin-bottom: 40px;
+            padding: 20px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .test-header {
+            font-size: 1.5rem;
+            font-weight: bold;
+            margin-bottom: 20px;
+            color: #2563eb;
+        }
+        .viewport-indicator {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            padding: 10px 15px;
+            background: #2563eb;
+            color: white;
+            border-radius: 5px;
+            font-weight: bold;
+            z-index: 1000;
+        }
+    </style>
+</head>
+<body>
+    <div class="viewport-indicator" id="viewportIndicator"></div>
+    
+    <div class="container">
+        <h1 class="mb-4">US-4: 移動端卡片視圖測試</h1>
+        
+        <div class="alert alert-info">
+            <strong>測試說明:</strong>
+            <ul class="mb-0">
+                <li>桌面端 (≥768px): 應顯示表格視圖</li>
+                <li>移動端 (<768px): 應顯示卡片視圖</li>
+                <li>調整瀏覽器窗口大小以測試響應式行為</li>
+            </ul>
+        </div>
+        
+        <!-- Test Section 1: Greeks Data -->
+        <div class="test-section">
+            <div class="test-header">Greeks 數據顯示測試</div>
+            
+            <div class="row">
+                <div class="col-md-6">
+                    <h6 class="text-center text-success mb-3">Call Option</h6>
+                    
+                    <!-- Desktop: Table view -->
+                    <div id="callGreeks" class="data-table">
+                        <div class="text-center mb-2">
+                            <span class="badge bg-light text-dark border">理論價: 5.25</span>
+                        </div>
+                        <div class="d-flex justify-content-between mb-1">
+                            <span class="text-muted">Delta</span>
+                            <span>0.5234</span>
+                        </div>
+                        <div class="d-flex justify-content-between mb-1">
+                            <span class="text-muted">Gamma</span>
+                            <span>0.0123</span>
+                        </div>
+                        <div class="d-flex justify-content-between mb-1">
+                            <span class="text-muted">Theta</span>
+                            <span>-0.0456</span>
+                        </div>
+                        <div class="d-flex justify-content-between mb-1">
+                            <span class="text-muted">Vega</span>
+                            <span>0.1987</span>
+                        </div>
+                        <div class="d-flex justify-content-between">
+                            <span class="text-muted">Rho</span>
+                            <span>0.0789</span>
+                        </div>
+                    </div>
+                    
+                    <!-- Mobile: Card view -->
+                    <div id="callGreeksCards" class="data-cards" style="display: none;">
+                        <div class="data-card">
+                            <div class="data-card-header">Call Option Greeks</div>
+                            <div class="data-card-row">
+                                <span class="data-card-label">理論價</span>
+                                <span class="data-card-value numeric">5.25</span>
+                            </div>
+                            <div class="data-card-row">
+                                <span class="data-card-label">Delta</span>
+                                <span class="data-card-value numeric">0.5234</span>
+                            </div>
+                            <div class="data-card-row">
+                                <span class="data-card-label">Gamma</span>
+                                <span class="data-card-value numeric">0.0123</span>
+                            </div>
+                            <div class="data-card-row">
+                                <span class="data-card-label">Theta</span>
+                                <span class="data-card-value numeric negative">-0.0456</span>
+                            </div>
+                            <div class="data-card-row">
+                                <span class="data-card-label">Vega</span>
+                                <span class="data-card-value numeric">0.1987</span>
+                            </div>
+                            <div class="data-card-row">
+                                <span class="data-card-label">Rho</span>
+                                <span class="data-card-value numeric">0.0789</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="col-md-6">
+                    <h6 class="text-center text-danger mb-3">Put Option</h6>
+                    
+                    <!-- Desktop: Table view -->
+                    <div id="putGreeks" class="data-table">
+                        <div class="text-center mb-2">
+                            <span class="badge bg-light text-dark border">理論價: 4.75</span>
+                        </div>
+                        <div class="d-flex justify-content-between mb-1">
+                            <span class="text-muted">Delta</span>
+                            <span>-0.4766</span>
+                        </div>
+                        <div class="d-flex justify-content-between mb-1">
+                            <span class="text-muted">Gamma</span>
+                            <span>0.0123</span>
+                        </div>
+                        <div class="d-flex justify-content-between mb-1">
+                            <span class="text-muted">Theta</span>
+                            <span>-0.0423</span>
+                        </div>
+                        <div class="d-flex justify-content-between mb-1">
+                            <span class="text-muted">Vega</span>
+                            <span>0.1987</span>
+                        </div>
+                        <div class="d-flex justify-content-between">
+                            <span class="text-muted">Rho</span>
+                            <span>-0.0712</span>
+                        </div>
+                    </div>
+                    
+                    <!-- Mobile: Card view -->
+                    <div id="putGreeksCards" class="data-cards" style="display: none;">
+                        <div class="data-card">
+                            <div class="data-card-header">Put Option Greeks</div>
+                            <div class="data-card-row">
+                                <span class="data-card-label">理論價</span>
+                                <span class="data-card-value numeric">4.75</span>
+                            </div>
+                            <div class="data-card-row">
+                                <span class="data-card-label">Delta</span>
+                                <span class="data-card-value numeric negative">-0.4766</span>
+                            </div>
+                            <div class="data-card-row">
+                                <span class="data-card-label">Gamma</span>
+                                <span class="data-card-value numeric">0.0123</span>
+                            </div>
+                            <div class="data-card-row">
+                                <span class="data-card-label">Theta</span>
+                                <span class="data-card-value numeric negative">-0.0423</span>
+                            </div>
+                            <div class="data-card-row">
+                                <span class="data-card-label">Vega</span>
+                                <span class="data-card-value numeric">0.1987</span>
+                            </div>
+                            <div class="data-card-row">
+                                <span class="data-card-label">Rho</span>
+                                <span class="data-card-value numeric negative">-0.0712</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Test Results -->
+        <div class="test-section">
+            <div class="test-header">測試結果</div>
+            <div id="testResults"></div>
+        </div>
+    </div>
+    
+    <script>
+        // Update viewport indicator
+        function updateViewportIndicator() {
+            const width = window.innerWidth;
+            const indicator = document.getElementById('viewportIndicator');
+            const isMobile = width < 768;
+            indicator.textContent = `${width}px ${isMobile ? '(Mobile)' : '(Desktop)'}`;
+            indicator.style.background = isMobile ? '#dc3545' : '#2563eb';
+        }
+        
+        // Run tests
+        function runTests() {
+            const results = [];
+            const width = window.innerWidth;
+            const isMobile = width < 768;
+            
+            // Test 1: Check if correct view is displayed
+            const tableDisplay = window.getComputedStyle(document.querySelector('.data-table')).display;
+            const cardsDisplay = window.getComputedStyle(document.querySelector('.data-cards')).display;
+            
+            if (isMobile) {
+                results.push({
+                    name: '移動端卡片視圖顯示',
+                    pass: cardsDisplay !== 'none',
+                    message: `卡片視圖 display: ${cardsDisplay}`
+                });
+                results.push({
+                    name: '移動端表格視圖隱藏',
+                    pass: tableDisplay === 'none',
+                    message: `表格視圖 display: ${tableDisplay}`
+                });
+            } else {
+                results.push({
+                    name: '桌面端表格視圖顯示',
+                    pass: tableDisplay !== 'none',
+                    message: `表格視圖 display: ${tableDisplay}`
+                });
+                results.push({
+                    name: '桌面端卡片視圖隱藏',
+                    pass: cardsDisplay === 'none',
+                    message: `卡片視圖 display: ${cardsDisplay}`
+                });
+            }
+            
+            // Test 2: Check card styling
+            const card = document.querySelector('.data-card');
+            if (card) {
+                const cardStyles = window.getComputedStyle(card);
+                results.push({
+                    name: '卡片背景顏色',
+                    pass: cardStyles.backgroundColor !== 'rgba(0, 0, 0, 0)',
+                    message: `背景: ${cardStyles.backgroundColor}`
+                });
+                results.push({
+                    name: '卡片圓角',
+                    pass: cardStyles.borderRadius !== '0px',
+                    message: `圓角: ${cardStyles.borderRadius}`
+                });
+            }
+            
+            // Display results
+            const resultsContainer = document.getElementById('testResults');
+            resultsContainer.innerHTML = results.map(r => `
+                <div class="alert ${r.pass ? 'alert-success' : 'alert-danger'}">
+                    <strong>${r.pass ? '✓' : '✗'} ${r.name}</strong><br>
+                    <small>${r.message}</small>
+                </div>
+            `).join('');
+        }
+        
+        // Initialize
+        updateViewportIndicator();
+        runTests();
+        
+        // Update on resize
+        window.addEventListener('resize', () => {
+            updateViewportIndicator();
+            runTests();
+        });
+    </script>
+</body>
+</html>

@@ -5,7 +5,7 @@
 
 import logging
 import argparse
-from datetime import datetime
+from datetime import datetime, timedelta
 import sys
 import os
 
@@ -165,10 +165,14 @@ class OptionsAnalysisSystem:
                              confidence: float = 1.0, use_ibkr: bool = None,
                              strike: float = None, premium: float = None, 
                              option_type: str = None, selected_expirations: list = None,
+<<<<<<< HEAD
                              iv: float = None, delta: float = None, gamma: float = None,
                              theta: float = None, vega: float = None, rho: float = None,
                              risk_free_rate: float = None,
                              progress_callback=None):
+=======
+                             progress_callback=None, monthly_only: bool = False):
+>>>>>>> 6a1117f (Update: Sync local changes - improve IBKR client, data fetcher, web UI, and calculation modules)
         """
         運行完整分析
         
@@ -185,6 +189,7 @@ class OptionsAnalysisSystem:
             delta, gamma, theta, vega, rho: Greeks 覆蓋 (可選)
             risk_free_rate: 無風險利率覆蓋 (可選)
             progress_callback: 進度回調函數 (step, total, message, module_name)
+            monthly_only: 只使用標準月度期權到期日 (每月第三個星期五)
         
         返回:
             dict: 完整分析結果
@@ -229,20 +234,98 @@ class OptionsAnalysisSystem:
                 self.fetcher = DataFetcher(use_ibkr=use_ibkr)
                 logger.info(f"數據源設置: IBKR={'啟用' if use_ibkr else '禁用'}")
             
+            
+            # 優先處理 monthly_only 邏輯：如果在 fetch 之前確定到期日，可以避免 fetch 錯誤的數據
+            if monthly_only and not expiration:
+                try:
+                    logger.info("Monthly-only 啟用: 正在搜尋最近的標準月度到期日...")
+                    # 臨時獲取可用到期日列表
+                    avail_expirations = self.fetcher.get_option_expirations(ticker)
+                    if avail_expirations:
+                        from utils.trading_days import is_third_friday
+                        valid_monthlies = sorted([exp for exp in avail_expirations if is_third_friday(exp)])
+                        
+                        if valid_monthlies:
+                            expiration = valid_monthlies[0]
+                            logger.info(f"Monthly-only: 自動選擇了最近的標準月度到期日 {expiration}")
+                        else:
+                            logger.warning("Monthly-only: 未找到標準月度到期日，將使用默認(最近)到期日")
+                except Exception as e:
+                    logger.warning(f"搜尋月度到期日失敗: {e}")
+
             # 第1步: 獲取數據
-            report_progress(1, 28, "正在獲取市場數據...", "數據獲取")
+            report_progress(1, 28, "獲取市場數據...", "數據獲取")
             logger.info("→ 第1步: 獲取市場數據...")
             analysis_data = self.fetcher.get_complete_analysis_data(ticker, expiration)
+            
+            # 如果啟用 monthly_only，過濾到標準月度到期日（第三個星期五）
+            if monthly_only and analysis_data:
+                try:
+                    from utils.trading_days import is_third_friday
+                    
+                    # 過濾期權鏈中的到期日
+                    option_chain = analysis_data.get('option_chain', {})
+                    if option_chain:
+                        def get_exp_date(item):
+                            if isinstance(item, dict):
+                                return item.get('expiration', '')
+                            elif hasattr(item, 'expiration'):
+                                return item.expiration
+                            return ''
+
+                        all_exps = set()
+                        # 安全地收集所有到期日
+                        calls = option_chain.get('calls', [])
+                        if isinstance(calls, list):
+                            for c in calls:
+                                exp = get_exp_date(c)
+                                if exp: all_exps.add(exp)
+                        
+                        puts = option_chain.get('puts', [])
+                        if isinstance(puts, list):
+                            for p in puts:
+                                exp = get_exp_date(p)
+                                if exp: all_exps.add(exp)
+                        
+                        # 過濾只保留第三個星期五
+                        valid_exps = {exp for exp in all_exps if is_third_friday(exp)}
+                        
+                        if valid_exps:
+                            logger.info(f"Monthly-only 過濾: 從 {len(all_exps)} 個到期日過濾到 {len(valid_exps)} 個標準月度到期日")
+                            
+                            # 更新 option_chain
+                            if isinstance(calls, list):
+                                analysis_data['option_chain']['calls'] = [
+                                    c for c in calls 
+                                    if get_exp_date(c) in valid_exps
+                                ]
+                            if isinstance(puts, list):
+                                analysis_data['option_chain']['puts'] = [
+                                    p for p in puts
+                                    if get_exp_date(p) in valid_exps
+                                ]
+                            
+                            # 如果用戶未指定到期日且過濾後有數據，使用第一個標準月度到期日
+                            if not expiration and valid_exps:
+                                sorted_exps = sorted(valid_exps)
+                                expiration = sorted_exps[0]
+                                analysis_data['expiration_date'] = expiration
+                                logger.info(f"自動選擇標準月度到期日: {expiration}")
+                        else:
+                            logger.warning("Monthly-only 過濾: 沒有找到標準月度到期日")
+                except Exception as e:
+                    logger.warning(f"月度過濾時發生錯誤: {e}，跳過過濾")
             
             # US-2: 空數據保護 - 檢查 stock_data
             if not analysis_data:
                 error_msg = f"無法獲取 {ticker} 的股票數據"
                 logger.error(error_msg)
                 return {
-                    'success': False,
-                    'error': error_msg,
+                    'status': 'error',
+                    'message': error_msg,
                     'error_type': 'no_data',
                     'ticker': ticker,
+                    'available_expirations': [], # 防止 KeyError
                     'timestamp': datetime.now().isoformat()
                 }
             
@@ -251,8 +334,8 @@ class OptionsAnalysisSystem:
                 error_msg = f"無法獲取 {ticker} 的當前股價"
                 logger.error(error_msg)
                 return {
-                    'success': False,
-                    'error': error_msg,
+                    'status': 'error',
+                    'message': error_msg,
                     'error_type': 'missing_price',
                     'ticker': ticker,
                     'timestamp': datetime.now().isoformat()
@@ -271,8 +354,8 @@ class OptionsAnalysisSystem:
                     logger.warning(f"無法獲取可用到期日: {e}")
                 
                 return {
-                    'success': False,
-                    'error': error_msg,
+                    'status': 'error',
+                    'message': error_msg,
                     'error_type': 'no_option_chain',
                     'ticker': ticker,
                     'available_expirations': available_expirations,
@@ -297,8 +380,8 @@ class OptionsAnalysisSystem:
                 error_msg = f"{ticker} 的期權數據完全為空（Call 和 Put 都無數據）"
                 logger.error(error_msg)
                 return {
-                    'success': False,
-                    'error': error_msg,
+                    'status': 'error',
+                    'message': error_msg,
                     'error_type': 'empty_options',
                     'ticker': ticker,
                     'expiration': expiration,
@@ -481,6 +564,12 @@ class OptionsAnalysisSystem:
             else:
                 call_last_price = call_last_price_raw
             
+            # 📍 FIX: 如果 lastPrice 是 0，但 bid/ask 存在，使用 mid price
+            # 這在盤外時段很常見，因為沒有成交但做市商仍有報價
+            if call_last_price <= 0 and call_bid > 0 and call_ask > 0:
+                call_last_price = (call_bid + call_ask) / 2
+                logger.info(f"  Call: lastPrice=0, 使用 mid price ${call_last_price:.2f}")
+            
             if put_bid > 0 and put_ask > 0:
                 put_mid_price = (put_bid + put_ask) / 2
                 if put_last_price_raw > 0 and abs(put_mid_price - put_last_price_raw) / put_last_price_raw > 0.2:
@@ -490,6 +579,11 @@ class OptionsAnalysisSystem:
                     put_last_price = put_last_price_raw
             else:
                 put_last_price = put_last_price_raw
+            
+            # 📍 FIX: 如果 lastPrice 是 0，但 bid/ask 存在，使用 mid price
+            if put_last_price <= 0 and put_bid > 0 and put_ask > 0:
+                put_last_price = (put_bid + put_ask) / 2
+                logger.info(f"  Put: lastPrice=0, 使用 mid price ${put_last_price:.2f}")
             call_volume = int(atm_call.get('volume', 0) or 0)
             call_open_interest = int(atm_call.get('openInterest', 0) or 0)
             # 新增 Put 成交量和未平倉量 (Requirements: 2.1, 2.2)
@@ -2779,13 +2873,28 @@ class OptionsAnalysisSystem:
                 
                 # 獲取所有可用到期日
                 all_expirations = self.fetcher.get_option_expirations(ticker)
+                
+                # 如果啟用 monthly_only，過濾到標準月度到期日
+                if monthly_only:
+                    try:
+                        from utils.trading_days import is_third_friday
+                        original_count = len(all_expirations)
+                        all_expirations = [exp for exp in all_expirations if is_third_friday(exp)]
+                        logger.info(f"  Monthly-only (Module 27): 從 {original_count} 個過濾到 {len(all_expirations)} 個標準月度到期日")
+                    except Exception as e:
+                        logger.warning(f"  Monthly-only filter checking failed: {e}")
+
                 logger.info(f"  獲取到 {len(all_expirations)} 個可用到期日")
                 
                 # 檢查是否有用戶選擇的到期日
                 user_selected = getattr(self, 'selected_expirations', None)
                 
                 # 過濾 ≤90 天的到期日
+<<<<<<< HEAD
                 from datetime import timedelta
+=======
+                # from datetime import datetime, timedelta  # Removed to avoid shadowing global datetime
+>>>>>>> 6a1117f (Update: Sync local changes - improve IBKR client, data fetcher, web UI, and calculation modules)
                 import time as time_module
                 today = datetime.now().date()
                 max_days = 90
@@ -4034,6 +4143,16 @@ def main():
     parser.add_argument('--use-ibkr', action='store_true', default=None,
                        help='使用 IBKR 數據源 (需要 TWS/Gateway 運行)')
     
+    # IBKR 模式選擇
+    parser.add_argument('--live', action='store_true', default=False,
+                       help='使用 IBKR Live 賬戶 (端口 7496)')
+    parser.add_argument('--paper', action='store_true', default=False,
+                       help='使用 IBKR Paper Trading 賬戶 (端口 7497)')
+    
+    # 到期日過濾
+    parser.add_argument('--monthly-only', action='store_true', default=False,
+                       help='只顯示標準月度期權到期日（每月第三個星期五）')
+    
     # 手動輸入模式參數（繞過 API）
     parser.add_argument('--manual', action='store_true', default=False,
                        help='完全手動模式，繞過所有 API')
@@ -4075,6 +4194,24 @@ def main():
                        help='無風險利率 %% (默認 4.5)')
     
     args = parser.parse_args()
+    
+    # 處理 IBKR Live/Paper 模式選擇
+    if args.live and args.paper:
+        print("錯誤: 不能同時指定 --live 和 --paper，請只選擇其中一個")
+        return
+    
+    if args.live:
+        # 使用 Live 賬戶
+        settings.IBKR_USE_PAPER = False
+        if args.use_ibkr is None:
+            args.use_ibkr = True  # 自動啟用 IBKR
+        logger.info("IBKR 模式: Live (端口 7496)")
+    elif args.paper:
+        # 使用 Paper 賬戶
+        settings.IBKR_USE_PAPER = True
+        if args.use_ibkr is None:
+            args.use_ibkr = True  # 自動啟用 IBKR
+        logger.info("IBKR 模式: Paper Trading (端口 7497)")
     
     # 構建用戶覆蓋數據（適用於所有模式）
     user_overrides = {
@@ -4184,7 +4321,8 @@ def main():
             use_ibkr=args.use_ibkr,
             strike=args.strike,
             premium=args.premium,
-            option_type=args.type
+            option_type=args.type,
+            monthly_only=args.monthly_only
         )
     
     # 輸出結果

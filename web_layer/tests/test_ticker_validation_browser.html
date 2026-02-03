@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>US-5: Frontend Ticker Validation Tests</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            max-width: 900px;
+            margin: 40px auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        
+        .test-container {
+            background: white;
+            border-radius: 8px;
+            padding: 30px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        
+        h1 {
+            color: #333;
+            border-bottom: 3px solid #007bff;
+            padding-bottom: 10px;
+        }
+        
+        h2 {
+            color: #555;
+            margin-top: 30px;
+            border-bottom: 2px solid #e0e0e0;
+            padding-bottom: 8px;
+        }
+        
+        .test-section {
+            margin: 20px 0;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 5px;
+        }
+        
+        .test-case {
+            margin: 10px 0;
+            padding: 10px;
+            background: white;
+            border-left: 4px solid #ccc;
+            border-radius: 3px;
+        }
+        
+        .test-case.pass {
+            border-left-color: #28a745;
+            background: #f0fff4;
+        }
+        
+        .test-case.fail {
+            border-left-color: #dc3545;
+            background: #fff5f5;
+        }
+        
+        .test-name {
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+        
+        .test-result {
+            font-size: 0.9em;
+            color: #666;
+        }
+        
+        .test-result.pass {
+            color: #28a745;
+        }
+        
+        .test-result.fail {
+            color: #dc3545;
+        }
+        
+        .summary {
+            margin-top: 30px;
+            padding: 20px;
+            background: #e7f3ff;
+            border-radius: 5px;
+            border-left: 5px solid #007bff;
+        }
+        
+        .summary h3 {
+            margin-top: 0;
+            color: #007bff;
+        }
+        
+        .demo-section {
+            margin-top: 30px;
+            padding: 20px;
+            background: #fff3cd;
+            border-radius: 5px;
+            border-left: 5px solid #ffc107;
+        }
+        
+        .form-group {
+            margin: 15px 0;
+        }
+        
+        label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+        
+        input[type="text"] {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #ddd;
+            border-radius: 4px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+        
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #007bff;
+        }
+        
+        input[type="text"].error {
+            border-color: #dc3545;
+        }
+        
+        .error-message {
+            color: #dc3545;
+            font-size: 0.9em;
+            margin-top: 5px;
+            display: none;
+        }
+        
+        .help-text {
+            color: #6c757d;
+            font-size: 0.9em;
+            margin-top: 5px;
+        }
+        
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background 0.3s;
+        }
+        
+        button:hover {
+            background: #0056b3;
+        }
+        
+        button:disabled {
+            background: #6c757d;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body>
+    <div class="test-container">
+        <h1>🧪 US-5: Frontend Ticker Validation Tests</h1>
+        <p><strong>Task 9.5:</strong> 前端驗證測試 - Browser Environment</p>
+        
+        <div id="test-results"></div>
+        
+        <div class="summary" id="summary"></div>
+        
+        <div class="demo-section">
+            <h3>🎯 Live Demo - Test the Validation</h3>
+            <p>Try entering different ticker symbols to see the validation in action:</p>
+            
+            <div class="form-group">
+                <label for="demo-ticker">Stock Ticker Symbol</label>
+                <input type="text" 
+                       id="demo-ticker" 
+                       placeholder="e.g., AAPL, TSLA, BRK.B"
+                       maxlength="5">
+                <div id="demo-error" class="error-message"></div>
+                <small class="help-text">Enter a US stock ticker (1-5 characters)</small>
+            </div>
+            
+            <button id="demo-submit" disabled>Submit</button>
+            
+            <div id="demo-result" style="margin-top: 15px;"></div>
+        </div>
+    </div>
+
+    <script>
+        /**
+         * US-5: Ticker Validation Function
+         * Task 4.1.1-4.1.4: Validate ticker input
+         */
+        function validateTicker(ticker) {
+            const validation = {
+                isValid: false,
+                ticker: ticker.toUpperCase(),
+                errors: []
+            };
+            
+            // Task 4.1.2: Check length (1-5 characters)
+            if (ticker.length === 0) {
+                validation.errors.push('股票代碼不能為空');
+                return validation;
+            }
+            
+            if (ticker.length > 5) {
+                validation.errors.push('股票代碼不能超過5個字符');
+                return validation;
+            }
+            
+            // Task 4.1.3: Check characters (only letters, numbers, dots, hyphens)
+            const validPattern = /^[A-Z0-9.-]+$/;
+            if (!validPattern.test(validation.ticker)) {
+                validation.errors.push('股票代碼只能包含字母、數字、點(.)和連字符(-)');
+                return validation;
+            }
+            
+            validation.isValid = true;
+            return validation;
+        }
+
+        /**
+         * Test Suite
+         */
+        const tests = {
+            'Task 9.5.1: Ticker Validation Tests': [
+                {
+                    name: 'should accept valid ticker AAPL',
+                    test: () => {
+                        const result = validateTicker('AAPL');
+                        return result.isValid === true && result.ticker === 'AAPL' && result.errors.length === 0;
+                    }
+                },
+                {
+                    name: 'should accept valid ticker TSLA',
+                    test: () => {
+                        const result = validateTicker('TSLA');
+                        return result.isValid === true && result.ticker === 'TSLA';
+                    }
+                },
+                {
+                    name: 'should accept ticker with dot BRK.B',
+                    test: () => {
+                        const result = validateTicker('BRK.B');
+                        return result.isValid === true && result.ticker === 'BRK.B';
+                    }
+                },
+                {
+                    name: 'should accept ticker with hyphen T-MO',
+                    test: () => {
+                        const result = validateTicker('T-MO');
+                        return result.isValid === true && result.ticker === 'T-MO';
+                    }
+                },
+                {
+                    name: 'should reject empty ticker',
+                    test: () => {
+                        const result = validateTicker('');
+                        return result.isValid === false && result.errors.includes('股票代碼不能為空');
+                    }
+                },
+                {
+                    name: 'should reject ticker longer than 5 characters',
+                    test: () => {
+                        const result = validateTicker('TOOLONG');
+                        return result.isValid === false && result.errors.includes('股票代碼不能超過5個字符');
+                    }
+                },
+                {
+                    name: 'should reject ticker with special characters',
+                    test: () => {
+                        const result = validateTicker('AAP@L');
+                        return result.isValid === false && result.errors.some(e => e.includes('只能包含'));
+                    }
+                },
+                {
+                    name: 'should reject ticker with spaces',
+                    test: () => {
+                        const result = validateTicker('AA PL');
+                        return result.isValid === false;
+                    }
+                }
+            ],
+            'Task 9.5.2: Auto-Uppercase Conversion Tests': [
+                {
+                    name: 'should convert lowercase to uppercase',
+                    test: () => {
+                        const result = validateTicker('aapl');
+                        return result.ticker === 'AAPL' && result.isValid === true;
+                    }
+                },
+                {
+                    name: 'should convert mixed case to uppercase',
+                    test: () => {
+                        const result = validateTicker('AaPl');
+                        return result.ticker === 'AAPL' && result.isValid === true;
+                    }
+                },
+                {
+                    name: 'should handle uppercase input',
+                    test: () => {
+                        const result = validateTicker('AAPL');
+                        return result.ticker === 'AAPL' && result.isValid === true;
+                    }
+                },
+                {
+                    name: 'should convert lowercase with dot to uppercase',
+                    test: () => {
+                        const result = validateTicker('brk.b');
+                        return result.ticker === 'BRK.B' && result.isValid === true;
+                    }
+                }
+            ],
+            'Task 9.5.3: Error Display Tests': [
+                {
+                    name: 'should provide clear error for empty input',
+                    test: () => {
+                        const result = validateTicker('');
+                        return result.errors[0] === '股票代碼不能為空';
+                    }
+                },
+                {
+                    name: 'should provide clear error for too long input',
+                    test: () => {
+                        const result = validateTicker('TOOLONG');
+                        return result.errors[0] === '股票代碼不能超過5個字符';
+                    }
+                },
+                {
+                    name: 'should provide clear error for invalid characters',
+                    test: () => {
+                        const result = validateTicker('AAP@L');
+                        return result.errors[0] === '股票代碼只能包含字母、數字、點(.)和連字符(-)';
+                    }
+                },
+                {
+                    name: 'should return multiple errors when applicable',
+                    test: () => {
+                        const result = validateTicker('');
+                        return result.errors.length > 0;
+                    }
+                }
+            ],
+            'Edge Cases': [
+                {
+                    name: 'should handle ticker with numbers',
+                    test: () => {
+                        const result = validateTicker('3M');
+                        return result.isValid === true && result.ticker === '3M';
+                    }
+                },
+                {
+                    name: 'should handle single character ticker',
+                    test: () => {
+                        const result = validateTicker('A');
+                        return result.isValid === true && result.ticker === 'A';
+                    }
+                },
+                {
+                    name: 'should handle 5 character ticker',
+                    test: () => {
+                        const result = validateTicker('GOOGL');
+                        return result.isValid === true && result.ticker === 'GOOGL';
+                    }
+                },
+                {
+                    name: 'should handle ticker with multiple dots',
+                    test: () => {
+                        const result = validateTicker('A.B.C');
+                        return result.isValid === true && result.ticker === 'A.B.C';
+                    }
+                }
+            ]
+        };
+
+        /**
+         * Run all tests
+         */
+        function runTests() {
+            const resultsDiv = document.getElementById('test-results');
+            let totalTests = 0;
+            let passedTests = 0;
+            let failedTests = 0;
+
+            for (const [suiteName, suiteTests] of Object.entries(tests)) {
+                const suiteDiv = document.createElement('div');
+                suiteDiv.className = 'test-section';
+                
+                const suiteTitle = document.createElement('h2');
+                suiteTitle.textContent = suiteName;
+                suiteDiv.appendChild(suiteTitle);
+
+                suiteTests.forEach(testCase => {
+                    totalTests++;
+                    const testDiv = document.createElement('div');
+                    testDiv.className = 'test-case';
+                    
+                    const testName = document.createElement('div');
+                    testName.className = 'test-name';
+                    testName.textContent = testCase.name;
+                    testDiv.appendChild(testName);
+                    
+                    const testResult = document.createElement('div');
+                    testResult.className = 'test-result';
+                    
+                    try {
+                        const passed = testCase.test();
+                        if (passed) {
+                            testDiv.classList.add('pass');
+                            testResult.classList.add('pass');
+                            testResult.textContent = '✓ PASS';
+                            passedTests++;
+                        } else {
+                            testDiv.classList.add('fail');
+                            testResult.classList.add('fail');
+                            testResult.textContent = '✗ FAIL - Assertion failed';
+                            failedTests++;
+                        }
+                    } catch (error) {
+                        testDiv.classList.add('fail');
+                        testResult.classList.add('fail');
+                        testResult.textContent = `✗ FAIL - ${error.message}`;
+                        failedTests++;
+                    }
+                    
+                    testDiv.appendChild(testResult);
+                    suiteDiv.appendChild(testDiv);
+                });
+
+                resultsDiv.appendChild(suiteDiv);
+            }
+
+            // Display summary
+            const summaryDiv = document.getElementById('summary');
+            summaryDiv.innerHTML = `
+                <h3>Test Summary</h3>
+                <p><strong>Total Tests:</strong> ${totalTests}</p>
+                <p style="color: #28a745;"><strong>Passed:</strong> ${passedTests}</p>
+                <p style="color: #dc3545;"><strong>Failed:</strong> ${failedTests}</p>
+                <p><strong>Success Rate:</strong> ${((passedTests / totalTests) * 100).toFixed(1)}%</p>
+            `;
+        }
+
+        /**
+         * Initialize live demo
+         */
+        function initDemo() {
+            const demoInput = document.getElementById('demo-ticker');
+            const demoError = document.getElementById('demo-error');
+            const demoSubmit = document.getElementById('demo-submit');
+            const demoResult = document.getElementById('demo-result');
+
+            // Task 4.1.5: Add real-time validation event listener
+            demoInput.addEventListener('input', function() {
+                const ticker = this.value;
+                const validation = validateTicker(ticker);
+                
+                // Task 4.1.4: Auto-convert to uppercase
+                this.value = validation.ticker;
+                
+                // Display validation errors
+                if (!validation.isValid && ticker.length > 0) {
+                    demoError.textContent = validation.errors.join(', ');
+                    demoError.style.display = 'block';
+                    demoInput.classList.add('error');
+                    demoSubmit.disabled = true;
+                } else {
+                    demoError.style.display = 'none';
+                    demoInput.classList.remove('error');
+                    demoSubmit.disabled = ticker.length === 0;
+                }
+            });
+
+            demoSubmit.addEventListener('click', function() {
+                const ticker = demoInput.value;
+                const validation = validateTicker(ticker);
+                
+                if (validation.isValid) {
+                    demoResult.innerHTML = `
+                        <div style="padding: 15px; background: #d4edda; border: 1px solid #c3e6cb; border-radius: 4px; color: #155724;">
+                            <strong>✓ Valid Ticker:</strong> ${validation.ticker}
+                        </div>
+                    `;
+                } else {
+                    demoResult.innerHTML = `
+                        <div style="padding: 15px; background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 4px; color: #721c24;">
+                            <strong>✗ Invalid Ticker:</strong> ${validation.errors.join(', ')}
+                        </div>
+                    `;
+                }
+            });
+        }
+
+        // Run tests when page loads
+        window.addEventListener('DOMContentLoaded', () => {
+            runTests();
+            initDemo();
+        });
+    </script>
+</body>
+</html>

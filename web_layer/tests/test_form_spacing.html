@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>表單間距測試 - Form Spacing Test</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="../static/css/form-spacing-fix.css">
+    <style>
+        body {
+            background-color: #f8fafc;
+            padding: 2rem;
+        }
+        .test-section {
+            background: white;
+            padding: 2rem;
+            border-radius: 0.5rem;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+            margin-bottom: 2rem;
+        }
+        .comparison {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 2rem;
+        }
+        .before {
+            border-right: 2px solid #e2e8f0;
+            padding-right: 2rem;
+        }
+        .before * {
+            /* Reset the spacing fixes for "before" column */
+            margin-bottom: 0 !important;
+            line-height: normal !important;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="mb-4">表單間距修復測試</h1>
+        
+        <div class="test-section">
+            <h2 class="mb-3">對比測試 (Before vs After)</h2>
+            <div class="comparison">
+                <div class="before">
+                    <h5 class="text-danger mb-3">修復前 (Before)</h5>
+                    <label for="ticker1" class="form-label">股票代碼 (Ticker)</label>
+                    <input type="text" class="form-control" id="ticker1" placeholder="例如: AAPL">
+                    <small class="form-text text-muted">輸入美股代碼（1-5個字符）</small>
+                    
+                    <label for="expiration1" class="form-label">到期日</label>
+                    <select class="form-select" id="expiration1">
+                        <option>2026-02-21</option>
+                        <option>2026-03-21</option>
+                    </select>
+                    <small class="form-text text-muted">選擇期權到期日</small>
+                    
+                    <label for="confidence1" class="form-label">IV 信心度</label>
+                    <select class="form-select" id="confidence1">
+                        <option>68% (1.0 σ)</option>
+                        <option>90% (1.645 σ)</option>
+                    </select>
+                </div>
+                
+                <div class="after">
+                    <h5 class="text-success mb-3">修復後 (After - 已套用 CSS)</h5>
+                    <label for="ticker2" class="form-label">股票代碼 (Ticker)</label>
+                    <input type="text" class="form-control" id="ticker2" placeholder="例如: AAPL">
+                    <small class="form-text text-muted">輸入美股代碼（1-5個字符）</small>
+                    
+                    <label for="expiration2" class="form-label">到期日</label>
+                    <select class="form-select" id="expiration2">
+                        <option>2026-02-21</option>
+                        <option>2026-03-21</option>
+                    </select>
+                    <small class="form-text text-muted">選擇期權到期日</small>
+                    
+                    <label for="confidence2" class="form-label">IV 信心度</label>
+                    <select class="form-select" id="confidence2">
+                        <option>68% (1.0 σ)</option>
+                        <option>90% (1.645 σ)</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+        
+        <div class="test-section">
+            <h2 class="mb-3">完整表單測試 (已套用修復)</h2>
+            <form>
+                <div class="row g-3">
+                    <div class="col-md-4">
+                        <label for="ticker3" class="form-label">股票代碼 (Ticker)</label>
+                        <input type="text" class="form-control" id="ticker3" placeholder="例如: AAPL">
+                        <small id="ticker-error" class="form-text text-danger" style="display: none;">請輸入有效的股票代碼</small>
+                        <small id="tickerHelp" class="form-text text-muted">輸入美股代碼（1-5個字符）</small>
+                    </div>
+                    
+                    <div class="col-md-4">
+                        <label for="expiration3" class="form-label">主要到期日 (可選)</label>
+                        <div class="input-group">
+                            <select class="form-select" id="expiration3">
+                                <option value="" selected>自動選擇最近期權</option>
+                                <option>2026-02-21</option>
+                                <option>2026-03-21</option>
+                            </select>
+                            <button class="btn btn-outline-secondary" type="button">
+                                <i class="fas fa-sync-alt"></i>
+                            </button>
+                        </div>
+                        <div class="form-text" id="expirationStatus">請先輸入股票代碼</div>
+                        
+                        <div class="mt-2" id="multiExpirySection">
+                            <label class="form-label small text-muted">多到期日比較 (可選多個)</label>
+                            <div id="expirationCheckboxes" class="border rounded p-2 bg-white">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="exp1">
+                                    <label class="form-check-label" for="exp1">2026-02-21</label>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="exp2">
+                                    <label class="form-check-label" for="exp2">2026-03-21</label>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-4">
+                        <label for="confidence3" class="form-label">IV 信心度</label>
+                        <select class="form-select" id="confidence3">
+                            <option value="1.0">68% (1.0 σ)</option>
+                            <option value="1.645" selected>90% (1.645 σ)</option>
+                            <option value="2.0">95% (2.0 σ)</option>
+                        </select>
+                        <small class="form-text text-muted">選擇隱含波動率信心度</small>
+                    </div>
+                </div>
+                
+                <div class="mt-4">
+                    <button type="submit" class="btn btn-primary">開始分析</button>
+                </div>
+            </form>
+        </div>
+        
+        <div class="test-section">
+            <h2 class="mb-3">測試結果說明</h2>
+            <div class="alert alert-info">
+                <h5>修復內容：</h5>
+                <ul>
+                    <li><strong>標籤間距：</strong>增加 margin-bottom: 0.5rem，line-height: 1.5</li>
+                    <li><strong>輸入框間距：</strong>增加 margin-bottom: 0.25rem</li>
+                    <li><strong>幫助文字間距：</strong>增加 margin-top: 0.25rem, margin-bottom: 0.5rem</li>
+                    <li><strong>列間距：</strong>增加 margin-bottom: 1rem</li>
+                    <li><strong>多到期日區域：</strong>增加 margin-top: 0.75rem</li>
+                </ul>
+            </div>
+            
+            <div class="alert alert-success">
+                <h5>預期效果：</h5>
+                <ul>
+                    <li>✓ 表單標籤與輸入框之間有明顯間距</li>
+                    <li>✓ 幫助文字不會緊貼輸入框</li>
+                    <li>✓ 各個表單元素之間有適當的垂直間距</li>
+                    <li>✓ 文字行高適中，易於閱讀</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+    
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

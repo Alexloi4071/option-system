@@ -479,17 +479,35 @@ class MonitoringPostsCalculator:
                         delta: float, volume: int, bid_ask_spread: float, atr: float, vix: float) -> bool:
         logger.info("驗證輸入參數...")
         
+        # 詳細記錄輸入值用於調試
+        logger.debug(f"  stock_price={stock_price}, option_premium={option_premium}, iv={iv}")
+        logger.debug(f"  delta={delta}, volume={volume}, bid_ask_spread={bid_ask_spread}")
+        logger.debug(f"  atr={atr}, vix={vix}")
+        
         params = [stock_price, option_premium, iv, delta, bid_ask_spread, atr, vix]
         if not all(isinstance(x, (int, float)) for x in params):
+            # 找出哪個參數類型錯誤
+            for name, val in [('stock_price', stock_price), ('option_premium', option_premium), 
+                              ('iv', iv), ('delta', delta), ('bid_ask_spread', bid_ask_spread),
+                              ('atr', atr), ('vix', vix)]:
+                if not isinstance(val, (int, float)):
+                    logger.error(f"  x 參數類型錯誤: {name}={val} (type: {type(val).__name__})")
             return False
         
-        if stock_price <= 0 or option_premium <= 0:
+        if stock_price <= 0:
+            logger.error(f"  x stock_price 無效: {stock_price} (必須 > 0)")
+            return False
+            
+        if option_premium <= 0:
+            logger.error(f"  x option_premium 無效: {option_premium} (必須 > 0)")
             return False
         
         if iv < 0 or iv > 200:
+            logger.error(f"  x iv 無效: {iv} (必須在 0-200 範圍內)")
             return False
         
         if delta < 0 or delta > 1:
+            logger.error(f"  x delta 無效: {delta} (必須在 0-1 範圍內)")
             return False
         
         logger.info("  輸入參數驗證通過")

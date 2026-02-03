@@ -1,15 +1,24 @@
 <!DOCTYPE html>
+<<<<<<< HEAD
 <html lang="zh-Hant" class="dark">
+=======
+<html lang="en" data-theme="dark">
+>>>>>>> 6a1117f (Update: Sync local changes - improve IBKR client, data fetcher, web UI, and calculation modules)
 
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<<<<<<< HEAD
     <title>期權分析系統 v2.0 PRO</title>
+=======
+    <title>OPTIQ | Advanced Option Analysis</title>
+>>>>>>> 6a1117f (Update: Sync local changes - improve IBKR client, data fetcher, web UI, and calculation modules)
 
     <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link
+<<<<<<< HEAD
         href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Outfit:wght@300;400;500;700&display=swap"
         rel="stylesheet">
 
@@ -81,10 +90,44 @@
                     </div>
                 </div>
                 <div class="text-xs text-gray-500 font-mono" x-text="new Date().toLocaleTimeString()"></div>
+=======
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap"
+        rel="stylesheet">
+
+    <!-- Bootstrap 5 & Icons -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="/static/css/main.css">
+
+    <!-- CSS Fallback Handler -->
+    <script src="/static/js/css-fallback-handler.js"></script>
+</head>
+
+<body>
+
+    <!-- Glass Navbar -->
+    <nav class="navbar navbar-expand-lg navbar-dark navbar-glass">
+        <div class="container-fluid px-4">
+            <a class="navbar-brand" href="#">
+                <i class="fas fa-chart-network text-neon-blue me-2"></i>OPTIQ <span
+                    class="badge bg-dark border border-secondary ms-2 text-muted" style="font-size: 0.7em;">PRO</span>
+            </a>
+
+            <div class="d-flex align-items-center">
+                <div class="me-3 text-end d-none d-md-block">
+                    <small class="text-muted d-block" style="font-size: 0.7em;">MARKET STATUS</small>
+                    <span class="text-neon-green fw-bold" style="font-size: 0.8em;">OPEN</span>
+                </div>
+                <button class="btn btn-outline-light btn-sm rounded-circle" style="width: 32px; height: 32px;"><i
+                        class="fas fa-bell"></i></button>
+>>>>>>> 6a1117f (Update: Sync local changes - improve IBKR client, data fetcher, web UI, and calculation modules)
             </div>
         </div>
     </nav>
 
+<<<<<<< HEAD
     <!-- Main Content Container -->
     <div class="relative z-10 max-w-[90rem] mx-auto px-4 pb-12 pt-28">
 
@@ -117,9 +160,124 @@
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                                     d="M19 9l-7 7-7-7"></path>
                             </svg>
-                        </div>
-                    </div>
+=======
+    <!-- Main Content -->
+    <div class="container-fluid px-4 py-4">
 
+        <!-- Hero Section & Search -->
+        <div class="row justify-content-center mb-5 align-items-center" style="min-height: 80vh;">
+            <div class="col-lg-10">
+
+                <!-- Hero Text -->
+                <div class="text-center mb-5 animate-fade-in-up">
+                    <h1 class="display-4 fw-bold text-white mb-3">
+                        Institutional Grade <span class="text-neon-blue">Option Analytics</span>
+                    </h1>
+                    <p class="lead text-muted mx-auto" style="max-width: 600px;">
+                        Real-time greeks, volatility surface analysis, and AI-driven strategy recommendations.
+                    </p>
+                </div>
+
+                <!-- Main Glass Card -->
+                <div class="glass-card p-5 mb-4 animate-fade-in-up" style="animation-delay: 0.1s;">
+                    <form id="analysisForm" class="row g-4 align-items-end">
+                        <div class="col-md-4">
+                            <label class="form-label text-neon-blue small fw-bold"><i
+                                    class="fas fa-search me-2"></i>TICKER SYMBOL</label>
+                            <div class="input-group">
+                                <input type="text"
+                                    class="form-control form-control-lg font-mono fw-bold bg-dark-input text-white border-0"
+                                    id="ticker" placeholder="e.g. SPX, AAPL" required style="border-radius: 8px;">
+                            </div>
+                            <div class="form-text text-muted small mt-2">
+                                <i class="fas fa-Flask me-1"></i> Try <strong class="text-white cursor-pointer"
+                                    onclick="document.getElementById('ticker').value='MOCK'">MOCK</strong> for demo data
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label text-neon-blue small fw-bold"><i
+                                    class="fas fa-calendar-alt me-2"></i>EXPIRATION</label>
+                            <select class="form-select form-select-lg font-mono bg-dark-input text-white border-0"
+                                id="expiration" style="border-radius: 8px;">
+                                <option value="" selected>Auto-Select Smart Expiry</option>
+                            </select>
+                        </div>
+                        <!-- Advanced Settings Toggle -->
+                        <div class="col-12">
+                            <a class="text-neon-blue text-decoration-none small fw-bold" data-bs-toggle="collapse"
+                                href="#advancedSettings" role="button">
+                                <i class="fas fa-sliders-h me-1"></i> ADVANCED SETTINGS <i
+                                    class="fas fa-chevron-down ms-1"></i>
+                            </a>
+                            <div class="collapse mt-3" id="advancedSettings">
+                                <div class="glass-card p-3 border-glass shadow-none bg-dark-input">
+                                    <div class="row g-3">
+                                        <div class="col-md-3">
+                                            <label class="form-label text-muted small">STRIKE PRICE</label>
+                                            <div class="input-group input-group-sm">
+                                                <span
+                                                    class="input-group-text bg-transparent border-secondary text-muted">$</span>
+                                                <input type="number" step="0.5"
+                                                    class="form-control bg-transparent text-white border-secondary"
+                                                    id="strike" placeholder="Auto">
+                                            </div>
+                                        </div>
+                                        <div class="col-md-3">
+                                            <label class="form-label text-muted small">OPTION TYPE</label>
+                                            <select
+                                                class="form-select form-select-sm bg-transparent text-white border-secondary"
+                                                id="type">
+                                                <option value="C" selected>Call</option>
+                                                <option value="P">Put</option>
+                                            </select>
+                                        </div>
+                                        <div class="col-md-3">
+                                            <label class="form-label text-muted small">PREMIUM (PRICE)</label>
+                                            <div class="input-group input-group-sm">
+                                                <span
+                                                    class="input-group-text bg-transparent border-secondary text-muted">$</span>
+                                                <input type="number" step="0.01"
+                                                    class="form-control bg-transparent text-white border-secondary"
+                                                    id="premium" placeholder="Last">
+                                            </div>
+                                        </div>
+                                        <div class="col-md-3">
+                                            <label class="form-label text-muted small">IMPLIED VOL. (%)</label>
+                                            <div class="input-group input-group-sm">
+                                                <input type="number" step="0.1"
+                                                    class="form-control bg-transparent text-white border-secondary"
+                                                    id="iv" placeholder="Market">
+                                                <span
+                                                    class="input-group-text bg-transparent border-secondary text-muted">%</span>
+                                            </div>
+                                        </div>
+                                        <div class="col-md-3">
+                                            <label class="form-label text-muted small">STOCK PRICE</label>
+                                            <div class="input-group input-group-sm">
+                                                <span
+                                                    class="input-group-text bg-transparent border-secondary text-muted">$</span>
+                                                <input type="number" step="0.01"
+                                                    class="form-control bg-transparent text-white border-secondary"
+                                                    id="stockPrice" placeholder="Live">
+                                            </div>
+                                        </div>
+                                        <div class="col-md-3">
+                                            <label class="form-label text-muted small">RISK FREE RATE (%)</label>
+                                            <div class="input-group input-group-sm">
+                                                <input type="number" step="0.1"
+                                                    class="form-control bg-transparent text-white border-secondary"
+                                                    id="riskFreeRate" value="4.5">
+                                                <span
+                                                    class="input-group-text bg-transparent border-secondary text-muted">%</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+>>>>>>> 6a1117f (Update: Sync local changes - improve IBKR client, data fetcher, web UI, and calculation modules)
+                        </div>
+
+<<<<<<< HEAD
                     <!-- Actions -->
                     <div class="flex items-center gap-2 flex-1 w-full justify-end">
                         <button type="button" @click="showAdvanced = !showAdvanced"
@@ -217,10 +375,51 @@
                                     class="input-pro w-full px-2 py-1.5 text-sm text-center rounded-lg font-mono"
                                     placeholder="-">
                             </div>
+=======
+                        <!-- Submit Button Row -->
+                        <div class="col-12 mt-4">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="useIbkr">
+                                    <label class="form-check-label text-muted small" for="useIbkr">Live IBKR
+                                        Feed</label>
+                                </div>
+                                <button type="submit" class="btn btn-primary btn-lg fw-bold shadow-lg px-5"
+                                    id="analyzeBtn">
+                                    <i class="fas fa-bolt me-2"></i>RUN ANALYSIS
+                                </button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+
+                <!-- Feature Highlights -->
+                <div class="row g-4 text-center mt-2 animate-fade-in-up" style="animation-delay: 0.2s;">
+                    <div class="col-md-4">
+                        <div class="p-3">
+                            <i class="fas fa-layer-group fa-2x text-neon-green mb-3 opacity-75"></i>
+                            <h5 class="text-white h6">Multi-Leg Strategies</h5>
+                            <p class="small text-muted">Advanced PnL visualization for complex spreads</p>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="p-3">
+                            <i class="fas fa-wave-square fa-2x text-neon-warning mb-3 opacity-75"></i>
+                            <h5 class="text-white h6">Volatility Surface</h5>
+                            <p class="small text-muted">Real-time Skew and Smile analysis</p>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="p-3">
+                            <i class="fas fa-brain fa-2x text-neon-red mb-3 opacity-75"></i>
+                            <h5 class="text-white h6">AI Recommendations</h5>
+                            <p class="small text-muted">Smart entry/exit points based on Greeks</p>
+>>>>>>> 6a1117f (Update: Sync local changes - improve IBKR client, data fetcher, web UI, and calculation modules)
                         </div>
                     </div>
                 </div>
 
+<<<<<<< HEAD
                 <!-- Progress Bar Line -->
                 <div class="absolute bottom-0 left-0 right-0 h-0.5 bg-gray-800 overflow-hidden rounded-b-xl"
                     x-show="isLoading">
@@ -406,10 +605,58 @@
                         <div class="w-full h-[140px]">
                             <canvas id="chart-hv-trend"></canvas>
                         </div>
+=======
+            </div>
+        </div>
+
+        <!-- Progress/Loading State -->
+        <div id="loadingState" class="d-none text-center py-5">
+            <div class="spinner-border text-neon-blue mb-3" style="width: 3rem; height: 3rem;" role="status"></div>
+            <h4 class="text-white">Analyzing Market Data...</h4>
+            <p class="text-muted font-mono" id="progressMessage">Connecting to data feeds...</p>
+            <div class="progress mx-auto" style="width: 300px; height: 4px;">
+                <div class="progress-bar" id="progressBar" style="width: 0%"></div>
+            </div>
+        </div>
+
+        <!-- Error Alert -->
+        <div id="errorAlert" class="alert alert-danger d-none glass-card border-danger text-center mx-auto"
+            style="max-width: 600px;">
+            <i class="fas fa-exclamation-triangle me-2"></i><span id="errorMessage">Error</span>
+        </div>
+
+        <!-- Results Dashboard -->
+        <div id="resultsArea" class="d-none animate-fade-in">
+            <!-- Header Stats -->
+            <div class="row mb-4">
+                <div class="col-md-3">
+                    <div class="glass-card p-3">
+                        <div class="stat-label">Current Price</div>
+                        <div class="stat-value text-white" id="currentPrice">---</div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="glass-card p-3">
+                        <div class="stat-label">Implied Volatility</div>
+                        <div class="stat-value text-neon-blue" id="impliedVolatility">---</div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="glass-card p-3">
+                        <div class="stat-label">Health Score</div>
+                        <div class="stat-value text-neon-warning" id="healthScore">---</div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="glass-card p-3">
+                        <div class="stat-label">Date</div>
+                        <div class="stat-value h4 mt-2" id="analysisDate">---</div>
+>>>>>>> 6a1117f (Update: Sync local changes - improve IBKR client, data fetcher, web UI, and calculation modules)
                     </div>
                 </div>
             </div>
 
+<<<<<<< HEAD
             <!-- Row 3: Core Analysis Modules -->
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                 <div id="module-2" class="module-card">
@@ -449,10 +696,102 @@
                     </div>
                     <div class="h-[250px]">
                         <canvas id="chart-strategy-pnl"></canvas>
+=======
+            <!-- Dashboard Grid -->
+            <div class="dashboard-grid">
+
+                <!-- Module 1: Support/Resistance -->
+                <div class="glass-card grid-span-2">
+                    <div class="card-header">
+                        <span><i class="fas fa-arrows-alt-v me-2 text-neon-blue"></i>Support & Resistance</span>
+                        <span class="badge bg-dark border border-secondary">IV Method</span>
+                    </div>
+                    <div class="card-body">
+                        <div class="row text-center mb-3">
+                            <div class="col-6">
+                                <small class="text-muted d-block">RESISTANCE</small>
+                                <span class="h4 text-neon-red font-mono" id="resistanceLevel">---</span>
+                            </div>
+                            <div class="col-6">
+                                <small class="text-muted d-block">SUPPORT</small>
+                                <span class="h4 text-neon-green font-mono" id="supportLevel">---</span>
+                            </div>
+                        </div>
+                        <div class="table-responsive">
+                            <table class="table table-dark table-sm table-borderless small" id="srTable">
+                                <thead class="text-muted">
+                                    <tr>
+                                        <th>Conf.</th>
+                                        <th>Range</th>
+                                        <th>Supp.</th>
+                                        <th>Res.</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="font-mono"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Module 15/16: Greeks -->
+                <div class="glass-card grid-span-2">
+                    <div class="card-header">
+                        <span><i class="fas fa-calculator me-2 text-neon-blue"></i>Greeks & Pricing</span>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-6 border-end border-secondary">
+                                <h6 class="text-center text-neon-green mb-3">CALL Option</h6>
+                                <div id="callGreeks" class="greeks-grid"></div>
+                            </div>
+                            <div class="col-md-6">
+                                <h6 class="text-center text-neon-red mb-3">PUT Option</h6>
+                                <div id="putGreeks" class="greeks-grid"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Module 2: Fair Value -->
+                <div class="glass-card">
+                    <div class="card-header"><span><i class="fas fa-balance-scale me-2 text-neon-blue"></i>Fair
+                            Value</span></div>
+                    <div class="card-body" id="fairValueList"></div>
+                </div>
+
+                <!-- Module 4: PE Valuation -->
+                <div class="glass-card">
+                    <div class="card-header"><span><i class="fas fa-chart-pie me-2 text-neon-blue"></i>Valuation</span>
+                    </div>
+                    <div class="card-body" id="peValuation"></div>
+                </div>
+
+                <!-- Module 7-10: PnL Scenarios -->
+                <div class="glass-card grid-span-2">
+                    <div class="card-header"><span><i class="fas fa-project-diagram me-2 text-neon-blue"></i>Strategy
+                            PnL</span></div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-dark table-sm table-hover text-center small"
+                                id="strategyPnLTable">
+                                <thead class="text-muted">
+                                    <tr>
+                                        <th>Scenario</th>
+                                        <th>Long Call</th>
+                                        <th>Long Put</th>
+                                        <th>Short Call</th>
+                                        <th>Short Put</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="font-mono"></tbody>
+                            </table>
+                        </div>
+>>>>>>> 6a1117f (Update: Sync local changes - improve IBKR client, data fetcher, web UI, and calculation modules)
                     </div>
                     <div id="strategy-details" class="mt-4 text-xs text-gray-400 font-mono space-y-1"></div>
                 </div>
 
+<<<<<<< HEAD
                 <!-- Vol Smile & GEX -->
                 <div class="glass-card p-6 rounded-2xl">
                     <div class="flex justify-between items-center mb-6">
@@ -519,6 +858,35 @@
     <script src="/static/js/modules/advanced.js?v=2.2"></script>
     <script src="/static/js/modules/signals.js?v=2.2"></script>
     <script src="/static/js/app.js?v=2.2"></script>
+=======
+                <!-- Strategy Recommendations -->
+                <div class="glass-card grid-span-2" style="border-color: var(--accent-success);">
+                    <div class="card-header text-neon-green">
+                        <span><i class="fas fa-robot me-2"></i>AI Strategy Recommendations</span>
+                    </div>
+                    <div class="card-body" id="strategyRecommendations">
+                        <p class="text-muted text-center py-3">Run analysis to generate strategies.</p>
+                    </div>
+                </div>
+
+            </div> <!-- End Grid -->
+
+        </div> <!-- End Results -->
+
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="/static/js/module-renderer.js"></script>
+
+    <!-- Core Managers -->
+    <script src="/static/js/theme-manager.js"></script>
+    <script src="/static/js/animation-controller.js"></script>
+    <script src="/static/js/module-error-handler.js"></script>
+    <script src="/static/js/accessibility-manager.js"></script>
+
+    <script src="/static/js/main.js"></script>
+>>>>>>> 6a1117f (Update: Sync local changes - improve IBKR client, data fetcher, web UI, and calculation modules)
 </body>
 
 </html>

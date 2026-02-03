@@ -76,3 +76,47 @@ class TradingDaysCalculator:
             return value
         return datetime.strptime(str(value), '%Y-%m-%d')
 
+
+def is_third_friday(date: Union[str, datetime]) -> bool:
+    """
+    檢查日期是否為該月的第三個星期五（標準月度期權到期日）
+    
+    參數:
+        date: 日期字符串 (YYYY-MM-DD) 或 datetime 對象
+    
+    返回:
+        bool: True 表示是第三個星期五
+    """
+    if isinstance(date, str):
+        try:
+            dt = datetime.strptime(date, '%Y-%m-%d')
+        except ValueError:
+            # 嘗試其他格式 YYYYMMDD
+            try:
+                dt = datetime.strptime(date, '%Y%m%d')
+            except ValueError:
+                return False
+    else:
+        dt = date
+    
+    # 星期五 = weekday() == 4
+    if dt.weekday() != 4:
+        return False
+    
+    # 第三個星期五是第 15-21 天
+    day = dt.day
+    return 15 <= day <= 21
+
+
+def filter_monthly_expirations(expirations: list) -> list:
+    """
+    過濾到期日列表，只保留標準月度期權到期日（每月第三個星期五）
+    
+    參數:
+        expirations: 到期日列表 (日期字符串或日期對象)
+    
+    返回:
+        list: 過濾後的到期日列表
+    """
+    return [exp for exp in expirations if is_third_friday(exp)]
+

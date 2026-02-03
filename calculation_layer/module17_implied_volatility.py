@@ -304,13 +304,17 @@ class ImpliedVolatilityCalculator:
                     break
                 
                 # 計算 Vega
-                vega = self.greeks_calculator.calculate_vega(
+                # 注意: Module 16 的 calculate_vega 返回的是 "每1%波動率變化對應的價格變化" ($/%)
+                # 但 Newton-Raphson 公式需要的是 "每1單位波動率變化對應的價格變化" ($/1.0)
+                # 因此需要將 Vega * 100
+                vega_per_percent = self.greeks_calculator.calculate_vega(
                     stock_price=stock_price,
                     strike_price=strike_price,
                     risk_free_rate=risk_free_rate,
                     time_to_expiration=time_to_expiration,
                     volatility=volatility
                 )
+                vega = vega_per_percent * 100.0
                 
                 # 檢查 Vega 是否太小（避免除以零）
                 if abs(vega) < 1e-10:

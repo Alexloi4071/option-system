@@ -61,24 +61,23 @@ BACKOFF_MAX = 60.0
 # ============================================================================
 TICK_TAGS_CONFIG = {
     'CORE': {
-        # 期權交易核心數據
+        # 期權交易核心數據 - 適用於股票和期權
         '100': 'Option Call/Put Volume (Tick 29,30)',
         '101': 'Option Call/Put Open Interest (Tick 27,28)',
         '104': 'Option Historical Volatility 30-day (Tick 23)',
         '106': 'Option Implied Volatility 30-day (Tick 24)',
     },
     'RECOMMENDED': {
-        # 推薦的額外數據
+        # 推薦的額外數據 - 適用於股票和期權
         '105': 'Average Option Volume (Tick 87)',
         '165': '52-Week High/Low + 90-day Avg Volume (Tick 15-21)',
         '232': 'Mark Price - Theoretical calculated value (Tick 37)',
         '233': 'RT Volume / Time & Sales (Tick 48) - 異動大單監測',
         '236': 'Shortable status + Shortable Shares (Tick 46,89) - 做空可用性',
     },
-    'ADVANCED': {
-        # 進階分析數據
+    'ADVANCED_OPTION_SAFE': {
+        # 進階分析數據 - 適用於期權（排除新聞相關標籤）
         '225': 'Auction Data - Volume/Price/Imbalance (Tick 34-36,61)',
-        '292': 'News feed for contract (Tick 62)',
         '293': 'Trade Count for the day (Tick 54)',
         '294': 'Trade Rate per minute (Tick 55)',
         '295': 'Volume Rate per minute (Tick 56)',
@@ -87,21 +86,31 @@ TICK_TAGS_CONFIG = {
         '411': 'RT Historical Volatility 30-day (Tick 58)',
         '456': 'IB Dividends info (Tick 59)',
         '595': 'Short-Term Volume 3/5/10 minutes (Tick 63-65)',
+    },
+    'STOCK_ONLY': {
+        # 僅適用於股票（不能用於期權）
+        '292': 'News feed for contract (Tick 62) - 只能用於股票/指數/現金',
     }
 }
 
-def build_generic_tick_list(categories: List[str] = None) -> str:
+def build_generic_tick_list(categories: List[str] = None, contract_type: str = 'option') -> str:
     """
     構建 Generic Tick Tags 字符串
     
     參數:
-        categories: 要包含的類別列表，默認全部 ['CORE', 'RECOMMENDED', 'ADVANCED']
+        categories: 要包含的類別列表，默認根據 contract_type 自動選擇
+        contract_type: 'stock' 或 'option'，用於排除不適用的標籤
     
     返回:
         str: 逗號分隔的 tick tag 字符串
     """
     if categories is None:
-        categories = ['CORE', 'RECOMMENDED', 'ADVANCED']
+        if contract_type == 'stock':
+            # 股票可以使用所有標籤，包括新聞
+            categories = ['CORE', 'RECOMMENDED', 'ADVANCED_OPTION_SAFE', 'STOCK_ONLY']
+        else:
+            # 期權不能使用新聞相關標籤（會導致 Error 10094）
+            categories = ['CORE', 'RECOMMENDED', 'ADVANCED_OPTION_SAFE']
     
     tags = []
     for category in categories:
@@ -178,8 +187,11 @@ class IBKRClient:
         self._current_market_data_type = None
         
         # 新增: Generic Tick Tags 配置
-        self._tick_tag_categories = tick_tag_categories or ['CORE', 'RECOMMENDED', 'ADVANCED']
-        self._generic_tick_list = build_generic_tick_list(self._tick_tag_categories)
+        # 注意: 默認使用期權安全的標籤（不包含 Tag 292 新聞）
+        self._tick_tag_categories = tick_tag_categories or ['CORE', 'RECOMMENDED', 'ADVANCED_OPTION_SAFE']
+        self._generic_tick_list = build_generic_tick_list(self._tick_tag_categories, contract_type='option')
+        # 為股票準備完整的 tick list（包含新聞）
+        self._stock_tick_list = build_generic_tick_list(contract_type='stock')
         
         # 新增: 錯誤追蹤
         self._recent_errors: List[Dict] = []
@@ -188,7 +200,7 @@ class IBKRClient:
         self._data_quality_tracker: Dict[str, Any] = {}
         
         logger.info(f"IBKR 客戶端初始化: {host}:{port} (mode={mode}, client_id={client_id})")
-        logger.info(f"  Generic Tick Tags: {self._generic_tick_list}")
+        logger.info(f"  Generic Tick Tags (期權): {self._generic_tick_list}")
     
     def connect(self, timeout: int = 10, market_data_type: int = None) -> bool:
         """
@@ -1087,6 +1099,232 @@ class IBKRClient:
             logger.debug(f"獲取期權數據失敗: {e}")
             return None
     
+    def get_stock_price(self, ticker: str) -> Optional[float]:
+        """獲取實時股票價格"""
+        if not self.is_connected() and not self.connect():
+            return None
+            
+        import math
+            
+        try:
+            contract = Stock(ticker, 'SMART', 'USD')
+            self.ib.qualifyContracts(contract)
+            
+            # 使用 reqMktData (Snapshot)
+            self.ib.reqMktData(contract, '', True, False)
+            
+            # 等待數據 (最多 4 秒)
+            start_time = time.time()
+            price = None
+            while time.time() - start_time < 4:
+                self.ib.sleep(0.1)
+                t = self.ib.ticker(contract)
+                if t.last and not math.isnan(t.last):
+                    price = t.last
+                    break
+                elif t.close and not math.isnan(t.close):
+                    price = t.close
+                    
+            if price:
+                logger.info(f"獲取 {ticker} 股價成功: {price}")
+                return price
+            else:
+                logger.warning(f"獲取 {ticker} 股價超時或數據無效")
+                return None
+        except Exception as e:
+            logger.error(f"獲取股價失敗: {e}")
+            return None
+
+    def get_option_chain_snapshot(self, ticker: str, expiration: str, 
+                                 center_strike: float = None) -> Optional[Dict[str, Any]]:
+        """
+        獲取期權鏈快照（結構 + 實時數據）
+        
+        高效獲取整個期權鏈的實時數據。
+        策略：
+        1. 獲取所有合約
+        2. 過濾（如果指定了 center_strike，只獲取附近的合約，例如 +/- 20%）
+        3. 批量請求快照數據
+        4. 收集結果
+        
+        參數:
+            ticker: 股票代碼
+            expiration: 到期日
+            center_strike: 中心行使價（通常是當前股價），用於過濾。如果為 None 則獲取全部（慎用）
+            
+        返回:
+            dict: 包含 'calls', 'puts' DataFrames
+        """
+        if not self.is_connected() and not self.connect():
+            return None
+            
+        import math  # Move import here to fix UnboundLocalError
+            
+        try:
+            logger.info(f"正在獲取 {ticker} {expiration} 期權鏈快照 (Base)...")
+            
+            # 1. 獲取鏈結構
+            self.refresh_market_data_type()
+            
+            # 格式化日期
+            exp_formatted = expiration.replace('-', '')
+            
+            # 查找合約
+            # 為了效率，我們直接使用 reqSecDefOptParams (如果已經有緩存最好，這裡簡化)
+            # 復用 get_option_chain 的邏輯獲取合約列表
+            chain_structure = self.get_option_chain(ticker, expiration, stock_price=center_strike if center_strike else 0)
+            
+            if not chain_structure:
+                logger.warning("無法獲取期權鏈結構")
+                return None
+                
+            calls = chain_structure.get('calls', [])
+            puts = chain_structure.get('puts', [])
+            
+            all_contracts = []
+            
+            # 過濾邏輯 (如果提供了 center_strike)
+            if center_strike:
+                # 簡單過濾: +/- 25%
+                lower_bound = center_strike * 0.75
+                upper_bound = center_strike * 1.25
+                
+                valid_calls = [c for c in calls if lower_bound <= c['strike'] <= upper_bound]
+                valid_puts = [c for c in puts if lower_bound <= c['strike'] <= upper_bound]
+                
+                logger.info(f"過濾合約: Calls {len(calls)}->{len(valid_calls)}, Puts {len(puts)}->{len(valid_puts)}")
+                
+                # 轉換為 Contract 對象
+                for c in valid_calls:
+                    contract = Option(ticker, exp_formatted, c['strike'], 'C', 'SMART')
+                    contract.conId = c.get('conId', 0)
+                    all_contracts.append(contract)
+                    
+                for p in valid_puts:
+                    contract = Option(ticker, exp_formatted, p['strike'], 'P', 'SMART')
+                    contract.conId = p.get('conId', 0)
+                    all_contracts.append(contract)
+            else:
+                # 全部獲取 (注意流量控制)
+                logger.warning("未指定 center_strike，將獲取完整期權鏈（可能較慢）")
+                for c in calls:
+                    all_contracts.append(Option(ticker, exp_formatted, c['strike'], 'C', 'SMART'))
+                for p in puts:
+                    all_contracts.append(Option(ticker, exp_formatted, p['strike'], 'P', 'SMART'))
+
+            if not all_contracts:
+                return {'calls': [], 'puts': []}
+
+            # 2. 批量請求數據
+            logger.info(f"請求 {len(all_contracts)} 個合約的快照數據...")
+            
+            # 直接請求 snapshot=False (使用流式數據短暫抓取)
+            # 原因: IBKR API 的纯 Snapshot 模式 (True) 經常會忽略 Generic Ticks (如 Greeks, 100, 101, 104, 106)。
+            # 使用流式訂閱 + 短暫等待 + 取消訂閱 (即 "Streaming Burst") 是確保獲取完整 Greeks 數據的官方推薦做法。
+            for contract in all_contracts:
+                self.ib.reqMktData(contract, self._generic_tick_list, False, False) 
+            
+            # 3. 等待數據填充
+            # 這裡我們等待最多 8 秒
+            start_time = time.time()
+            while time.time() - start_time < 8:
+                self.ib.sleep(0.2)
+                # 檢查是否還有未返回數據的（簡單檢查 last/bid/ask 任意一個）
+                pending = 0
+                for c in all_contracts:
+                    t = self.ib.ticker(c)
+                    has_data =  (t.last and not  math.isnan(t.last)) or \
+                                (t.bid and not math.isnan(t.bid)) or \
+                                (t.modelGreeks and t.modelGreeks.impliedVol)
+                    if not has_data:
+                        pending += 1
+                
+                if pending == 0:
+                    break
+                # Fast exit if most are done? Maybe not.
+                    
+            # 4. 收集結果
+            call_data = []
+            put_data = []
+            
+            for contract in all_contracts:
+                t = self.ib.ticker(contract)
+                
+                # 提取數據 - 使用安全的屬性獲取方式
+                def safe_int(val, default=0):
+                    """安全轉換為整數，處理 None 和 NaN"""
+                    if val is None:
+                        return default
+                    try:
+                        if math.isnan(val):
+                            return default
+                        return int(val)
+                    except (TypeError, ValueError):
+                        return default
+                
+                # 獲取 Open Interest（根據期權類型選擇正確的屬性）
+                # 對於期權合約，IBKR 可能返回:
+                # - callOpenInterest / putOpenInterest (Tick 27/28 via generic tick 101)
+                # - 或直接的 openInterest 屬性
+                oi = None
+                call_oi = getattr(t, 'callOpenInterest', None)
+                put_oi = getattr(t, 'putOpenInterest', None) 
+                generic_oi = getattr(t, 'openInterest', None)
+                
+                if contract.right == 'C':
+                    oi = call_oi or generic_oi
+                else:
+                    oi = put_oi or generic_oi
+                
+                # DEBUG: 記錄第一個合約的 OI 信息
+                if contract == all_contracts[0]:
+                    logger.debug(f"  [OI Debug] Contract: {contract.localSymbol}")
+                    logger.debug(f"    callOpenInterest: {call_oi}, putOpenInterest: {put_oi}, openInterest: {generic_oi}")
+                    logger.debug(f"    Ticker attrs: {[a for a in dir(t) if 'interest' in a.lower() or 'oi' in a.lower()]}")
+                
+                item = {
+                    'contractSymbol': ticker,
+                    'strike': contract.strike,
+                    'currency': 'USD',
+                    'lastPrice': t.last if self._is_valid_price(t.last) else 0.0,
+                    'bid': t.bid if self._is_valid_price(t.bid) else 0.0,
+                    'ask': t.ask if self._is_valid_price(t.ask) else 0.0,
+                    'volume': safe_int(t.volume),
+                    'openInterest': safe_int(oi),
+                    'impliedVolatility': t.modelGreeks.impliedVol * 100 if t.modelGreeks and t.modelGreeks.impliedVol else None,
+                    'delta': t.modelGreeks.delta if t.modelGreeks else None,
+                    'gamma': t.modelGreeks.gamma if t.modelGreeks else None,
+                    'theta': t.modelGreeks.theta if t.modelGreeks else None,
+                    'vega': t.modelGreeks.vega if t.modelGreeks else None,
+                    'inTheMoney': False,
+                    'expiration': expiration
+                }
+                
+                # 填充 greeks_source
+                if item['delta'] is not None:
+                    item['greeks_source'] = 'ibkr'
+                
+                if contract.right == 'C':
+                    call_data.append(item)
+                else:
+                    put_data.append(item)
+            
+            # 取消訂閱
+            for contract in all_contracts:
+                self.ib.cancelMktData(contract)
+                
+            logger.info(f"快照獲取完成。Calls: {len(call_data)}, Puts: {len(put_data)}")
+            
+            return {
+                'calls': call_data,
+                'puts': put_data
+            }
+        except Exception as e:
+            logger.error(f"獲取期權鏈快照失敗: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return None
+
     def __enter__(self):
         """上下文管理器入口"""
         self.connect()

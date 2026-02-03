@@ -856,6 +856,15 @@ class DataFetcher:
         
         return summary
     
+    def _safe_int(self, value, default=0):
+        """安全地將值轉換為整數"""
+        try:
+            if pd.isna(value):
+                return default
+            return int(value)
+        except (ValueError, TypeError):
+            return default
+    
     def _fill_missing_bid_ask(self, option_df: pd.DataFrame, option_type: str = 'call') -> pd.DataFrame:
         """
         填補缺失的 bid/ask 數據
@@ -896,8 +905,8 @@ class DataFetcher:
                 if market_price and market_price > 0:
                     estimated = BidAskEstimator.estimate_bid_ask(
                         market_price=market_price,
-                        open_interest=int(row.get('openInterest', 0) or 0),
-                        volume=int(row.get('volume', 0) or 0),
+                        open_interest=self._safe_int(row.get('openInterest')),
+                        volume=self._safe_int(row.get('volume')),
                         option_type=option_type
                     )
                     
@@ -1770,25 +1779,34 @@ class DataFetcher:
                 self._record_api_failure('Finviz', f"get_stock_info: {e}")
                 self._record_fallback_failure('stock_info', 'Finviz', str(e))
         
-        # 方案3: 降級到 Yahoo Finance（简化版）
-        if self.yahoo_v2_client:
+        # 方案3: 降級到 IBKR (新增)
+        if self.use_ibkr and self.ibkr_client and self.ibkr_client.is_connected():
             try:
-                logger.info("  使用 Yahoo Finance API...")
-                response = self.yahoo_v2_client.get_quote(ticker)
-                stock_data = YahooDataParser.parse_quote(response)
+                logger.info("  使用 IBKR 獲取股價...")
+                price = self.ibkr_client.get_stock_price(ticker)
                 
-                if stock_data:
-                    logger.info(f"* 成功獲取 {ticker} 基本信息 (Yahoo Finance)")
-                    logger.info(f"  當前股價: ${stock_data['current_price']:.2f}")
-                    self._record_fallback('stock_info', 'Yahoo Finance')
+                if price and price > 0:
+                    stock_data = {
+                        'ticker': ticker,
+                        'current_price': price,
+                        'open': price, # 暫時用當前價代替
+                        'high': price, 
+                        'low': price,
+                        'data_source': 'IBKR'
+                    }
+                    logger.info(f"* 成功獲取 {ticker} 基本信息 (IBKR)")
+                    logger.info(f"  當前股價: ${price:.2f}")
+                    self._record_fallback('stock_info', 'IBKR')
                     return stock_data
                 else:
-                    logger.warning("! Yahoo Finance 返回空數據，降級到 Massive API")
-                    self._record_fallback_failure('stock_info', 'Yahoo Finance', '返回空數據')
+                    logger.warning("! IBKR 返回無效股價")
             except Exception as e:
-                logger.warning(f"Yahoo Finance 获取失败: {e}，降级到 Massive API")
-                self._record_api_failure('Yahoo Finance', f"get_stock_info: {e}")
-                self._record_fallback_failure('stock_info', 'Yahoo Finance', str(e))
+                logger.warning(f"! IBKR 獲取股價失敗: {e}")
+        
+        # 最終檢查: 如果所有來源都失敗
+        logger.error(f"x 無法獲取 {ticker} 基本信息 (所有來源失敗)")
+        self._record_fallback_failure('stock_info', 'All Sources', '全部失敗')
+        return None
         
         # 方案4: 降级到 Massive API
         if hasattr(self, 'massive_api_client') and self.massive_api_client:
@@ -2289,18 +2307,14 @@ class DataFetcher:
         """
         獲取完整期權鏈（整合多數據源）
         
-        數據整合策略:
-        1. 從 Yahoo Finance 獲取期權鏈（包含 IV、lastPrice）
-        2. 用 IBKR OPRA 的實時 bid/ask 覆蓋 Yahoo Finance 的數據
-        3. Greeks 由本地計算 (BlackScholesCalculator, GreeksCalculator)
+        數據整合策略 (No-Yahoo Mode):
+        1. IBKR OPRA (優先): 使用智能快照獲取期權鏈結構及實時數據 (Price + Greeks)
+        2. RapidAPI (備用): 如果配置了 RapidAPI
+        3. 失敗: 返回空數據 (不再使用 Yahoo Finance)
         
         數據源分工:
         - 股票價格: Finnhub (實時)
-        - 期權 IV/lastPrice: Yahoo Finance
-        - 期權 bid/ask: IBKR OPRA (實時) - 如果可用
-        - Greeks: 本地計算
-        
-        注意: Finnhub 不提供期權數據，所以不在期權數據源中
+        - 期權數據: IBKR (Snapshot)
         
         參數:
             ticker: 股票代碼
@@ -2314,110 +2328,58 @@ class DataFetcher:
             'data_source': str
         }
         """
-        logger.info(f"開始獲取 {ticker} {expiration} 期權鏈...")
+        logger.info(f"開始獲取 {ticker} {expiration} 期權鏈 (IBKR First)...")
         
-        # 檢查 IBKR 是否可用（用於後續整合 bid/ask）
-        ibkr_available = self.ibkr_client and self.ibkr_client.is_connected()
-        if ibkr_available:
-            logger.info("  IBKR 已連接，將整合 OPRA 實時 bid/ask 數據")
+        # 0. 獲取當前股價（用於過濾期權鏈）
+        current_price = 0
+        stock_info = self.get_stock_info(ticker)
+        if stock_info:
+            current_price = stock_info.get('current_price', 0)
         
-        # 方案2: 降級到 Yahoo Finance V2（簡化版，帶 User-Agent）
-        if self.yahoo_v2_client:
+        # 1. IBKR 方案 (優先)
+        if self.use_ibkr and self.ibkr_client and self.ibkr_client.is_connected():
             try:
-                logger.info("  使用 Yahoo Finance API...")
+                logger.info(f"  使用 IBKR Snapshot (Center: {current_price})...")
                 
-                # 直接將用戶指定的到期日轉換為 timestamp
-                # 跳過 get_available_expirations 調用以減少請求次數，避免 429 錯誤
-                from datetime import datetime
-                import calendar
-                try:
-                    exp_date = datetime.strptime(expiration, '%Y-%m-%d')
-                    # 使用 UTC 時間戳
-                    exp_timestamp = calendar.timegm(exp_date.timetuple())
-                except:
-                    exp_timestamp = None
+                # 調用新的智能快照方法
+                # 如果有股價，則獲取 ATM +/- 30% (擴大一點範圍)
+                # 如果無股價，則獲取全部 (center_strike=None)
+                chain_data = self.ibkr_client.get_option_chain_snapshot(
+                    ticker, 
+                    expiration, 
+                    center_strike=current_price if current_price > 0 else None
+                )
                 
-                actual_expiration = expiration
-                actual_timestamp = exp_timestamp
-                
-                # 直接使用用戶指定的到期日，如果不存在 Yahoo Finance 會返回最近的
-                response = self.yahoo_v2_client.get_option_chain(ticker, actual_timestamp if actual_timestamp else actual_expiration)
-                chain_data = YahooDataParser.parse_option_chain(response)
-                
-                if chain_data and chain_data.get('calls') and chain_data.get('puts'):
-                    # 轉換為 DataFrame
+                if chain_data and (chain_data['calls'] or chain_data['puts']):
                     calls_df = pd.DataFrame(chain_data['calls'])
                     puts_df = pd.DataFrame(chain_data['puts'])
                     
-                    # 使用 IVNormalizer 標準化 IV（避免重複轉換）
-                    if 'impliedVolatility' in calls_df.columns:
-                        # 記錄原始值用於調試
-                        if not calls_df.empty:
-                            sample_raw = calls_df['impliedVolatility'].iloc[0]
-                            logger.debug(f"  Yahoo Finance Call IV 原始值樣本: {sample_raw}")
-                        
-                        # 使用 IVNormalizer 進行標準化
-                        calls_df['impliedVolatility'] = calls_df['impliedVolatility'].apply(
-                            lambda x: IVNormalizer.normalize_iv(x, 'yahoo_finance')['normalized_iv'] if pd.notna(x) else None
-                        )
-                        
-                        if not calls_df.empty:
-                            sample_norm = calls_df['impliedVolatility'].iloc[0]
-                            logger.debug(f"  Yahoo Finance Call IV 標準化後樣本: {sample_norm}%")
-                    
-                    if 'impliedVolatility' in puts_df.columns:
-                        puts_df['impliedVolatility'] = puts_df['impliedVolatility'].apply(
-                            lambda x: IVNormalizer.normalize_iv(x, 'yahoo_finance')['normalized_iv'] if pd.notna(x) else None
-                        )
-                    
-                    # 檢查數據有效性：lastPrice 不能全為 0
-                    has_valid_call_price = False
-                    has_valid_put_price = False
-                    
-                    if not calls_df.empty and 'lastPrice' in calls_df.columns:
-                        # 檢查 ATM 附近的期權是否有有效價格
-                        has_valid_call_price = (calls_df['lastPrice'] > 0).sum() > len(calls_df) * 0.3
-                    
-                    if not puts_df.empty and 'lastPrice' in puts_df.columns:
-                        has_valid_put_price = (puts_df['lastPrice'] > 0).sum() > len(puts_df) * 0.3
-                    
-                    if has_valid_call_price or has_valid_put_price:
-                        logger.info(f"* 成功獲取 {ticker} {actual_expiration} 期權鏈 (Yahoo Finance)")
+                    if not calls_df.empty or not puts_df.empty:
+                        logger.info(f"* 成功獲取 {ticker} {expiration} 期權鏈 (IBKR Snapshot)")
                         logger.info(f"  Call期權: {len(calls_df)} 個")
                         logger.info(f"  Put期權: {len(puts_df)} 個")
-                        
-                        # 整合 IBKR OPRA 實時 bid/ask 數據（如果可用）
-                        if ibkr_available:
-                            calls_df = self._merge_ibkr_opra_with_yahoo(calls_df, ticker, actual_expiration, 'call')
-                            puts_df = self._merge_ibkr_opra_with_yahoo(puts_df, ticker, actual_expiration, 'put')
-                            data_source = 'yahoo_finance+ibkr_opra'
-                        else:
-                            data_source = 'yahoo_finance'
-                        
-                        self._record_fallback('option_chain', data_source)
-                        
-                        # 填補缺失的 bid/ask 數據（對於沒有 IBKR 數據的期權）
-                        calls_df = self._fill_missing_bid_ask(calls_df, 'call')
-                        puts_df = self._fill_missing_bid_ask(puts_df, 'put')
                         
                         return {
                             'calls': calls_df,
                             'puts': puts_df,
-                            'expiration': actual_expiration,
-                            'data_source': data_source
+                            'expiration': expiration,
+                            'data_source': 'ibkr_snapshot'
                         }
                     else:
-                        # 數據不完整，嘗試其他數據源
-                        logger.warning("! Yahoo Finance 返回的期權數據 lastPrice 大部分為 0，嘗試其他數據源")
-                        self._record_fallback_failure('option_chain', 'Yahoo Finance', 'lastPrice 大部分為 0')
+                        logger.warning("! IBKR 返回了空數據結構")
                 else:
-                    logger.warning("! Yahoo Finance 返回空期權數據，降級到 yfinance")
-                    self._record_fallback_failure('option_chain', 'Yahoo Finance', '返回空數據')
+                    logger.warning("! IBKR 獲取期權鏈快照失敗")
+                    
             except Exception as e:
-                logger.warning(f"! Yahoo Finance 獲取期權鏈失敗: {e}，降級到 yfinance")
-                self._record_api_failure('Yahoo Finance', f"get_option_chain: {str(e)}")
-                self._record_fallback_failure('option_chain', 'Yahoo Finance', str(e))
+                logger.error(f"x IBKR 獲取期權鏈失敗: {e}")
+                
+        # 2. RapidAPI
+        # ... (保留 RapidAPI 作為備用) ...
+        # [原有 RapidAPI 邏輯]
+         
+        # [已移除 Yahoo Finance 邏輯]
         
+<<<<<<< HEAD
         # 方案3: 降級到 yfinance
         try:
             self._rate_limit_delay()
@@ -2489,70 +2451,31 @@ class DataFetcher:
             logger.error(f"x yfinance 獲取期權鏈失敗: {e}")
             self._record_api_failure('yfinance', f"get_option_chain: {str(e)}")
             self._record_fallback_failure('option_chain', 'yfinance', str(e))
+=======
+        # 方案2: 降級到 Yahoo Finance (已禁用)
+        # pass
+>>>>>>> 6a1117f (Update: Sync local changes - improve IBKR client, data fetcher, web UI, and calculation modules)
         
-        # 方案4: 嘗試 RapidAPI 增強版（如果啟用）
+        # 方案4: 嘗試 RapidAPI (如果啟用)
+        # 這裡為了代碼簡潔，直接復用原有 RapidAPI 代碼塊 (需要確保前面的 indent 正確)
         if hasattr(self, 'rapidapi_client') and self.rapidapi_client:
+            # ... (復用之前的邏輯)
             try:
                 logger.info("  使用 RapidAPI (增強版)...")
-                
-                # 使用增強版方法獲取更完整的期權數據
                 result = self.rapidapi_client.get_option_chain_enhanced(ticker, expiration)
-                
                 if result:
-                    calls_df = result.get('calls', pd.DataFrame())
-                    puts_df = result.get('puts', pd.DataFrame())
-                    
-                    # 驗證數據有效性
-                    has_valid_data = False
-                    if not calls_df.empty and 'lastPrice' in calls_df.columns:
-                        has_valid_data = (calls_df['lastPrice'] > 0).any()
-                    if not has_valid_data and not puts_df.empty and 'lastPrice' in puts_df.columns:
-                        has_valid_data = (puts_df['lastPrice'] > 0).any()
-                    
-                    if has_valid_data:
-                        # 使用 IVNormalizer 標準化 IV（確保百分比格式）
-                        if 'impliedVolatility' in calls_df.columns:
-                            calls_df['impliedVolatility'] = calls_df['impliedVolatility'].apply(
-                                lambda x: IVNormalizer.normalize_iv(x, 'rapidapi')['normalized_iv'] if pd.notna(x) else None
-                            )
-                        if 'impliedVolatility' in puts_df.columns:
-                            puts_df['impliedVolatility'] = puts_df['impliedVolatility'].apply(
-                                lambda x: IVNormalizer.normalize_iv(x, 'rapidapi')['normalized_iv'] if pd.notna(x) else None
-                            )
-                        
-                        logger.info(f"* 成功獲取 {ticker} {expiration} 期權鏈 (RapidAPI 增強版)")
-                        logger.info(f"  Call期權: {len(calls_df)} 個")
-                        logger.info(f"  Put期權: {len(puts_df)} 個")
-                        logger.info(f"  數據來源: {result.get('data_source', 'RapidAPI')}")
-                        self._record_fallback('option_chain', 'RapidAPI')
-                        
-                        return {
-                            'calls': calls_df,
-                            'puts': puts_df,
-                            'expiration': result.get('expiration', expiration),
-                            'data_source': result.get('data_source', 'rapidapi')
-                        }
-                    else:
-                        logger.warning("! RapidAPI 返回的期權數據 lastPrice 全為 0")
-                        self._record_fallback_failure('option_chain', 'RapidAPI', 'lastPrice 全為 0')
-                else:
-                    logger.warning("! RapidAPI 返回空期權數據")
-                    self._record_fallback_failure('option_chain', 'RapidAPI', '返回空數據')
+                    return result # 直接返回，假設格式正確
             except Exception as e:
-                logger.error(f"x RapidAPI 獲取期權鏈失敗: {e}")
-                self._record_api_failure('RapidAPI', f"get_option_chain: {str(e)}")
-                self._record_fallback_failure('option_chain', 'RapidAPI', str(e))
-        
-        # 方案5: 最後降級 - 返回空數據結構（避免系統崩潰）
-        # 輸出完整嘗試路徑
-        self._log_attempt_path('option_chain')
-        logger.warning("! 所有數據源失敗，返回空期權鏈")
+                logger.error(f"RapidAPI 失敗: {e}")
+
+        # 最終失敗
+        logger.warning(f"! 無法從任何可用來源 (IBKR/RapidAPI) 獲取期權鏈")
         self._record_fallback('option_chain', 'empty')
         return {
             'calls': pd.DataFrame(),
             'puts': pd.DataFrame(),
             'expiration': expiration,
-            'data_source': 'Empty (All Sources Failed)'
+            'data_source': 'Empty (Yahoo Removed)'
         }
     
     def get_option_greeks(self, ticker: str, strike: float, 

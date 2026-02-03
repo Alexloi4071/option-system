@@ -5,6 +5,10 @@
 
 import os
 import sys
+
+# Prevent Fortran runtime error (MKL library conflict)
+os.environ['KMP_DUPLICATE_LIB_OK'] = 'True'
+
 import logging
 import json
 import time
@@ -41,6 +45,56 @@ analysis_system = OptionsAnalysisSystem()
 # 進度追蹤存儲
 progress_store = {}
 
+# MOCK DATA STORE
+MOCK_DATA = {
+    "raw_data": {
+        "analysis_date": "2024-03-20",
+        "current_price": 175.50,
+        "implied_volatility": 24.5,
+        "risk_free_rate": 0.045
+    },
+    "calculations": {
+        "module1_support_resistance": {
+            "support_level": 168.50,
+            "resistance_level": 182.30
+        },
+        "module15_16_black_scholes_greeks": {
+            "bs_data": {
+                "call": {"option_price": 5.40},
+                "put": {"option_price": 4.20}
+            },
+            "greeks_data": {
+                "call": {"delta": 0.55, "gamma": 0.02, "theta": -0.15, "vega": 0.12, "rho": 0.05},
+                "put": {"delta": -0.45, "gamma": 0.02, "theta": -0.14, "vega": 0.12, "rho": -0.04}
+            }
+        },
+        "module20_fundamental_health": {
+            "status": "success",
+            "health_score": 85,
+            "grade": "A",
+            "metrics": {"pe_ratio": 28.5, "profit_margin": 0.25}
+        },
+        "module2_fair_value": {
+            "fair_value": 178.20,
+            "upside": 1.54
+        },
+        "module4_pe_valuation": {
+            "pe_ratio": 28.5,
+            "valuation": "Fair",
+            "fair_pe": 30.0
+        },
+        "module7_long_call": {
+            "scenarios": [],
+            "current_pnl": {"pnl": 120.50, "pnl_percent": 15.2}
+        },
+        "module8_long_put": {
+            "scenarios": [],
+            "current_pnl": {"pnl": -50.20, "pnl_percent": -8.5}
+        }
+    }
+}
+
+
 @app.route('/')
 def index():
     """主頁面"""
@@ -64,11 +118,21 @@ def analyze():
     }
     """
     try:
+        if request.args.get('mock') == 'true':
+            # 模擬延遲以測試 UI Grid Loading
+            time.sleep(1.0)
+            return jsonify({
+                "status": "success", 
+                "data": MOCK_DATA,
+                "message": "Mock Analysis Complete"
+            })
+
         data = request.json
         if not data or ((not data.get('ticker')) and (not data.get('target_date') and not data.get('expiration'))):
              # 兼容 target_date 或 expiration 字段
             return jsonify({'status': 'error', 'message': '缺少股票代碼或到期日'}), 400
         
+<<<<<<< HEAD
         task_id = data.get('task_id')
         ticker = data.get('ticker').upper()
         # Frontend uses 'target_date', keeping 'expiration' for backward compat
@@ -98,10 +162,32 @@ def analyze():
         premium = None
         
 
+=======
+        ticker = data['ticker'].upper()
+        expiration = data.get('expiration')
+        selected_expirations = data.get('selected_expirations') 
+        confidence = float(data.get('confidence', 1.0))
         
-        logger.info(f"收到分析請求: {ticker}, 到期日: {expiration}, 多選到期日: {selected_expirations}, IBKR: {use_ibkr}")
+        # Extract Advanced/Manual Overrides
+        strike = float(data['strike']) if data.get('strike') else None
+        premium = float(data['premium']) if data.get('premium') else None
+        option_type = data.get('type', 'C') # Default to Call
         
-        # 初始化進度追蹤
+        manual_iv = float(data['iv']) if data.get('iv') else None
+        manual_stock_price = float(data['stock_price']) if data.get('stock_price') else None
+        manual_risk_free = float(data['risk_free_rate']) if data.get('risk_free_rate') else None
+
+        use_ibkr = data.get('use_ibkr')
+        task_id = data.get('task_id') 
+>>>>>>> 6a1117f (Update: Sync local changes - improve IBKR client, data fetcher, web UI, and calculation modules)
+        
+        # Check if we should use Hybrid Mode (Manual Overrides)
+        # If user provides IV or Stock Price or specifically sets Strike+Premium, treat as Hybrid
+        is_hybrid = manual_iv is not None or manual_stock_price is not None or (strike is not None and premium is not None)
+        
+        logger.info(f"收到分析請求: {ticker}, Mode: {'Hybrid' if is_hybrid else 'Auto'}, Expiration: {expiration}")
+
+        # 初始化進度追蹤 (Progress Tracking)
         if task_id:
             progress_store[task_id] = {
                 'status': 'running',
@@ -115,13 +201,11 @@ def analyze():
                 'estimated_remaining': None
             }
         
-        # 創建進度回調函數
+        # Progress Callback
         def progress_callback(step, total, message, module_name=None):
             if task_id and task_id in progress_store:
                 elapsed = time.time() - progress_store[task_id]['start_time']
                 progress_pct = int((step / total) * 100)
-                
-                # 估算剩餘時間
                 if step > 0:
                     estimated_total = elapsed * total / step
                     estimated_remaining = max(0, estimated_total - elapsed)
@@ -136,11 +220,11 @@ def analyze():
                     'current_module': module_name or message,
                     'estimated_remaining': estimated_remaining
                 })
-                
                 if module_name and module_name not in progress_store[task_id]['completed_modules']:
-                    if step > 0:  # 不是第一步時，上一個模塊已完成
+                    if step > 0: 
                         progress_store[task_id]['completed_modules'].append(module_name)
         
+<<<<<<< HEAD
         # 執行分析 - 處理 None 值
         results = analysis_system.run_complete_analysis(
             ticker=ticker,
@@ -159,8 +243,48 @@ def analyze():
             selected_expirations=selected_expirations,
             progress_callback=progress_callback
         )
+=======
+        # Execution
+        if is_hybrid:
+            # Hybrid Mode requires Expiration
+            if not expiration:
+                return jsonify({'status': 'error', 'message': 'Manual Mode requires a specific Expiration Date'}), 400
+                
+            # Construct Overrides Dict
+            user_overrides = {
+                'strike': strike,
+                'premium': premium,
+                'option_type': option_type,
+                'iv': manual_iv,
+                'stock_price': manual_stock_price,
+                'risk_free_rate': manual_risk_free
+            }
+            # Remove None values
+            user_overrides = {k: v for k, v in user_overrides.items() if v is not None}
+            
+            # Call Hybrid Analysis
+            results = analysis_system.run_hybrid_analysis(
+                ticker=ticker,
+                expiration=expiration,
+                user_overrides=user_overrides,
+                confidence=confidence
+            )
+        else:
+            # Standard Auto Analysis
+            results = analysis_system.run_complete_analysis(
+                ticker=ticker,
+                expiration=expiration,
+                confidence=confidence,
+                use_ibkr=use_ibkr,
+                strike=strike,
+                premium=premium,
+                option_type=option_type,
+                selected_expirations=selected_expirations,
+                progress_callback=progress_callback
+            )
+>>>>>>> 6a1117f (Update: Sync local changes - improve IBKR client, data fetcher, web UI, and calculation modules)
         
-        # 更新進度為完成
+        # Finish Progress
         if task_id and task_id in progress_store:
             progress_store[task_id].update({
                 'status': 'completed',

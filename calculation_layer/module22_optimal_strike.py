@@ -504,7 +504,11 @@ class OptimalStrikeCalculator:
         days_to_expiration: int = 30,
         iv_rank: float = 50.0,
         target_price: Optional[float] = None,
+<<<<<<< HEAD
         support_resistance_data: Optional[Dict] = None,
+=======
+        support_resistance_data: Optional[Dict[str, float]] = None,
+>>>>>>> 6a1117f (Update: Sync local changes - improve IBKR client, data fetcher, web UI, and calculation modules)
         enable_max_profit_analysis: bool = False
     ) -> Dict[str, Any]:
         """
@@ -517,20 +521,30 @@ class OptimalStrikeCalculator:
             days_to_expiration: 到期天數
             iv_rank: IV Rank (0-100)
             target_price: 目標價格（用於計算風險回報）
+            support_resistance_data: 支持阻力位數據 {'support_level': float, 'resistance_level': float}
+            enable_max_profit_analysis: 是否啟用最大利潤分析
         
         返回:
-            Dict: {
-                'analyzed_strikes': List[StrikeAnalysis],
-                'top_recommendations': List[Dict],
-                'best_strike': float,
-                'analysis_summary': str
-            }
+            Dict: 分析結果
         """
         try:
             logger.info(f"開始最佳行使價分析...")
             logger.info(f"  當前股價: ${current_price:.2f}")
             logger.info(f"  策略類型: {strategy_type}")
             logger.info(f"  到期天數: {days_to_expiration}")
+            
+            # 如果未提供 target_price，嘗試從 support_resistance_data 推導
+            if target_price is None and support_resistance_data:
+                if strategy_type in ['long_call', 'short_put']:
+                    # 看漲策略：目標價為阻力位
+                    target_price = support_resistance_data.get('resistance_level')
+                    if target_price:
+                        logger.info(f"  使用阻力位作為目標價: ${target_price:.2f}")
+                elif strategy_type in ['long_put', 'short_call']:
+                    # 看跌策略：目標價為支持位
+                    target_price = support_resistance_data.get('support_level')
+                    if target_price:
+                        logger.info(f"  使用支持位作為目標價: ${target_price:.2f}")
             
             # 確定分析的期權類型
             if strategy_type in ['long_call', 'short_call']:
