@@ -265,12 +265,13 @@ class IVNormalizer:
 class DataFetcher:
     """完整數據獲取類（支持多数据源降级）"""
     
-    def __init__(self, use_ibkr: bool = None):
+    def __init__(self, use_ibkr: bool = None, ibkr_client=None):
         """
         初始化數據獲取器
         
         參數:
             use_ibkr: 是否使用 IBKR（None 時從 settings 讀取）
+            ibkr_client: 現有的 IBKRClient 實例 (用於共享連接)
         """
         self.yahoo_v2_client = None
         self.yfinance_client = None
@@ -319,35 +320,39 @@ class DataFetcher:
             self.greeks_calculator = None
             self.iv_calculator = None
         
-        self.initialization_status = self._initialize_clients()
+        self.initialization_status = self._initialize_clients(ibkr_client)
         logger.info("DataFetcher已初始化")
     
-    def _initialize_clients(self):
+    def _initialize_clients(self, shared_ibkr_client=None):
         """初始化各API客户端"""
         try:
             # IBKR 客户端（如果启用）
+            # IBKR 客户端（如果启用）
             if self.use_ibkr:
-                try:
-                    port = settings.IBKR_PORT_PAPER if settings.IBKR_USE_PAPER else settings.IBKR_PORT_LIVE
-                    mode = 'paper' if settings.IBKR_USE_PAPER else 'live'
-                    
-                    self.ibkr_client = IBKRClient(
-                        host=settings.IBKR_HOST,
-                        port=port,
-                        client_id=settings.IBKR_CLIENT_ID,
-                        mode=mode
-                    )
-                    
-                    # 尝试连接（不强制，失败时使用降级方案）
-                    if self.ibkr_client.connect():
-                        logger.info("* IBKR 客户端已初始化并连接")
-                    else:
-                        logger.warning("! IBKR 客户端初始化但未连接，将使用降级方案")
-                        # 不设置为 None，保留客户端以便后续重试
-                except Exception as e:
-                    logger.warning(f"! IBKR 初始化失败: {e}，将使用降级方案")
-                    self._record_api_failure('ibkr', str(e))
-                    self.ibkr_client = None
+                if shared_ibkr_client:
+                     self.ibkr_client = shared_ibkr_client
+                     logger.info("* 使用共享的 IBKR 客户端")
+                else:
+                    try:
+                        port = settings.IBKR_PORT_PAPER if settings.IBKR_USE_PAPER else settings.IBKR_PORT_LIVE
+                        mode = 'paper' if settings.IBKR_USE_PAPER else 'live'
+                        
+                        self.ibkr_client = IBKRClient(
+                            host=settings.IBKR_HOST,
+                            port=port,
+                            client_id=settings.IBKR_CLIENT_ID,
+                            mode=mode
+                        )
+                        
+                        # 尝试连接（不强制，失败时使用降级方案）
+                        if self.ibkr_client.connect():
+                            logger.info("* IBKR 客户端已初始化并连接")
+                        else:
+                            logger.warning("! IBKR 客户端初始化但未连接，将使用降级方案")
+                    except Exception as e:
+                        logger.warning(f"! IBKR 初始化失败: {e}，将使用降级方案")
+                        self._record_api_failure('ibkr', str(e))
+                        self.ibkr_client = None
             else:
                 logger.info("i IBKR 未启用，将使用其他数据源")
             
@@ -2102,11 +2107,12 @@ class DataFetcher:
     
     def get_option_expirations(self, ticker):
         """
-        獲取所有期權到期日期 (增強版：支持多源回退)
+        獲取所有期權到期日期 (增強版：IBKR 優先)
         
         策略:
-        1. 優先使用 YahooFinanceV2Client (內置 Crumb/UA 輪換)
-        2. 如果失敗，回退到 yfinance (已打補丁)
+        1. 優先使用 IBKR (reqSecDefOptParams)
+        2. 如果失敗，回退到 YahooFinanceV2Client
+        3. 如果失敗，回退到 yfinance (已打補丁)
         
         參數:
             ticker: 股票代碼
@@ -2120,10 +2126,28 @@ class DataFetcher:
             # 使用標準標示符
             ticker_normalized = self._normalize_ticker(ticker) or ticker
             
-            # 方案 1: Yahoo Finance V2 Client (最穩健)
+            # 方案 1: IBKR (最優先)
+            if self.use_ibkr and self.ibkr_client and self.ibkr_client.is_connected():
+                try:
+                    logger.info("  使用 IBKR API...")
+                    expirations = self.ibkr_client.get_option_expirations(ticker_normalized)
+                    
+                    if expirations and len(expirations) > 0:
+                        logger.info(f"✓ 成功獲取 {ticker} 的 {len(expirations)} 個到期日期 (IBKR)")
+                        self._record_fallback('option_expirations', 'ibkr')
+                        return expirations
+                    else:
+                        logger.warning("! IBKR 獲取到期日列表為空，嘗試備用方案")
+                        self._record_fallback_failure('option_expirations', 'ibkr', '返回空列表')
+                except Exception as e:
+                    logger.warning(f"! IBKR 獲取到期日失敗: {e}")
+                    self._record_api_failure('ibkr', f"get_option_expirations: {e}")
+                    self._record_fallback_failure('option_expirations', 'ibkr', str(e))
+            
+            # 方案 2: Yahoo Finance V2 Client (備用)
             if hasattr(self, 'yahoo_v2_client') and self.yahoo_v2_client:
                 try:
-                    logger.info("  嘗試使用 Yahoo Finance V2 API...")
+                    logger.info("  備用: 嘗試使用 Yahoo Finance V2 API...")
                     expirations_raw = self.yahoo_v2_client.get_available_expirations(ticker_normalized)
                     
                     if expirations_raw:
@@ -2137,32 +2161,32 @@ class DataFetcher:
                                 continue
                         
                         if expirations:
-                            logger.info(f"* 成功獲取 {ticker} 的 {len(expirations)} 個到期日期 (Yahoo V2)")
+                            logger.info(f"✓ 成功獲取 {ticker} 的 {len(expirations)} 個到期日期 (Yahoo V2)")
+                            self._record_fallback('option_expirations', 'yahoo_v2')
                             return sorted(list(set(expirations)))
                 except Exception as e:
                     logger.warning(f"! Yahoo V2 獲取到期日失敗: {e}")
                     self._record_api_failure('Yahoo V2', f"get_option_expirations: {e}")
             
-            # 方案 2: yfinance (備用)
+            # 方案 3: yfinance (最後備用)
             try:
-                logger.info("  嘗試使用 yfinance (已打補丁)...")
+                logger.info("  備用: 嘗試使用 yfinance (已打補丁)...")
                 stock = yf.Ticker(ticker_normalized, session=self.session)
                 expirations = stock.options
                 
                 if expirations:
-                    logger.info(f"* 成功獲取 {ticker} 的 {len(expirations)} 個到期日期 (yfinance)")
+                    logger.info(f"✓ 成功獲取 {ticker} 的 {len(expirations)} 個到期日期 (yfinance)")
+                    self._record_fallback('option_expirations', 'yfinance')
                     return list(expirations)
             except Exception as e:
                 logger.warning(f"! yfinance 獲取到期日失敗: {e}")
                 self._record_api_failure('yfinance', f"get_option_expirations: {e}")
                 
-            # 方案 3: RapidAPI 也許有，但目前 DataFetcher 未對其進行期權日期支持
-            
-            logger.error(f"x 獲取 {ticker} 所有的期權到期日期均失敗")
+            logger.error(f"✗ 獲取 {ticker} 所有的期權到期日期均失敗")
             return []
             
         except Exception as ge:
-            logger.error(f"x get_option_expirations 發生未預期錯誤: {ge}")
+            logger.error(f"✗ get_option_expirations 發生未預期錯誤: {ge}")
             return []
     
     def _merge_ibkr_opra_with_yahoo(self, yahoo_df: pd.DataFrame, ticker: str, 
@@ -2379,7 +2403,6 @@ class DataFetcher:
          
         # [已移除 Yahoo Finance 邏輯]
         
-<<<<<<< HEAD
         # 方案3: 降級到 yfinance
         try:
             self._rate_limit_delay()
@@ -2451,10 +2474,6 @@ class DataFetcher:
             logger.error(f"x yfinance 獲取期權鏈失敗: {e}")
             self._record_api_failure('yfinance', f"get_option_chain: {str(e)}")
             self._record_fallback_failure('option_chain', 'yfinance', str(e))
-=======
-        # 方案2: 降級到 Yahoo Finance (已禁用)
-        # pass
->>>>>>> 6a1117f (Update: Sync local changes - improve IBKR client, data fetcher, web UI, and calculation modules)
         
         # 方案4: 嘗試 RapidAPI (如果啟用)
         # 這裡為了代碼簡潔，直接復用原有 RapidAPI 代碼塊 (需要確保前面的 indent 正確)

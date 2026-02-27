@@ -3,6 +3,10 @@
 主程序入口 - 期權分析系統第1階段
 """
 
+import os
+# Prevent Fortran runtime error (MKL library conflict)
+os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
+
 import logging
 import argparse
 from datetime import datetime, timedelta
@@ -102,12 +106,13 @@ class OptionsAnalysisSystem:
     4. 生成報告 (輸出層)
     """
     
-    def __init__(self, use_ibkr: bool = None):
+    def __init__(self, use_ibkr: bool = None, ibkr_client=None):
         """
         初始化系統
         
         參數:
             use_ibkr: 是否使用 IBKR（None 時從 settings 讀取）
+            ibkr_client: 現有的 IBKRClient 實例 (用於共享連接)
         """
         logger.info("=" * 70)
         logger.info("期權分析系統啟動")
@@ -115,7 +120,7 @@ class OptionsAnalysisSystem:
         logger.info(f"當前時間: {datetime.now()}")
         logger.info("=" * 70)
         
-        self.fetcher = DataFetcher(use_ibkr=use_ibkr)
+        self.fetcher = DataFetcher(use_ibkr=use_ibkr, ibkr_client=ibkr_client)
         self.validator = DataValidator()
         
         # 初始化 OutputPathManager 用於按股票代號分類存儲
@@ -165,14 +170,10 @@ class OptionsAnalysisSystem:
                              confidence: float = 1.0, use_ibkr: bool = None,
                              strike: float = None, premium: float = None, 
                              option_type: str = None, selected_expirations: list = None,
-<<<<<<< HEAD
                              iv: float = None, delta: float = None, gamma: float = None,
                              theta: float = None, vega: float = None, rho: float = None,
                              risk_free_rate: float = None,
-                             progress_callback=None):
-=======
                              progress_callback=None, monthly_only: bool = False):
->>>>>>> 6a1117f (Update: Sync local changes - improve IBKR client, data fetcher, web UI, and calculation modules)
         """
         運行完整分析
         
@@ -1541,25 +1542,29 @@ class OptionsAnalysisSystem:
             # 原因：Newton-Raphson 在市場價格與理論價差距大時會失敗
             try:
                 if strike_price and strike_price > 0:
-                    # 優先從 ATM 期權數據獲取 Yahoo Finance 的 IV
-                    yahoo_call_iv = atm_call.get('impliedVolatility')  # Yahoo Finance 提供的 IV
-                    yahoo_put_iv = atm_put.get('impliedVolatility')
+                    # 優先從 ATM 期權數據獲取 IV（IBKR 返回百分比格式，需轉為小數）
+                    raw_call_iv = atm_call.get('impliedVolatility')  # IBKR: 百分比 (e.g., 27.87)
+                    raw_put_iv = atm_put.get('impliedVolatility')
+                    
+                    # 判斷並轉換：如果值 > 1，視為百分比格式，需除以 100
+                    yahoo_call_iv = raw_call_iv / 100.0 if raw_call_iv and raw_call_iv > 1 else raw_call_iv
+                    yahoo_put_iv = raw_put_iv / 100.0 if raw_put_iv and raw_put_iv > 1 else raw_put_iv
                     
                     iv_results = {}
-                    use_yahoo_iv = False
+                    use_chain_iv = False
                     
-                    # 如果 Yahoo Finance 有提供 IV，直接使用
+                    # 如果期權鏈有提供 IV，直接使用
                     if yahoo_call_iv and yahoo_call_iv > 0:
                         iv_results['call'] = {
                             'implied_volatility': yahoo_call_iv,
                             'converged': True,
                             'iterations': 0,
                             'market_price': call_last_price,
-                            'source': 'Yahoo Finance (直接提供)',
-                            'note': '使用 Yahoo Finance 提供的 IV，基於 bid/ask mid price 計算'
+                            'source': 'IBKR ATM IV (直接提供)',
+                            'note': '使用 IBKR 提供的 IV，基於市場買賣價計算'
                         }
-                        use_yahoo_iv = True
-                        logger.info(f"  Call IV: {yahoo_call_iv*100:.2f}% (Yahoo Finance 直接提供)")
+                        use_chain_iv = True
+                        logger.info(f"  Call IV: {yahoo_call_iv*100:.2f}% (IBKR 直接提供)")
                     
                     if yahoo_put_iv and yahoo_put_iv > 0:
                         iv_results['put'] = {
@@ -1567,29 +1572,28 @@ class OptionsAnalysisSystem:
                             'converged': True,
                             'iterations': 0,
                             'market_price': put_last_price,
-                            'source': 'Yahoo Finance (直接提供)',
-                            'note': '使用 Yahoo Finance 提供的 IV，基於 bid/ask mid price 計算'
+                            'source': 'IBKR ATM IV (直接提供)',
+                            'note': '使用 IBKR 提供的 IV，基於市場買賣價計算'
                         }
-                        use_yahoo_iv = True
-                        logger.info(f"  Put IV: {yahoo_put_iv*100:.2f}% (Yahoo Finance 直接提供)")
+                        use_chain_iv = True
+                        logger.info(f"  Put IV: {yahoo_put_iv*100:.2f}% (IBKR 直接提供)")
                     
-                    # 如果 Yahoo Finance 沒有提供 IV，使用 Market IV（從 Finnhub 獲取）
-                    # 修復：不再嘗試 Newton-Raphson 計算，因為當市場價格與理論價差距大時會失敗
-                    if not use_yahoo_iv:
+                    # 如果期權鏈沒有提供 IV，使用 Market IV（從 Finnhub 獲取）
+                    if not use_chain_iv:
                         # 使用 Market IV 作為備選（已經在 volatility_estimate 中）
                         market_iv = volatility_estimate  # 這是從 Finnhub 獲取的 Market IV
                         
                         if market_iv and market_iv > 0:
-                            logger.info(f"  Yahoo Finance 未提供 IV，使用 Market IV: {market_iv*100:.2f}%")
+                            logger.info(f"  期權鏈未提供 IV，使用 Market IV: {market_iv*100:.2f}%")
                             iv_results['call'] = {
                                 'implied_volatility': market_iv,
                                 'converged': True,
                                 'iterations': 0,
                                 'market_price': call_last_price,
                                 'source': 'Market IV (Finnhub)',
-                                'note': '使用 Finnhub 提供的 Market IV，因為 Yahoo Finance 未提供期權 IV'
+                                'note': '使用 Finnhub 提供的 Market IV，因為期權鏈未提供 IV'
                             }
-                            use_yahoo_iv = True  # 標記為已獲取 IV
+                            use_chain_iv = True  # 標記為已獲取 IV
                             
                             if put_last_price > 0:
                                 iv_results['put'] = {
@@ -1631,7 +1635,7 @@ class OptionsAnalysisSystem:
                     
                     self.analysis_results['module17_implied_volatility'] = iv_results
                     
-                    # 判斷 IV 是否成功獲取（Yahoo IV 或自行計算）
+                    # 判斷 IV 是否成功獲取（期權鏈 IV 或自行計算）
                     call_iv_converged = iv_results.get('call', {}).get('converged', False)
                     call_iv_value = iv_results.get('call', {}).get('implied_volatility', 0)
                     iv_source_type = iv_results.get('call', {}).get('source', 'unknown')
@@ -2890,11 +2894,7 @@ class OptionsAnalysisSystem:
                 user_selected = getattr(self, 'selected_expirations', None)
                 
                 # 過濾 ≤90 天的到期日
-<<<<<<< HEAD
-                from datetime import timedelta
-=======
-                # from datetime import datetime, timedelta  # Removed to avoid shadowing global datetime
->>>>>>> 6a1117f (Update: Sync local changes - improve IBKR client, data fetcher, web UI, and calculation modules)
+                # from datetime import timedelta  # Redundant, already imported globally
                 import time as time_module
                 today = datetime.now().date()
                 max_days = 90

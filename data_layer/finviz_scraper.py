@@ -772,6 +772,176 @@ class FinvizScraper:
             logger.error(f"x Finviz 財務報表獲取失敗: {e}")
             return None
     
+    def get_screener_results(self, filters: str, limit: int = 20) -> List[Dict]:
+        """
+        獲取 Finviz Screener 結果（動態清單）
+        
+        參數:
+            filters: Finviz 篩選參數 (例如: 'v=111&f=cap_mega')
+            limit: 返回結果數量限制
+            
+        返回:
+            List[Dict]: 股票列表，包含 ticker, price, change, volume 等
+        """
+        try:
+            self._rate_limit()
+            # 構建 Screener URL (v=111 是 overview 視圖)
+            base_url = "https://finviz.com/screener.ashx"
+            # 確保有 v=111 (Overview) 或其他視圖參數，如果沒有默認加 v=111
+            if 'v=' not in filters:
+                filters = 'v=111&' + filters
+                
+            url = f"{base_url}?{filters}"
+            
+            logger.info(f"正在獲取 Finviz Screener: {url}")
+            
+            headers = self.headers.copy()
+            headers['User-Agent'] = self._rotate_user_agent()
+            
+            if USE_CURL_CFFI:
+                response = curl_requests.get(
+                    url,
+                    impersonate='chrome',
+                    headers=headers,
+                    timeout=self.connection_config.timeout
+                )
+            else:
+                response = self.session.get(url, headers=headers, timeout=self.connection_config.timeout)
+                
+            response.raise_for_status()
+            
+            if self._detect_block(response):
+                logger.warning("! Screener 請求被封鎖")
+                return []
+
+            soup = BeautifulSoup(response.content, 'html.parser')
+            
+            # 查找 Screener 表格
+            # 嘗試找到包含正確表頭的表格
+            screener_table = None
+            tables = soup.find_all('table')
+            
+            for table in tables:
+                # 檢查這個表格是否包含我們需要的表頭
+                rows = table.find_all('tr')
+                if len(rows) < 2:
+                    continue
+                    
+                # 檢查第一行或第二行是否包含 'Ticker' 和 'Price'
+                # Finviz 的表頭有時在第一行，有時在第二行
+                # Finviz 的表頭位置很不固定，增加搜索範圍到前 12 行
+                for r_idx in range(min(12, len(rows))):
+                    if r_idx >= len(rows):
+                        break
+                    
+                    row_text = rows[r_idx].get_text(separator=' ', strip=True) 
+                    # 只要這一行同時包含 Ticker 和 Price，就假設它是表頭
+                    if 'Ticker' in row_text and 'Price' in row_text:
+                        screener_table = table
+                        header_row_index = r_idx
+                        logger.info(f"  Found header row at index {r_idx} in table with {len(rows)} rows")
+                        break
+                
+                if screener_table:
+                    break
+                    
+            if not screener_table:
+                logger.warning("! 未找到符合格式的 Screener 數據表格")
+                return []
+            
+            results = []
+            rows = screener_table.find_all('tr')
+            
+            # 解析表頭
+            headers = []
+            headers = []
+            header_cells = rows[header_row_index].find_all('td')
+            # 如果是 th 標籤也支持
+            if not header_cells:
+                header_cells = rows[header_row_index].find_all('th')
+                
+            for th in header_cells:
+                headers.append(th.get_text(strip=True))
+                
+            # 查找關鍵列的索引
+            try:
+                # 處理可能的表頭變化 (No., Ticker, ...)
+                ticker_idx = -1
+                price_idx = -1
+                change_idx = -1
+                vol_idx = -1
+                
+                for i, h in enumerate(headers):
+                    if h == 'Ticker': ticker_idx = i
+                    elif h == 'Price': price_idx = i
+                    elif h == 'Change': change_idx = i
+                    elif h == 'Volume': vol_idx = i
+                
+                if ticker_idx == -1 or price_idx == -1:
+                    logger.warning(f"x 找不到關鍵列: {headers}，嘗試使用默認索引")
+                    # Fallback to standard v=111 column indices
+                    # No. | Ticker | Company | ... | Price | ...
+                    # 1   | 2      | 3       | ... | 9     | ...
+                    ticker_idx = 1
+                    price_idx = 8
+                    change_idx = 9
+                    vol_idx = 10
+                    # If we defaulted, we probably didn't find the header row correctly.
+                    # We should start iterating from a safe row index (e.g. skip the first few filter rows)
+                    # Ideally we look for a row that has a number in the first column.
+                    header_row_index = 0 # Reset to traverse all, but we will filter inside loop
+            except Exception as e:
+                logger.error(f"x 解析表頭索引失敗: {e}")
+                return []
+
+            # 解析數據行
+            count = 0
+            for row in rows[header_row_index+1:]: # 跳過表頭
+                if count >= limit:
+                    break
+                    
+                cols = row.find_all('td')
+                if len(cols) < 11: # Standard has ~11+ cols
+                    continue
+                
+                # Verify first col is a number (No.)
+                try:
+                   first_col = cols[0].get_text(strip=True)
+                   if not first_col.isdigit():
+                       continue
+                except:
+                    continue
+                    
+                try:
+                    # 获取文本
+                    ticker = cols[ticker_idx].get_text(strip=True)
+                    price_str = cols[price_idx].get_text(strip=True)
+                    change_str = cols[change_idx].get_text(strip=True)
+                    volume_str = cols[vol_idx].get_text(strip=True)
+                    
+                    # 簡單過濾廣告或無效行
+                    if not ticker or ticker == 'Ticker':
+                        continue
+                        
+                    results.append({
+                        'ticker': ticker,
+                        'price': self._parse_value(price_str),
+                        'change_pct': self._parse_value(change_str.replace('%', '')),
+                        'volume': self._parse_value(volume_str),
+                        'source': 'Finviz_Screener'
+                    })
+                    count += 1
+                except Exception as e:
+                    # logger.debug(f"Row parse error: {e}")
+                    continue
+                    
+            logger.info(f"* 成功從 Screener 獲取 {len(results)} 個結果")
+            return results
+            
+        except Exception as e:
+            logger.error(f"x 獲取 Screener 結果失敗: {e}")
+            return []
+
     def validate_data_quality(self, data: Dict) -> Dict:
         """
         驗證數據質量

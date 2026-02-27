@@ -157,17 +157,14 @@ class IBKRClient:
     def __init__(self, host: str = "127.0.0.1", port: int = 7497, 
                  client_id: int = 100, mode: str = 'paper',
                  market_data_type: int = None,
-                 tick_tag_categories: List[str] = None):
+                 tick_tag_categories: List[str] = None,
+                 ib_instance=None): # New param
         """
         初始化 IBKR 客戶端
         
         參數:
-            host: TWS/Gateway 主機地址 (默認 127.0.0.1)
-            port: 端口 (7497=Paper, 7496=Live)
-            client_id: 客戶端 ID (必須唯一)
-            mode: 'paper' 或 'live'
-            market_data_type: 強制指定 Market Data Type (1=Live, 2=Frozen)，None 為自動
-            tick_tag_categories: Generic Tick Tags 類別，默認全部
+            ...
+            ib_instance: 現有的 IB 實例（用於共享連接）
         """
         if not IB_INSYNC_AVAILABLE:
             raise ImportError("ib_insync 未安裝，無法使用 IBKR 功能")
@@ -176,8 +173,8 @@ class IBKRClient:
         self.port = port
         self.client_id = client_id
         self.mode = mode
-        self.ib = IB()
-        self.connected = False
+        self.ib = ib_instance if ib_instance else IB() # Use existing or create new
+        self.connected = ib_instance.isConnected() if ib_instance else False
         self.last_error = None
         self.connection_attempts = 0
         self.max_connection_attempts = 3
@@ -554,6 +551,180 @@ class IBKRClient:
             return self.ib.isConnected() if self.ib else False
         except:
             return False
+    
+    def get_option_expirations(self, ticker: str) -> Optional[list]:
+        """
+        獲取期權到期日列表 (使用 reqSecDefOptParams)
+        
+        參數:
+            ticker: 股票代碼
+        
+        返回:
+            list of str: 到期日期列表 (格式: YYYY-MM-DD)，失敗返回 None
+        """
+        if not self.is_connected():
+            if not self.connect():
+                logger.warning("! IBKR 未連接，無法獲取期權到期日")
+                return None
+        
+        try:
+            logger.info(f"開始獲取 {ticker} 期權到期日列表 (IBKR)...")
+            
+            # 創建股票合約
+            stock = Stock(ticker, 'SMART', 'USD')
+            self.ib.qualifyContracts(stock)
+            
+            # 獲取期權鏈定義
+            chains = self.ib.reqSecDefOptParams(
+                stock.symbol,
+                '',
+                stock.secType,
+                stock.conId
+            )
+            
+            if not chains:
+                logger.warning(f"! {ticker} 無可用期權鏈定義 (IBKR)")
+                return None
+            
+            # 收集所有到期日（去重）
+            all_expirations = set()
+            for chain in chains:
+                for exp_date in chain.expirations:
+                    if isinstance(exp_date, str):
+                        # 格式: YYYYMMDD -> YYYY-MM-DD
+                        if len(exp_date) == 8:
+                            formatted = f"{exp_date[:4]}-{exp_date[4:6]}-{exp_date[6:8]}"
+                            all_expirations.add(formatted)
+                        else:
+                            all_expirations.add(exp_date)
+                    else:
+                        all_expirations.add(exp_date.strftime('%Y-%m-%d'))
+            
+            if all_expirations:
+                result = sorted(list(all_expirations))
+                logger.info(f"✓ 成功獲取 {ticker} 的 {len(result)} 個到期日期 (IBKR)")
+                return result
+            else:
+                logger.warning(f"! {ticker} IBKR 返回的到期日列表為空")
+                return None
+                
+        except Exception as e:
+            logger.error(f"✗ IBKR 獲取期權到期日失敗: {e}")
+            return None
+    
+    def get_historical_data(self, ticker: str, period: str = '1mo', interval: str = '1d') -> Optional['pd.DataFrame']:
+        """
+        獲取歷史 OHLCV 數據 (使用 reqHistoricalData)
+        
+        參數:
+            ticker: 股票代碼
+            period: 時間週期 (yfinance 風格: '1d', '5d', '1mo', '3mo', '6mo', '1y', '2y')
+            interval: K線間隔 (yfinance 風格: '1m', '5m', '15m', '30m', '1h', '1d', '1wk')
+        
+        返回:
+            pandas DataFrame (Open, High, Low, Close, Volume)，失敗返回 None
+        """
+        import pandas as pd
+        
+        if not self.is_connected():
+            if not self.connect():
+                logger.warning("! IBKR 未連接，無法獲取歷史數據")
+                return None
+        
+        try:
+            logger.info(f"開始獲取 {ticker} 歷史數據 (IBKR)... (週期: {period}, 間隔: {interval})")
+            
+            # --- 將 yfinance 風格的 period 轉換為 IBKR 的 durationStr ---
+            period_map = {
+                '1d': '1 D',
+                '2d': '2 D',
+                '5d': '5 D',
+                '1mo': '1 M',
+                '3mo': '3 M',
+                '6mo': '6 M',
+                '1y': '1 Y',
+                '2y': '2 Y',
+            }
+            # 也支持 '30d', '60d', '90d', '252d' 這類格式
+            duration_str = period_map.get(period)
+            if duration_str is None:
+                # 嘗試解析 'Nd' 格式
+                if period.endswith('d') and period[:-1].isdigit():
+                    days = int(period[:-1])
+                    duration_str = f"{days} D"
+                else:
+                    logger.warning(f"! 不支持的 period 格式: {period}，使用默認 1 M")
+                    duration_str = '1 M'
+            
+            # --- 將 yfinance 風格的 interval 轉換為 IBKR 的 barSizeSetting ---
+            interval_map = {
+                '1m': '1 min',
+                '2m': '2 mins',
+                '5m': '5 mins',
+                '15m': '15 mins',
+                '30m': '30 mins',
+                '1h': '1 hour',
+                '60m': '1 hour',
+                '1d': '1 day',
+                '1wk': '1 week',
+                '1mo': '1 month',
+            }
+            bar_size = interval_map.get(interval)
+            if bar_size is None:
+                logger.warning(f"! 不支持的 interval 格式: {interval}，使用默認 1 day")
+                bar_size = '1 day'
+            
+            # 日線以上使用 TRADES，分鐘線也使用 TRADES
+            what_to_show = 'TRADES'
+            
+            # 創建股票合約
+            stock = Stock(ticker, 'SMART', 'USD')
+            self.ib.qualifyContracts(stock)
+            
+            # 請求歷史數據
+            bars = self.ib.reqHistoricalData(
+                stock,
+                endDateTime='',  # 到最新
+                durationStr=duration_str,
+                barSizeSetting=bar_size,
+                whatToShow=what_to_show,
+                useRTH=True,  # 只要常規交易時段
+                formatDate=1  # 日期格式
+            )
+            
+            if not bars:
+                logger.warning(f"! IBKR 返回空的歷史數據 ({ticker})")
+                return None
+            
+            # 將 BarData 轉換為 DataFrame
+            data = []
+            for bar in bars:
+                data.append({
+                    'Open': bar.open,
+                    'High': bar.high,
+                    'Low': bar.low,
+                    'Close': bar.close,
+                    'Volume': bar.volume
+                })
+            
+            # 使用 bar.date 作為索引
+            dates = [bar.date for bar in bars]
+            df = pd.DataFrame(data, index=pd.DatetimeIndex(dates))
+            df.index.name = 'Date'
+            
+            # 移除 NaN 行
+            df = df.dropna()
+            
+            if df.empty:
+                logger.warning(f"! IBKR 歷史數據轉換後為空 ({ticker})")
+                return None
+            
+            logger.info(f"✓ 成功獲取 {ticker} 的 {len(df)} 條歷史記錄 (IBKR, {bar_size})")
+            return df
+            
+        except Exception as e:
+            logger.error(f"✗ IBKR 獲取歷史數據失敗: {e}")
+            return None
     
     def get_option_chain(self, ticker: str, expiration: str, stock_price: float = 0) -> Optional[Dict[str, Any]]:
         """

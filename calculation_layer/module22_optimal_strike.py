@@ -504,11 +504,7 @@ class OptimalStrikeCalculator:
         days_to_expiration: int = 30,
         iv_rank: float = 50.0,
         target_price: Optional[float] = None,
-<<<<<<< HEAD
         support_resistance_data: Optional[Dict] = None,
-=======
-        support_resistance_data: Optional[Dict[str, float]] = None,
->>>>>>> 6a1117f (Update: Sync local changes - improve IBKR client, data fetcher, web UI, and calculation modules)
         enable_max_profit_analysis: bool = False
     ) -> Dict[str, Any]:
         """

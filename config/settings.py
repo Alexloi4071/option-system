@@ -25,8 +25,8 @@ class Settings:
     FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY", "")
     IBKR_ENABLED = os.getenv("IBKR_ENABLED", "False").lower() == "true"
     IBKR_HOST = os.getenv("IBKR_HOST", "127.0.0.1")
-    IBKR_PORT_PAPER = int(os.getenv("IBKR_PORT_PAPER", "7497"))
-    IBKR_PORT_LIVE = int(os.getenv("IBKR_PORT_LIVE", "7496"))
+    IBKR_PORT_PAPER = int(os.getenv("IBKR_PORT_PAPER", "4002"))
+    IBKR_PORT_LIVE = int(os.getenv("IBKR_PORT_LIVE", "4001"))
     IBKR_CLIENT_ID = int(os.getenv("IBKR_CLIENT_ID", "100"))
     IBKR_USE_PAPER = os.getenv("IBKR_USE_PAPER", "True").lower() == "true"  # 使用 Paper Trading
     IBKR_ACCOUNT_ID = os.getenv("IBKR_ACCOUNT_ID", "")
@@ -44,6 +44,9 @@ class Settings:
     RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY", "")
     RAPIDAPI_HOST = os.getenv("RAPIDAPI_HOST", "yahoo-finance127.p.rapidapi.com")
     RAPIDAPI_MONTHLY_LIMIT = int(os.getenv("RAPIDAPI_MONTHLY_LIMIT", "500"))
+    
+    # NVIDIA API
+    NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY", "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")
     
     # Alpha Vantage 設置
     ALPHA_VANTAGE_API_KEY = os.getenv("ALPHA_VANTAGE_API_KEY", "")

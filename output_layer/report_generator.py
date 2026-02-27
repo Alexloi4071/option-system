@@ -275,7 +275,9 @@ class ReportGenerator:
             }
             
         except Exception as e:
+            import traceback
             logger.error(f"x 報告生成失敗: {e}")
+            logger.error(f"  詳細錯誤:\n{traceback.format_exc()}")
             raise
     
     def _generate_json_report(self, ticker, analysis_date, raw_data, calculation_results, api_status=None):
@@ -555,22 +557,63 @@ class ReportGenerator:
         self.output_manager.ensure_directory_exists(os.path.dirname(filepath))
         self._write_text_report(filepath, ticker, analysis_date, raw_data, calculation_results, api_status, delta_report)
     
+    def _safe_format(self, value, fmt=".2f", prefix="", suffix=""):
+        """安全格式化函數，處理 None 值"""
+        if value is None or (isinstance(value, float) and (value != value)): # check for NaN
+            return "N/A"
+        try:
+            return f"{prefix}{value:{fmt}}{suffix}"
+        except (ValueError, TypeError):
+            return str(value)
+
     def _write_text_report(self, filepath, ticker, analysis_date, raw_data, 
                           calculation_results, api_status=None, delta_report=None):
         """寫入純文本報告內容"""
+        from datetime import datetime
         
         with open(filepath, 'w', encoding='utf-8') as f:
+            # 報告標題
             f.write("=" * 70 + "\n")
-            f.write("期權交易分析系統 - 完整分析報告\n")
+            f.write(f"期權合約深度分析報告 - {ticker}\n")
+            f.write(f"分析日期: {analysis_date}\n")
             f.write("=" * 70 + "\n\n")
             
-            # 基本信息
-            f.write(f"股票代碼: {ticker}\n")
-            f.write(f"分析日期: {analysis_date}\n")
-            f.write(f"生成時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
-            
-            # 決策摘要 - 放在報告最前面
+            # 決策摘要 (Requirements: 8.1, 8.2, 8.3, 8.4)
             f.write(self._format_decision_summary(ticker, raw_data, calculation_results))
+            f.write("\n")
+            
+            # 原始數據摘要
+            f.write("=" * 70 + "\n")
+            f.write("原始市場數據\n")
+            f.write("=" * 70 + "\n")
+            
+            if raw_data:
+                f.write(f"當前股價: {self._safe_format(raw_data.get('current_price'), prefix='$')}\n")
+                f.write(f"隱含波動率: {self._safe_format(raw_data.get('implied_volatility'), suffix='%')}\n")
+                f.write(f"EPS: {self._safe_format(raw_data.get('eps'), prefix='$')}\n")
+                f.write(f"派息: {self._safe_format(raw_data.get('annual_dividend'), prefix='$')}\n")
+                f.write(f"無風險利率: {self._safe_format(raw_data.get('risk_free_rate'), suffix='%')}\n")
+                f.write(f"VIX: {self._safe_format(raw_data.get('vix'))}\n")
+                
+                # 從計算結果中獲取 IV Rank 和 IV Percentile
+                module18_data = calculation_results.get('module18_historical_volatility', {})
+                iv_rank = module18_data.get('iv_rank')
+                iv_percentile = module18_data.get('iv_percentile')
+                
+                if iv_rank is not None:
+                    f.write(f"IV Rank: {iv_rank:.2f}%")
+                    if iv_rank < 30:
+                        f.write(" (低IV環境)")
+                    elif iv_rank > 70:
+                        f.write(" (高IV環境)")
+                    else:
+                        f.write(" (正常)")
+                    f.write("\n")
+                
+                if iv_percentile is not None:
+                    f.write(f"IV Percentile: {iv_percentile:.2f}%\n")
+                
+                f.write("\n")
             
             # API 狀態信息
             if api_status:
@@ -606,11 +649,18 @@ class ReportGenerator:
                 # 詳細對比
                 px = delta_report.get('price_change', {})
                 if px:
-                    f.write(f"價格變化: ${px.get('previous', 0):.2f} -> ${px.get('current', 0):.2f} ({px.get('pct', 0):+.2f}%)\n")
+                    prev_px = px.get('previous') or 0
+                    curr_px = px.get('current') or 0
+                    pct_px = px.get('pct') or 0
+                    f.write(f"價格變化: ${prev_px:.2f} -> ${curr_px:.2f} ({pct_px:+.2f}%)\n")
                     
                 iv = delta_report.get('iv_change', {})
                 if iv:
-                    f.write(f"IV Rank: {iv.get('previous_rank', 0):.0f} -> {iv.get('current_rank', 0):.0f} (變化 {iv.get('rank_diff', 0):+.0f})\n")
+                    prev_rank = iv.get('previous_rank') or 0
+                    curr_rank = iv.get('current_rank') or 0
+                    rank_diff = iv.get('rank_diff') or 0
+                    f.write(f"IV Rank: {prev_rank:.0f} -> {curr_rank:.0f} (變化 {rank_diff:+.0f})\n")
+
                 
                 strat = delta_report.get('strategy_change', {})
                 if strat.get('changed'):
@@ -618,46 +668,6 @@ class ReportGenerator:
                 
                 f.write("\n")
             
-            # 原始數據摘要
-            f.write("=" * 70 + "\n")
-            f.write("原始市場數據\n")
-            f.write("=" * 70 + "\n")
-            
-            if raw_data:
-                # 安全格式化函數，處理 None 值
-                def safe_format(value, fmt=".2f", prefix="", suffix=""):
-                    if value is None:
-                        return "N/A"
-                    try:
-                        return f"{prefix}{value:{fmt}}{suffix}"
-                    except (ValueError, TypeError):
-                        return str(value)
-                
-                f.write(f"當前股價: {safe_format(raw_data.get('current_price'), prefix='$')}\n")
-                f.write(f"隱含波動率: {safe_format(raw_data.get('implied_volatility'), suffix='%')}\n")
-                f.write(f"EPS: {safe_format(raw_data.get('eps'), prefix='$')}\n")
-                f.write(f"派息: {safe_format(raw_data.get('annual_dividend'), prefix='$')}\n")
-                f.write(f"無風險利率: {safe_format(raw_data.get('risk_free_rate'), suffix='%')}\n")
-                f.write(f"VIX: {safe_format(raw_data.get('vix'))}\n")
-                
-                # 從計算結果中獲取 IV Rank 和 IV Percentile
-                module18_data = calculation_results.get('module18_historical_volatility', {})
-                iv_rank = module18_data.get('iv_rank')
-                iv_percentile = module18_data.get('iv_percentile')
-                
-                if iv_rank is not None:
-                    f.write(f"IV Rank: {iv_rank:.2f}%")
-                    if iv_rank < 30:
-                        f.write(" (低IV環境)")
-                    elif iv_rank > 70:
-                        f.write(" (高IV環境)")
-                    else:
-                        f.write(" (正常)")
-                    f.write("\n")
-                
-                if iv_percentile is not None:
-                    f.write(f"IV Percentile: {iv_percentile:.2f}%\n")
-                
                 f.write("\n")
             
             # 計算結果
@@ -6003,8 +6013,8 @@ class ReportGenerator:
             gex = data.get('gamma_exposure', {})
             if gex:
                 report += "│ ⚡ Gamma Exposure (GEX):\n"
-                report += f"│   淨 GEX: {gex.get('net_gex', 'N/A')}\n"
-                report += f"│   零點: ${gex.get('zero_gamma_point', 'N/A')}\n│\n"
+                report += f"│   淨 GEX: {self._safe_format(gex.get('net_gex'), fmt='.2e')}\n"
+                report += f"│   零點: {self._safe_format(gex.get('zero_gamma_point'), prefix='$')}\n│\n"
             
             report += "└────────────────────────────────────────────┘\n"
             return report
@@ -6063,7 +6073,7 @@ class ReportGenerator:
                 report += "│ ═══════════════════════════════════════════\n"
                 report += f"│ 🏆 最佳推薦: {best.get('type', 'N/A')}\n"
                 report += f"│    適用: {best.get('category', 'N/A')}\n"
-                report += f"│    評分: {best.get('score', 0):.1f}/100\n│\n"
+                report += f"│    評分: {self._safe_format(best.get('score', 0), fmt='.1f')}/100\n│\n"
                 
                 # 操作流程
                 report += "│ 📋 操作流程:\n"
@@ -6115,19 +6125,19 @@ class ReportGenerator:
                 
                 report += "│ 💰 風險回報分析:\n"
                 if net_premium > 0:
-                    report += f"│   淨權金收入: ${net_premium:.2f}\n"
+                    report += f"│   淨權金收入: {self._safe_format(net_premium, prefix='$')}\n"
                 else:
-                    report += f"│   淨成本: ${abs(net_premium):.2f}\n"
+                    report += f"│   淨成本: {self._safe_format(abs(net_premium), prefix='$')}\n"
                 
                 if max_profit == 'Unlimited':
                     report += "│   最大利潤: 無限 🚀\n"
                 else:
-                    report += f"│   最大利潤: ${max_profit:.2f}\n"
+                    report += f"│   最大利潤: {self._safe_format(max_profit, prefix='$')}\n"
                 
                 if max_loss == 'Unlimited':
                     report += "│   最大損失: 無限 ⚠️\n"
                 else:
-                    report += f"│   最大損失: ${max_loss:.2f}\n"
+                    report += f"│   最大損失: {self._safe_format(max_loss, prefix='$')}\n"
                     
                 rr = best.get('risk_reward', 0)
                 if rr > 0:
@@ -6154,10 +6164,10 @@ class ReportGenerator:
                 greeks = best.get('greeks', {})
                 if greeks:
                     report += "│ 📊 組合 Greeks:\n"
-                    report += f"│   Delta: {greeks.get('delta', 0):.4f}\n"
-                    report += f"│   Gamma: {greeks.get('gamma', 0):.4f}\n"
-                    report += f"│   Theta: {greeks.get('theta', 0):.4f}/天\n"
-                    report += f"│   Vega: {greeks.get('vega', 0):.4f}\n"
+                    report += f"│   Delta: {self._safe_format(greeks.get('delta', 0), fmt='.4f')}\n"
+                    report += f"│   Gamma: {self._safe_format(greeks.get('gamma', 0), fmt='.4f')}\n"
+                    report += f"│   Theta: {self._safe_format(greeks.get('theta', 0), fmt='.4f')}/天\n"
+                    report += f"│   Vega: {self._safe_format(greeks.get('vega', 0), fmt='.4f')}\n"
                     report += "│\n"
                 
                 report += "│ ═══════════════════════════════════════════\n│\n"
