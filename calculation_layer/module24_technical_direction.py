@@ -28,7 +28,7 @@ DAILY_CONFIG = {
     'resolution': 'D',
     'rsi_period': 14,
     'macd': {'fast': 12, 'slow': 26, 'signal': 9},
-    'sma_periods': [20, 50, 200],
+    'sma_periods': [20, 50, 99, 200],
     'adx_period': 14,
     'lookback_days': 200
 }
@@ -340,7 +340,7 @@ class TechnicalDirectionAnalyzer:
     
     def analyze(self, ticker: str, daily_data: pd.DataFrame,
                 intraday_data: pd.DataFrame = None,
-                current_price: float = None) -> TechnicalDirectionResult:
+                current_price: float = None, finviz_rsi: float = None, finviz_atr: float = None) -> TechnicalDirectionResult:
         """
         主分析方法
         
@@ -349,6 +349,8 @@ class TechnicalDirectionAnalyzer:
             daily_data: 日線數據 (需包含 Open, High, Low, Close, Volume)
             intraday_data: 15分鐘數據 (可選)
             current_price: 當前價格 (可選，用於補充)
+            finviz_rsi: 從 Finviz 直接獲取的 RSI 值 (可選，避免重算)
+            finviz_atr: 從 Finviz 直接獲取的 ATR 值 (可選，避免重算)
         
         返回:
             TechnicalDirectionResult
@@ -358,7 +360,7 @@ class TechnicalDirectionAnalyzer:
         calculation_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         
         # 1. 日線趨勢分析
-        daily_trend = self.analyze_daily_trend(daily_data, current_price)
+        daily_trend = self.analyze_daily_trend(daily_data, current_price, finviz_rsi=finviz_rsi)
         logger.info(f"  日線趨勢: {daily_trend.trend} (得分: {daily_trend.score})")
         
         # 2. 15分鐘入場信號分析
@@ -392,7 +394,7 @@ class TechnicalDirectionAnalyzer:
         )
     
     def analyze_daily_trend(self, data: pd.DataFrame, 
-                           current_price: float = None) -> DailyTrendResult:
+                           current_price: float = None, finviz_rsi: float = None) -> DailyTrendResult:
         """
         日線趨勢分析
         
@@ -418,7 +420,13 @@ class TechnicalDirectionAnalyzer:
         price = current_price or float(close.iloc[-1])
         
         # 計算指標
-        rsi = self.indicators.calculate_rsi(close, DAILY_CONFIG['rsi_period'])
+        # 如果提供了 Finviz 的 RSI，直接使用，避免重算
+        if finviz_rsi is not None:
+            rsi = finviz_rsi
+            logger.info("  使用 Finviz 提供的實時 RSI，跳過日線重算")
+        else:
+            rsi = self.indicators.calculate_rsi(close, DAILY_CONFIG['rsi_period'])
+            
         macd = self.indicators.calculate_macd(
             close, 
             DAILY_CONFIG['macd']['fast'],
@@ -481,6 +489,13 @@ class TechnicalDirectionAnalyzer:
         else:
             score -= 10
             signals.append(f"價格在 SMA 50 之下（中期下降）")
+            
+        if price_vs_sma.get('above_sma99'):
+            score += 10
+            signals.append(f"價格在 SMA 99 之上（中長期上升）")
+        else:
+            score -= 10
+            signals.append(f"價格在 SMA 99 之下（中長期下降）")
         
         if price_vs_sma.get('above_sma20'):
             score += 5
@@ -488,6 +503,15 @@ class TechnicalDirectionAnalyzer:
         else:
             score -= 5
             signals.append(f"價格在 SMA 20 之下（短期下降）")
+            
+        # 多頭/空頭排列加分
+        if all(k in sma and sma[k] is not None for k in ['sma50', 'sma99', 'sma200']):
+            if price > sma['sma50'] > sma['sma99'] > sma['sma200']:
+                score += 10
+                signals.append("均線呈現完美多頭排列 (Price > 50 > 99 > 200)")
+            elif price < sma['sma50'] < sma['sma99'] < sma['sma200']:
+                score -= 10
+                signals.append("均線呈現完美空頭排列 (Price < 50 < 99 < 200)")
         
         # 4. ADX 趨勢強度 (權重 15%)
         if adx:

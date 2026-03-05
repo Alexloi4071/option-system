@@ -726,6 +726,45 @@ class IBKRClient:
             logger.error(f"✗ IBKR 獲取歷史數據失敗: {e}")
             return None
     
+    def get_intraday_bars(self, ticker: str, bar_size: str = '1 min', duration: str = '1 D') -> Optional['pd.DataFrame']:
+        """
+        獲取日內 OHLCV K線數據（Phase 8: VWAP/ORB 用）
+        
+        參數:
+            ticker: 股票代碼
+            bar_size: K線尺寸 ('1 min', '5 mins', '15 mins')
+            duration: 時間範圍 ('1 D' = 今日數據)
+        
+        返回:
+            pandas DataFrame (Open, High, Low, Close, Volume)，
+            索引為 DatetimeIndex；失敗返回 None
+        """
+        # 將 bar_size 映射回 yfinance 格式，利用現有 get_historical_data
+        bar_to_interval = {
+            '1 min': '1m',
+            '5 mins': '5m',
+            '15 mins': '15m',
+            '30 mins': '30m',
+            '1 hour': '1h',
+        }
+        dur_to_period = {
+            '1 D': '1d',
+            '2 D': '2d',
+        }
+        interval = bar_to_interval.get(bar_size, '1m')
+        period = dur_to_period.get(duration, '1d')
+        
+        logger.info(f"Phase 8: 獲取 {ticker} 日內 K 線 (bar={bar_size}, duration={duration})...")
+        
+        result = self.get_historical_data(ticker, period=period, interval=interval)
+        
+        if result is not None and not result.empty:
+            logger.info(f"* Phase 8: 獲取 {ticker} 日內 {len(result)} 條 K 線")
+        else:
+            logger.warning(f"! Phase 8: {ticker} 日內 K 線為空（可能非盤中時段）")
+        
+        return result
+    
     def get_option_chain(self, ticker: str, expiration: str, stock_price: float = 0) -> Optional[Dict[str, Any]]:
         """
         獲取期權鏈數據（只獲取合約信息，不獲取市場數據）
@@ -1179,8 +1218,21 @@ class IBKRClient:
             except (ValueError, TypeError) as e:
                 logger.debug(f"  處理報價數據時出錯: {e}")
             
-            # 計算中間價
-            if 'bid' in result and 'ask' in result:
+            # Fix 11: 優先使用 Tick 232 Mark Price 作為中間價
+            import math as _math
+            mark_price = getattr(ticker_data, 'markPrice', None)
+            if mark_price is not None:
+                try:
+                    mp = float(mark_price)
+                    if not _math.isnan(mp) and mp > 0:
+                        result['markPrice'] = mp
+                        result['mid'] = mp  # 使用 IBKR 的 markPrice 而非 (bid+ask)/2
+                        logger.debug(f"  Tick 232 Mark Price: ${mp:.4f}")
+                except (TypeError, ValueError):
+                    pass
+            
+            # Fallback: 如果沒有 markPrice，使用 (bid+ask)/2
+            if 'mid' not in result and 'bid' in result and 'ask' in result:
                 result['mid'] = (result['bid'] + result['ask']) / 2
             
             # 評估數據質量
@@ -1225,7 +1277,7 @@ class IBKRClient:
             
             option = Option(ticker, exp_formatted, strike, option_type, 'SMART')
             self.ib.qualifyContracts(option)
-            self.ib.reqMktData(option, '', False, False)
+            self.ib.reqMktData(option, self._generic_tick_list, False, False)
             time.sleep(1)
             
             ticker_data = self.ib.ticker(option)
@@ -1243,7 +1295,7 @@ class IBKRClient:
     def _get_option_data(self, contract: Contract) -> Optional[Dict[str, Any]]:
         """獲取單個期權合約的市場數據"""
         try:
-            self.ib.reqMktData(contract, '', False, False)
+            self.ib.reqMktData(contract, getattr(self, '_generic_tick_list', ''), False, False)
             time.sleep(0.5)  # 等待數據
             
             ticker_data = self.ib.ticker(contract)
@@ -1281,8 +1333,8 @@ class IBKRClient:
             contract = Stock(ticker, 'SMART', 'USD')
             self.ib.qualifyContracts(contract)
             
-            # 使用 reqMktData (Snapshot)
-            self.ib.reqMktData(contract, '', True, False)
+            # 使用 reqMktData (Snapshot)，加入 generic_tick_list
+            self.ib.reqMktData(contract, getattr(self, '_generic_tick_list', ''), True, False)
             
             # 等待數據 (最多 4 秒)
             start_time = time.time()
@@ -1460,6 +1512,7 @@ class IBKRClient:
                     'lastPrice': t.last if self._is_valid_price(t.last) else 0.0,
                     'bid': t.bid if self._is_valid_price(t.bid) else 0.0,
                     'ask': t.ask if self._is_valid_price(t.ask) else 0.0,
+                    'markPrice': getattr(t, 'markPrice', None),  # Fix 11: 添加 Tick 232 Mark Price
                     'volume': safe_int(t.volume),
                     'openInterest': safe_int(oi),
                     'impliedVolatility': t.modelGreeks.impliedVol * 100 if t.modelGreeks and t.modelGreeks.impliedVol else None,
@@ -1496,6 +1549,164 @@ class IBKRClient:
             logger.error(traceback.format_exc())
             return None
 
+    def get_stock_full_data(self, ticker: str) -> Optional[Dict[str, Any]]:
+        """
+        Fix 11: 獲取股票完整數據，直接使用 IBKR Tick 104 和 Tick 456
+        
+        Tick 104 (Historical Volatility 30-day) → 直接使用，替代 Yahoo Finance 重算
+        Tick 456 (IB Dividends / Dividend Yield) → 直接使用，傳入 module16 Greeks
+        Tick 232 (Mark Price) → IBKR 計算的理論中間價，比 (bid+ask)/2 更準
+        
+        返回:
+            dict: {
+                'price': float,
+                'bid': float,
+                'ask': float,
+                'mark_price': float,          # Tick 232 (修復 mark price 問題)
+                'historical_volatility': float, # Tick 104 (Fix 11: IBKR HV-30)
+                'implied_volatility_30d': float, # Tick 106
+                'dividend_yield': float,       # Tick 456 (Fix 11: IBKR Dividend)
+                'volume': int,
+                'hv_source': 'ibkr_tick104',   # 數據來源標識
+                'div_source': 'ibkr_tick456',
+            }
+        """
+        if not self.is_connected():
+            if not self.connect():
+                return None
+
+        try:
+            logger.info(f"Fix 11: 獲取 {ticker} 完整股票數據 (含 Tick 104/456)...")
+            self.refresh_market_data_type()
+
+            stock = Stock(ticker, 'SMART', 'USD')
+            self.ib.qualifyContracts(stock)
+
+            # 使用包含 Tick 104/456 的完整 tick list（含 STOCK_ONLY 的新聞 Tick 292）
+            stock_tick_list = self._stock_tick_list  # 包含 104, 106, 232, 456
+
+            self.ib.reqMktData(stock, stock_tick_list, False, False)
+
+            # 等待數據（最多 8 秒，確保 Tick 104/456 到達）
+            ticker_data = None
+            for i in range(8):
+                time.sleep(1)
+                ticker_data = self.ib.ticker(stock)
+                if ticker_data:
+                    # 等到至少有 price 和 hv
+                    has_price = (
+                        self._is_valid_price(getattr(ticker_data, 'last', None)) or
+                        self._is_valid_price(getattr(ticker_data, 'close', None))
+                    )
+                    if has_price and i >= 2:
+                        break
+
+            if not ticker_data:
+                logger.warning(f"! {ticker}: 無法獲取股票數據")
+                return None
+
+            result = {
+                'ticker': ticker,
+                'data_source': 'ibkr_tick',
+                'hv_source': 'ibkr_tick104',   # Fix 11: 數據來源標識
+                'div_source': 'ibkr_tick456',
+            }
+
+            import math
+
+            # ── 基本報價 ────────────────────────────────────
+            last = getattr(ticker_data, 'last', None)
+            close = getattr(ticker_data, 'close', None)
+            if self._is_valid_price(last):
+                result['price'] = float(last)
+            elif self._is_valid_price(close):
+                result['price'] = float(close)
+
+            if self._is_valid_price(getattr(ticker_data, 'bid', None)):
+                result['bid'] = float(ticker_data.bid)
+            if self._is_valid_price(getattr(ticker_data, 'ask', None)):
+                result['ask'] = float(ticker_data.ask)
+
+            # ── Tick 232: Mark Price（比 mid 更準） ─────────
+            # IBKR 的 markPrice 是理論計算的中間價，而非簡單 (bid+ask)/2
+            mark_price = getattr(ticker_data, 'markPrice', None)
+            if mark_price is not None:
+                try:
+                    mp = float(mark_price)
+                    if not math.isnan(mp) and mp > 0:
+                        result['mark_price'] = mp
+                        logger.info(f"  Tick 232 Mark Price: ${mp:.4f}")
+                except (TypeError, ValueError):
+                    pass
+
+            # ── Tick 104: Historical Volatility 30d ─────────
+            # Fix 11: 直接從 IBKR 獲取 HV，替代 Yahoo Finance 重算
+            hv = getattr(ticker_data, 'histVolatility', None)
+            if hv is None:
+                # ib_insync 可能用不同屬性名
+                hv = getattr(ticker_data, 'historicalVolatility', None)
+            if hv is not None:
+                try:
+                    hv_val = float(hv)
+                    if not math.isnan(hv_val) and hv_val > 0:
+                        result['historical_volatility'] = hv_val / 100  # 轉為小數
+                        logger.info(f"  Tick 104 HV-30: {hv_val:.2f}%  ← 直接使用 IBKR 數據")
+                except (TypeError, ValueError):
+                    pass
+
+            # ── Tick 106: Implied Volatility 30d ────────────
+            iv_30 = getattr(ticker_data, 'impliedVolatility', None)
+            if iv_30 is not None:
+                try:
+                    iv_val = float(iv_30)
+                    if not math.isnan(iv_val) and iv_val > 0:
+                        result['implied_volatility_30d'] = iv_val / 100
+                        logger.info(f"  Tick 106 IV-30:  {iv_val:.2f}%")
+                except (TypeError, ValueError):
+                    pass
+
+            # ── Tick 456: IB Dividends / Dividend Yield ─────
+            # Fix 11: 直接從 IBKR 獲取股息率，傳入 module16 Greeks
+            # ib_insync 中 Tick 456 對應 dividends 屬性（格式: "past12,next12,nextDate,nextAmount"）
+            div_info = getattr(ticker_data, 'dividends', None)
+            if div_info:
+                try:
+                    # 格式: "0.6600,0.7800,20250610,0.1950"
+                    # past12, next12, nextDate, nextAmount
+                    parts = str(div_info).split(',')
+                    if len(parts) >= 1 and parts[0]:
+                        annual_div = float(parts[0])  # past 12 months dividends
+                        price = result.get('price', 0)
+                        if price > 0 and annual_div > 0:
+                            div_yield = annual_div / price
+                            result['dividend_yield'] = div_yield
+                            result['annual_dividend'] = annual_div
+                            logger.info(f"  Tick 456 Div: ${annual_div:.4f}/年 → "
+                                        f"Yield {div_yield*100:.2f}%  ← 直接使用 IBKR 數據")
+                except (ValueError, IndexError):
+                    pass
+
+            # ── 成交量 ──────────────────────────────────────
+            vol = getattr(ticker_data, 'volume', None)
+            if vol is not None and vol > 0:
+                result['volume'] = int(vol)
+
+            # 取消訂閱
+            try:
+                self.ib.cancelMktData(stock)
+            except Exception:
+                pass
+
+            logger.info(f"* Fix 11: {ticker} 完整數據獲取成功 "
+                        f"(HV={'有' if 'historical_volatility' in result else '無'}, "
+                        f"DivYield={'有' if 'dividend_yield' in result else '無'})")
+            return result
+
+        except Exception as e:
+            self._record_error(0, str(e), f'get_stock_full_data({ticker})')
+            logger.error(f"x Fix 11 獲取完整股票數據失敗: {e}")
+            return None
+
     def __enter__(self):
         """上下文管理器入口"""
         self.connect()
@@ -1504,6 +1715,7 @@ class IBKRClient:
     def __exit__(self, exc_type, exc_val, exc_tb):
         """上下文管理器出口"""
         self.disconnect()
+
 
 
 # 使用示例

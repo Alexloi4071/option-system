@@ -12,8 +12,12 @@ from config.settings import settings as SETTINGS
 from config.strategy_profiles import ALL_PROFILES, StrategyProfile
 from data_layer.finviz_scraper import FinvizScraper
 from calculation_layer.module26_long_option_analysis import LongOptionAnalyzer
-from calculation_layer.module28_short_option_analysis import ShortOptionAnalyzer
+from calculation_layer.module29_short_option_analysis import ShortOptionAnalyzer
+from calculation_layer.module30_unusual_activity import UnusualActivityAnalyzer
+from calculation_layer.module24_technical_direction import TechnicalDirectionAnalyzer
+from calculation_layer.module34_volume_profile import VolumeProfileAnalyzer
 from data_layer.ibkr_client import IBKRClient # Import Client Wrapper
+from data_layer.sqlite_manager import SQLiteManager
 from main import OptionsAnalysisSystem # Import System
 
 # 配置日誌
@@ -40,6 +44,10 @@ class ScannerService:
         self.finviz = FinvizScraper()
         self.analyzer = LongOptionAnalyzer()
         self.short_analyzer = ShortOptionAnalyzer()
+        self.uoa_analyzer = UnusualActivityAnalyzer()  # 異動期權分析器
+        self.tech_analyzer = TechnicalDirectionAnalyzer()
+        self.volume_profile = VolumeProfileAnalyzer()
+        self.db = SQLiteManager()
         self.is_connected = False
         self.running = False
         self.latest_opportunities = []
@@ -136,9 +144,11 @@ class ScannerService:
             
         # 2. Fallback to Static List 
         STATIC_WATCHLISTS = {
-            "The_Titans": ["NVDA", "TSLA", "AAPL", "AMD", "MSFT", "AMZN", "GOOGL", "META"],
+            "The_Titans": ["NVDA", "TSLA", "AAPL", "AMD", "MSFT", "AMZN", "GOOGL", "META", "ASML", "AVGO", "AMAT"],
             "Momentum_Growth": ["PLTR", "COIN", "MARA", "MSTR", "SMCI", "ARM", "CVNA"],
-            "Catalysts_News": ["NVDA", "TSLA"] 
+            "Catalysts_News": ["NVDA", "TSLA"],
+            # 中小型股: AI / 量子計算 / 無人機 / 創新科技
+            "Small_Cap_Movers": ["SOUN", "IONQ", "RGTI", "QBTS", "BBAI", "KULR", "ACHR", "RXRX", "RCAT", "ASTS"],
         }
         
         if not candidates:
@@ -349,7 +359,7 @@ class ScannerService:
             self.status_message = f"Analysis Failed: {str(e)}"
             raise e
 
-    async def analyze_options(self, ticker: str, stock_price: float, right: str, profile: StrategyProfile) -> Optional[Dict]:
+    async def analyze_options(self, ticker: str, stock_price: float, right: str, profile: StrategyProfile, target_strike_price: float = None) -> Optional[Dict]:
         """
         Fetch option chain and score the best contract.
         """
@@ -364,28 +374,52 @@ class ScannerService:
         # Select SMART exchange chain
         chain = next((c for c in chains if c.exchange == 'SMART'), chains[0])
         
-        # Find expiry (closest to 14-30 days for Titans, maybe shorter for Momentum?)
-        # For simplicity, let's pick the 2nd or 3rd expiry (approx 1-2 weeks out) to avoid 0DTE risks for now.
-        expirations = sorted([exp for exp in chain.expirations if exp > datetime.now().strftime('%Y%m%d')])
+        # 中短線策略: 目標找 30-90 天到期的合約
+        # 30天以上: Theta 衰減壓力小，有足夠時間讓方向顯現
+        # 90天以內: 槓桿效果仍然顯著，不用付 LEAPS 溢價
+        today_str = datetime.now().strftime('%Y%m%d')
+        today = datetime.now()
+        expirations = sorted([exp for exp in chain.expirations if exp > today_str])
         if not expirations:
             return None
-        expiry = expirations[min(1, len(expirations)-1)] # Pick 2nd expiry if available
+        
+        # 篩選出 30-90 天範圍內的到期日
+        target_expirations = []
+        for exp in expirations:
+            exp_date = datetime.strptime(exp, '%Y%m%d')
+            dte = (exp_date - today).days
+            if 30 <= dte <= 90:
+                target_expirations.append(exp)
+        
+        # 如果 30-90 天範圍內沒有合約，退而求其次選最近的 >21 天到期
+        if not target_expirations:
+            for exp in expirations:
+                exp_date = datetime.strptime(exp, '%Y%m%d')
+                dte = (exp_date - today).days
+                if dte >= 21:
+                    target_expirations.append(exp)
+                    break
+        
+        if not target_expirations:
+            return None
+        
+        expiry = target_expirations[0]  # 選最接近 30 天的到期日
         
         # Find Strikes
         strikes = [k for k in chain.strikes if k % 1 == 0 or k % 2.5 == 0] # Filter weird strikes
         
-        if right == 'C': # CALL
-            # For Calls, we want ITM/ATM or slightly OTM. Let's look around ATM.
-            # Delta ~ 0.5
+        if target_strike_price is not None:
+            # We already have a specific strike from Volume Profile
+            target_strikes = [k for k in strikes if abs(k - target_strike_price) < (stock_price * 0.10)]
+            target_strike = min(target_strikes, key=lambda x: abs(x - target_strike_price)) if target_strikes else min(strikes, key=lambda x: abs(x - target_strike_price))
+        elif right == 'C': # CALL
             target_strikes = [k for k in strikes if k >= stock_price * 0.95 and k <= stock_price * 1.05]
+            if not target_strikes: return None
+            target_strike = min(target_strikes, key=lambda x: abs(x - stock_price))
         else: # PUT
             target_strikes = [k for k in strikes if k <= stock_price * 1.05 and k >= stock_price * 0.95]
-            
-        if not target_strikes:
-            return None
-            
-        # Select closest to ATM
-        target_strike = min(target_strikes, key=lambda x: abs(x - stock_price))
+            if not target_strikes: return None
+            target_strike = min(target_strikes, key=lambda x: abs(x - stock_price))
         
         # Get Option Market Data
         opt_contract = Option(ticker, expiry, target_strike, right, 'SMART')
@@ -425,17 +459,20 @@ class ScannerService:
         else:
             premium = opt_data.close
         
+        # 動態計算真實 DTE (比寫死 7 天更準確)
+        actual_dte = (datetime.strptime(expiry, '%Y%m%d') - datetime.now()).days
+        
         analysis_result = {}
         if right == 'C':
             analysis_result = self.analyzer.analyze_long_call(
                 stock_price=stock_price, strike_price=target_strike, premium=premium,
-                days_to_expiration=7, # Approx
+                days_to_expiration=actual_dte,
                 iv=iv
             )
         else:
             analysis_result = self.analyzer.analyze_long_put(
                 stock_price=stock_price, strike_price=target_strike, premium=premium,
-                days_to_expiration=7,
+                days_to_expiration=actual_dte,
                 iv=iv
             )
             
@@ -456,7 +493,7 @@ class ScannerService:
             }
         return None
 
-    async def analyze_short_options(self, ticker: str, stock_price: float, right: str, profile: StrategyProfile) -> Optional[Dict]:
+    async def analyze_short_options(self, ticker: str, stock_price: float, right: str, profile: StrategyProfile, target_strike_price: float = None) -> Optional[Dict]:
         """
         Analyze Short Call/Put opportunities.
         """
@@ -477,16 +514,17 @@ class ScannerService:
         # Find Strikes (OTM)
         strikes = [k for k in chain.strikes if k % 1 == 0 or k % 2.5 == 0]
         
-        if right == 'C': # Short Call -> Want OTM (Strike > Price)
-            # Target Delta ~0.20-0.30 -> Usually 5-10% OTM depending on IV
+        if target_strike_price is not None:
+            target_strikes = [k for k in strikes if abs(k - target_strike_price) < (stock_price * 0.10)]
+            target_strike = min(target_strikes, key=lambda x: abs(x - target_strike_price)) if target_strikes else min(strikes, key=lambda x: abs(x - target_strike_price))
+        elif right == 'C': # Short Call -> Want OTM (Strike > Price)
             target_strikes = [k for k in strikes if k > stock_price * 1.05 and k < stock_price * 1.15]
+            if not target_strikes: return None
+            target_strike = target_strikes[0]
         else: # Short Put -> Want OTM (Strike < Price)
             target_strikes = [k for k in strikes if k < stock_price * 0.95 and k > stock_price * 0.85]
-            
-        if not target_strikes: return None
-        
-        # Select strike closest to desired range
-        target_strike = target_strikes[0] if target_strikes else strikes[0] # Fallback
+            if not target_strikes: return None
+            target_strike = target_strikes[-1]
         
         # Get Data
         opt_contract = Option(ticker, expiry, target_strike, right, 'SMART')
@@ -546,12 +584,121 @@ class ScannerService:
             }
         return None
 
-    async def run_loop(self, selected_strategies: List[str] = None):
-        """Main Loop"""
-        logger.info("啟動掃描服務...")
+    async def scan_for_unusual_activity(self, ticker: str) -> List[Dict]:
+        """
+        異動期權偵測 (UOA) - 對一岇股票主動投放的 30-90 天期符進行分析
+        檢測: Volume Spike / 高 Vol/OI 比率 / 機構大單
+        """
+        if not self.running:
+            return []
+        
+        logger.info(f"[UOA] 檢查 {ticker} 的異動期權訊號...")
+        results = []
+        
+        try:
+            import pandas as pd
+            from datetime import datetime
+            
+            contract = Stock(ticker, 'SMART', 'USD')
+            await self.ib.qualifyContractsAsync(contract)
+            chains = await self.ib.reqSecDefOptParamsAsync(contract.symbol, '', contract.secType, contract.conId)
+            if not chains:
+                return []
+            
+            chain = next((c for c in chains if c.exchange == 'SMART'), chains[0])
+            
+            # 選 30-90 天到期日
+            today = datetime.now()
+            today_str = today.strftime('%Y%m%d')
+            expirations = sorted([exp for exp in chain.expirations if exp > today_str])
+            target_exp = None
+            for exp in expirations:
+                dte = (datetime.strptime(exp, '%Y%m%d') - today).days
+                if 30 <= dte <= 90:
+                    target_exp = exp
+                    break
+            if not target_exp:
+                return []
+            
+            # 獲取股價
+            stk_data = self.ib.reqMktData(contract, '', True, False)
+            await asyncio.sleep(1)
+            current_price = stk_data.last or stk_data.close or 0
+            if current_price <= 0:
+                return []
+            
+            # 獲取期權鎔定賃 (ATM 上下各 10%)
+            strikes = sorted([k for k in chain.strikes
+                              if current_price * 0.90 <= k <= current_price * 1.10])
+            if not strikes:
+                return []
+            
+            # 分別獲取 Call / Put 快照
+            all_rows_call = []
+            all_rows_put = []
+            
+            for strike in strikes[:10]:  # 限制 10 個自動計算數，避免超載
+                for right in ('C', 'P'):
+                    opt = Option(ticker, target_exp, strike, right, 'SMART')
+                    try:
+                        await self.ib.qualifyContractsAsync(opt)
+                        self.ib.reqMarketDataType(4)
+                        opt_data = self.ib.reqMktData(opt, '100,101', False, False)
+                        await asyncio.sleep(0.2)
+                        
+                        vol = getattr(opt_data, 'volume', None)
+                        oi = getattr(opt_data, 'openInterest', None)
+                        last = getattr(opt_data, 'lastPrice', None) or getattr(opt_data, 'close', None)
+                        
+                        row = {
+                            'strike': strike,
+                            'volume': vol if vol and not math.isnan(vol) else 0,
+                            'openInterest': oi if oi and not math.isnan(oi) else 0,
+                            'lastPrice': last if last and not math.isnan(last) else 0,
+                        }
+                        if right == 'C':
+                            all_rows_call.append(row)
+                        else:
+                            all_rows_put.append(row)
+                    except Exception:
+                        continue
+            
+            calls_df = pd.DataFrame(all_rows_call) if all_rows_call else pd.DataFrame()
+            puts_df = pd.DataFrame(all_rows_put) if all_rows_put else pd.DataFrame()
+            
+            # 執行 UOA 分析
+            uoa_result = self.uoa_analyzer.analyze_chain(calls_df, puts_df)
+            
+            for signal in uoa_result.get('calls', []) + uoa_result.get('puts', []):
+                if signal.strength >= 60:  # 只國報高分訊號
+                    results.append({
+                        'ticker': ticker,
+                        'profile': 'UOA_Scanner',
+                        'strategy': f"異動_{'CALL' if signal.option_type == 'call' else 'PUT'}",
+                        'strike': signal.strike,
+                        'expiry': target_exp,
+                        'price': current_price,
+                        'premium': signal.metrics.get('premium', 0),
+                        'score': signal.strength,
+                        'signal_type': signal.signal_type,
+                        'description': signal.description,
+                        'analysis': signal.to_dict()
+                    })
+                    logger.info(f"  ⚡ [UOA] {ticker} 異動訊號: {signal.description}")
+        
+        except Exception as e:
+            logger.warning(f"[UOA] {ticker} 分析失敗: {e}")
+        
+        return results
+
+    async def run_loop(self, selected_strategies: List[str] = None, single_pass: bool = False):
+        """Main Loop: UOA-First Pipeline"""
+        logger.info("啟動掃描服務 (UOA-First 模式)...")
+        import pandas as pd
+        from datetime import datetime, timedelta
         
         # Filter profiles based on selection
-        active_profiles = list(ALL_PROFILES.values()) # Convert dict_values to list
+        active_profiles = list(ALL_PROFILES.values()) 
         if selected_strategies:
             active_profiles = [p for p in active_profiles if p.name in selected_strategies]
             logger.info(f"已選擇策略: {selected_strategies}")
@@ -568,17 +715,122 @@ class ScannerService:
 
                 all_opportunities = []
                 
-                # Scan each active profile
+                # Part 1: UOA 首重掃描
+                logger.info("[UOA] 開始從選定策略名單中偵測異動期權...")
+                all_tickers = set()
+                profile_mapping = {}
                 for profile in active_profiles:
+                    tickers = await self.get_candidates_for_profile(profile.name, profile)
+                    for t in tickers:
+                        all_tickers.add(t)
+                        if t not in profile_mapping:
+                            profile_mapping[t] = profile
+                
+                logger.info(f"========== 啟動 UOA 第一階段掃描 ({len(all_tickers)} 支股票) ==========")
+                for ticker in all_tickers:
                     if not self.running: break
                     
-                    tickers = await self.get_candidates_for_profile(profile.name, profile)
+                    # 1. 第一層過濾: UOA 異動偵測 (Smart Money)
+                    uoa_opps = await self.scan_for_unusual_activity(ticker)
+                    if not uoa_opps:
+                        continue
+                        
+                    # 找出最強的一個訊號
+                    best_uoa = sorted(uoa_opps, key=lambda x: x['score'], reverse=True)[0]
+                    direction = 'CALL' if 'CALL' in best_uoa['strategy'] else 'PUT'
                     
-                    for ticker in tickers:
-                        if not self.running: break
-                        opps = await self.scan_ticker(ticker, profile)
-                        if opps:
-                            all_opportunities.extend(opps)
+                    logger.info(f"  ⚡ {ticker} 發現強烈異動 ({direction}, Score: {best_uoa['score']})，進入技術面確認...")
+                    
+                    # 2. 第二層確認: 讀取 K 線進行多重均線與籌碼分析
+                    contract = Stock(ticker, 'SMART', 'USD')
+                    await self.ib.qualifyContractsAsync(contract)
+                    
+                    stk_data = self.ib.reqMktData(contract, '', True, False)
+                    await asyncio.sleep(1)
+                    current_price = stk_data.last or stk_data.close
+                    if not current_price: continue
+
+                    bars = await self.ib.reqHistoricalDataAsync(
+                        contract, endDateTime='', durationStr='1 Y',
+                        barSizeSetting='1 day', whatToShow='TRADES', useRTH=True
+                    )
+                    
+                    if not bars or len(bars) < 50:
+                        logger.warning(f"  {ticker} 歷史數據不足，跳過技術面確認。")
+                        continue
+                        
+                    df = pd.DataFrame([{
+                        'Date': b.date, 'Open': b.open, 'High': b.high, 
+                        'Low': b.low, 'Close': b.close, 'Volume': b.volume
+                    } for b in bars])
+                    df.set_index('Date', inplace=True)
+                    
+                    # 技術面趨勢分析
+                    tech_result = self.tech_analyzer.analyze(ticker, df, current_price=current_price)
+                    daily_trend = tech_result.daily_trend.trend # 'Bullish', 'Bearish', 'Neutral'
+                    
+                    # 趨勢必須支持異動方向
+                    if direction == 'CALL' and daily_trend != 'Bullish':
+                        logger.info(f"  {ticker} 放棄: UOA(Call) 與均線趨勢({daily_trend})衝突。")
+                        continue
+                    if direction == 'PUT' and daily_trend != 'Bearish':
+                        logger.info(f"  {ticker} 放棄: UOA(Put) 與均線趨勢({daily_trend})衝突。")
+                        continue
+                        
+                    # 籌碼分佈分析 (POC/HVN)
+                    vp_result = self.volume_profile.analyze(ticker, df, current_price=current_price)
+                    if not vp_result: continue
+                    
+                    # 3. 第三層: 基於 POC/HVN 的精準行使價選擇
+                    target_strike = current_price
+                    if direction == 'CALL':
+                        supports = vp_result.get_support_levels(current_price)
+                        if supports:
+                            target_strike = supports[0] # 取最靠近現價的下方支撐
+                            logger.info(f"  {ticker} 趨勢吻合！尋找到下方籌碼支撐位: {target_strike:.2f}")
+                        else:
+                            target_strike = current_price * 0.95
+                    else:
+                        resistances = vp_result.get_resistance_levels(current_price)
+                        if resistances:
+                            target_strike = resistances[0] # 取最靠近現價的上方阻力
+                            logger.info(f"  {ticker} 趨勢吻合！尋找到上方籌碼阻力位: {target_strike:.2f}")
+                        else:
+                            target_strike = current_price * 1.05
+                            
+                    # 4. 生成選中的期權機會
+                    profile = profile_mapping.get(ticker)
+                    if not profile: continue
+                    
+                    # 分析 Long 方向 (如果 Profile 支持)
+                    if 'LONG_CALL' in profile.criteria.preferred_strategies and direction == 'CALL':
+                        res = await self.analyze_options(ticker, current_price, "C", profile, target_strike_price=target_strike)
+                        if res: 
+                            res['reasoning'] = f"UOA偵測 + {daily_trend}確認 + 支撐位({target_strike:.2f})"
+                            res['uoa_score'] = best_uoa['score']
+                            all_opportunities.append(res)
+                            
+                    if 'LONG_PUT' in profile.criteria.preferred_strategies and direction == 'PUT':
+                        res = await self.analyze_options(ticker, current_price, "P", profile, target_strike_price=target_strike)
+                        if res: 
+                            res['reasoning'] = f"UOA偵測 + {daily_trend}確認 + 阻力位({target_strike:.2f})"
+                            res['uoa_score'] = best_uoa['score']
+                            all_opportunities.append(res)
+                            
+                    # 分析 Short 放向防守 (如果 Profile 支持)
+                    if 'SHORT_PUT' in profile.criteria.preferred_strategies and direction == 'CALL':
+                        res = await self.analyze_short_options(ticker, current_price, "P", profile, target_strike_price=target_strike)
+                        if res: 
+                            res['reasoning'] = f"UOA大單看漲 + {daily_trend}確認 + 賣出支撐區間Put防守({target_strike:.2f})"
+                            res['uoa_score'] = best_uoa['score']
+                            all_opportunities.append(res)
+                            
+                    if 'SHORT_CALL' in profile.criteria.preferred_strategies and direction == 'PUT':
+                        res = await self.analyze_short_options(ticker, current_price, "C", profile, target_strike_price=target_strike)
+                        if res: 
+                            res['reasoning'] = f"UOA大單看跌 + {daily_trend}確認 + 賣出阻力區間Call防守({target_strike:.2f})"
+                            res['uoa_score'] = best_uoa['score']
+                            all_opportunities.append(res)
                             
                 # Output Results
                 if all_opportunities:
@@ -592,12 +844,18 @@ class ScannerService:
                     try:
                         with open(OUTPUT_FILE, 'w') as f:
                             json.dump(clean_opps, f, default=str, indent=4)
+                        # Save to SQLite
+                        self.db.bulk_insert(clean_opps)
                     except Exception as e:
                         logger.error(f"Failed to save results: {e}")
                 else:
                     self.last_scan_time = datetime.now()
                     self.status_message = "Scan Complete. No opportunities found."
                     logger.info("本輪掃描未發現高分機會。")
+                    
+                if single_pass:
+                    logger.info("Single pass complete. Exiting loop.")
+                    break
                     
                 # Wait interval
                 for _ in range(SCAN_INTERVAL):
@@ -614,6 +872,159 @@ class ScannerService:
             logger.info("Scanner Service Stopped")
         except Exception as e:
             logger.error(f"Scanner Loop Error: {e}")
+        finally:
+            self.running = False
+            self.ib.disconnect()
+
+    async def run_loop_technical(self, selected_strategies: List[str] = None, single_pass: bool = False):
+        """Technical-First Pipeline (RSI, MACD, MA, Vol Profile) - 適用於盤前或無期權即時異動環境"""
+        logger.info("啟動掃描服務 (Technical-First 模式)...")
+        import pandas as pd
+        from datetime import datetime
+        
+        active_profiles = list(ALL_PROFILES.values()) 
+        if selected_strategies:
+            active_profiles = [p for p in active_profiles if p.name in selected_strategies]
+            logger.info(f"已選擇策略: {selected_strategies}")
+            
+        try:
+            while self.running:
+                if not self.is_connected:
+                    await self.connect()
+                if not self.ib.isConnected():
+                    logger.error("IBKR 未連接，等待重試...")
+                    await asyncio.sleep(10)
+                    continue
+
+                all_opportunities = []
+                all_tickers = set()
+                profile_mapping = {}
+                for profile in active_profiles:
+                    tickers = await self.get_candidates_for_profile(profile.name, profile)
+                    for t in tickers:
+                        all_tickers.add(t)
+                        if t not in profile_mapping:
+                            profile_mapping[t] = profile
+
+                logger.info(f"========== 啟動 Technical-First 掃描 ({len(all_tickers)} 支股票) ==========")
+                for ticker in all_tickers:
+                    if not self.running: break
+                    
+                    try:
+                        contract = Stock(ticker, 'SMART', 'USD')
+                        await self.ib.qualifyContractsAsync(contract)
+                        
+                        stk_data = self.ib.reqMktData(contract, '', True, False)
+                        await asyncio.sleep(1)
+                        current_price = stk_data.last or stk_data.close
+                        if not current_price: continue
+                        
+                        bars = await self.ib.reqHistoricalDataAsync(
+                            contract, endDateTime='', durationStr='1 Y',
+                            barSizeSetting='1 day', whatToShow='TRADES', useRTH=True
+                        )
+                        if not bars or len(bars) < 50:
+                            continue
+                            
+                        df = pd.DataFrame([{
+                            'Date': b.date, 'Open': b.open, 'High': b.high, 
+                            'Low': b.low, 'Close': b.close, 'Volume': b.volume
+                        } for b in bars])
+                        df.set_index('Date', inplace=True)
+                        
+                        # 1. 技術面趨勢分析 (MA, RSI, MACD)
+                        tech_result = self.tech_analyzer.analyze(ticker, df, current_price=current_price)
+                        daily_trend = tech_result.daily_trend.trend # 'Bullish', 'Bearish', 'Neutral'
+                        rsi = tech_result.daily_trend.rsi or 50.0
+                        
+                        if daily_trend == 'Neutral':
+                            continue
+                            
+                        # 2. 籌碼分佈分析 (POC/HVN)
+                        vp_result = self.volume_profile.analyze(ticker, df, current_price=current_price)
+                        if not vp_result: continue
+                        
+                        profile = profile_mapping.get(ticker)
+                        if not profile: continue
+                        
+                        logger.info(f"  📊 {ticker} 趨勢: {daily_trend}, RSI: {rsi:.1f}, POC: {vp_result.poc:.2f}")
+                        
+                        # 3. 決策邏輯
+                        target_strike = current_price
+                        reasoning = ""
+                        
+                        # Bullish (避免 RSI 超買)
+                        if daily_trend == 'Bullish' and rsi < 70:
+                            supports = vp_result.get_support_levels(current_price)
+                            if supports:
+                                target_strike = max(supports)
+                            else:
+                                target_strike = vp_result.poc
+                                
+                            reasoning = f"Tech 看漲 (RSI:{rsi:.1f}) + 籌碼支撐({target_strike:.2f})"
+                            
+                            if 'LONG_CALL' in profile.criteria.preferred_strategies:
+                                res = await self.analyze_options(ticker, current_price, "C", profile, target_strike_price=target_strike)
+                                if res: 
+                                    res['reasoning'] = reasoning; res['uoa_score'] = 0; all_opportunities.append(res)
+                            if 'SHORT_PUT' in profile.criteria.preferred_strategies:
+                                res = await self.analyze_short_options(ticker, current_price, "P", profile, target_strike_price=target_strike)
+                                if res: 
+                                    res['reasoning'] = reasoning; res['uoa_score'] = 0; all_opportunities.append(res)
+                                    
+                        # Bearish (避免 RSI 超賣)
+                        elif daily_trend == 'Bearish' and rsi > 30:
+                            resistances = vp_result.get_resistance_levels(current_price)
+                            if resistances:
+                                target_strike = min(resistances)
+                            else:
+                                target_strike = vp_result.poc
+                                
+                            reasoning = f"Tech 看跌 (RSI:{rsi:.1f}) + 籌碼阻力({target_strike:.2f})"
+                            
+                            if 'LONG_PUT' in profile.criteria.preferred_strategies:
+                                res = await self.analyze_options(ticker, current_price, "P", profile, target_strike_price=target_strike)
+                                if res: 
+                                    res['reasoning'] = reasoning; res['uoa_score'] = 0; all_opportunities.append(res)
+                            if 'SHORT_CALL' in profile.criteria.preferred_strategies:
+                                res = await self.analyze_short_options(ticker, current_price, "C", profile, target_strike_price=target_strike)
+                                if res: 
+                                    res['reasoning'] = reasoning; res['uoa_score'] = 0; all_opportunities.append(res)
+                                    
+                    except Exception as e:
+                        logger.warning(f"  {ticker} Technical 掃描錯誤: {e}")
+                        
+                # output
+                if all_opportunities:
+                    clean_opps = self.sanitize_data(all_opportunities)
+                    self.latest_opportunities = clean_opps
+                    self.last_scan_time = datetime.now()
+                    self.status_message = f"Tech Scan Complete. Found {len(clean_opps)} opportunities."
+                    logger.info(f"技術面掃描完成! 發現 {len(clean_opps)} 個機會")
+                    try:
+                        with open(OUTPUT_FILE, 'w') as f:
+                            json.dump(clean_opps, f, default=str, indent=4)
+                        self.db.bulk_insert(clean_opps)
+                    except Exception as e:
+                        logger.error(f"Failed to save results: {e}")
+                else:
+                    self.last_scan_time = datetime.now()
+                    self.status_message = "Tech Scan Complete. No opportunities found."
+                    logger.info("本輪技術面掃描未發現符合條件機會。")
+
+                if single_pass:
+                    logger.info("Single pass complete. Exiting loop.")
+                    break
+                
+                for _ in range(SCAN_INTERVAL):
+                    if not self.running: break
+                    if not self.ib.isConnected(): await self.connect()
+                    await asyncio.sleep(1)
+
+        except KeyboardInterrupt:
+            logger.info("Scanner Service Stopped")
+        except Exception as e:
+            logger.error(f"Technical Loop Error: {e}")
         finally:
             self.running = False
             self.ib.disconnect()

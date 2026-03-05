@@ -755,6 +755,8 @@ class ReportGenerator:
                     f.write(self._format_module31_advanced_metrics(module_data))
                 elif module_name == 'module32_complex_strategies':
                     f.write(self._format_complex_strategies(module_data))
+                elif module_name == 'module33_wolfram_verification':
+                    f.write(self._format_module33_wolfram_verification(module_data))
                 elif module_name == 'strike_selection':
                     # 顯示行使價選擇說明
                     f.write(self._format_strike_selection(module_data))
@@ -762,6 +764,13 @@ class ReportGenerator:
                     f.write(self._format_strategy_results(module_name, module_data))
                 elif module_name == 'strategy_recommendations':
                     f.write(self._format_strategy_recommendations(module_data))
+                # Phase 8: 日內交易模組
+                elif module_name == 'module_vwap':
+                    f.write(self._format_module_vwap(module_data))
+                elif module_name == 'module_orb':
+                    f.write(self._format_module_orb(module_data))
+                elif module_name == 'module_0dte':
+                    f.write(self._format_module_0dte(module_data))
                 else:
                     # 通用格式
                     f.write(f"\n{module_name}:\n")
@@ -6269,3 +6278,150 @@ class ReportGenerator:
         except Exception as e:
             logger.error(f"x Module 12 格式化失敗: {e}")
             return f"❌ Module 12 格式化失敗: {str(e)}\n"
+            
+    def _format_module33_wolfram_verification(self, data: dict) -> str:
+        """格式化模塊33 (Wolfram 數學驗證)"""
+        report = "\n" + "=" * 70 + "\n"
+        report += "模塊33: Wolfram 數學交叉驗證\n"
+        report += "=" * 70 + "\n"
+        
+        status = data.get('status', '未知')
+        if status == 'disabled':
+            report += "狀態: 🟡 未啟用 (未設定 WOLFRAM_APP_ID)\n"
+            return report + "=" * 70 + "\n"
+        elif status == 'error':
+            report += f"狀態: ❌ 錯誤 ({data.get('error', '未知錯誤')})\n"
+            return report + "=" * 70 + "\n"
+            
+        report += "狀態: ✅ 成功\n\n"
+        
+        math_verify = data.get('math_verification', 'N/A')
+        prob_verify = data.get('probability_verification', 'N/A')
+        
+        report += "🎯 Black-Scholes 理論價驗證:\n"
+        # Wrap long text logically
+        math_lines = str(math_verify).split('\n') if '\n' in str(math_verify) else [str(math_verify)]
+        for line in math_lines:
+            report += f"   {line}\n"
+            
+        report += "\n📈 損益平衡點突破機率 (正態分佈預測):\n"
+        prob_lines = str(prob_verify).split('\n') if '\n' in str(prob_verify) else [str(prob_verify)]
+        for line in prob_lines:
+            report += f"   {line}\n"
+            
+        report += "=" * 70 + "\n"
+        
+        return report
+
+    # ==================== Phase 8: 日內交易模組報告格式化 ====================
+
+    def _format_module_vwap(self, data: dict) -> str:
+        """格式化 VWAP 日內分析結果"""
+        if data.get('status') == 'skipped':
+            return f"\n┌─ VWAP 日內分析 ──────────────────────────────┐\n│ ⏸️ 已跳過: {data.get('reason', '數據不可用')}\n└────────────────────────────────────────────────┘\n"
+
+        report = "\n┌─ VWAP 日內分析 (成交量加權平均價) ─────────────┐\n"
+        report += "│\n"
+        report += f"│ 📊 VWAP: ${data.get('vwap', 0):.2f}\n"
+        report += f"│ 現價: ${data.get('current_price', 0):.2f}\n"
+        report += f"│ 偏差: {data.get('price_vs_vwap_pct', 0):+.2f}%\n"
+        report += f"│ 位置: {data.get('position', 'N/A')}\n"
+        report += "│\n"
+
+        bands = data.get('bands', {})
+        if bands:
+            report += "│ 📐 VWAP Bands:\n"
+            report += f"│   Upper Band 2: ${bands.get('upper_2', 0):.2f}\n"
+            report += f"│   Upper Band 1: ${bands.get('upper_1', 0):.2f}\n"
+            report += f"│   VWAP:         ${bands.get('vwap', 0):.2f}\n"
+            report += f"│   Lower Band 1: ${bands.get('lower_1', 0):.2f}\n"
+            report += f"│   Lower Band 2: ${bands.get('lower_2', 0):.2f}\n"
+            report += "│\n"
+
+        signal = data.get('signal', 'neutral')
+        strength = data.get('signal_strength', 'weak')
+        signal_emoji = {'bullish': '📈 看漲', 'bearish': '📉 看跌', 'neutral': '➖ 中性'}
+        report += f"│ 🎯 信號: {signal_emoji.get(signal, signal)} ({strength})\n"
+        report += f"│ 💡 入場條件: {data.get('entry_condition', 'N/A')}\n"
+        report += f"│\n"
+        report += f"│ 📊 數據點: {data.get('data_points', 0)} | 總成交量: {data.get('total_volume', 0):,}\n"
+        report += "└────────────────────────────────────────────────┘\n"
+        return report
+
+    def _format_module_orb(self, data: dict) -> str:
+        """格式化 ORB 開盤區間突破分析結果"""
+        if data.get('status') == 'skipped':
+            return f"\n┌─ ORB 開盤區間突破分析 ──────────────────────┐\n│ ⏸️ 已跳過: {data.get('reason', '數據不可用')}\n└────────────────────────────────────────────────┘\n"
+
+        report = "\n┌─ ORB 開盤區間突破分析 ──────────────────────────┐\n"
+        report += "│\n"
+
+        orb = data.get('opening_range', {})
+        report += f"│ 📊 開盤區間 ({data.get('orb_minutes', 15)} 分鐘):\n"
+        report += f"│   High: ${orb.get('high', 0):.2f}\n"
+        report += f"│   Low:  ${orb.get('low', 0):.2f}\n"
+        report += f"│   範圍: ${orb.get('range', 0):.2f} ({orb.get('range_pct', 0):.2f}%)\n"
+        report += "│\n"
+
+        direction = data.get('breakout_direction', 'none')
+        dir_emoji = {'bullish': '📈 上突破', 'bearish': '📉 下突破', 'none': '➖ 未突破'}
+        report += f"│ 現價: ${data.get('current_price', 0):.2f}\n"
+        report += f"│ 狀態: {data.get('status', 'N/A')}\n"
+        report += f"│ 方向: {dir_emoji.get(direction, direction)}\n"
+        report += "│\n"
+
+        targets = data.get('targets', {})
+        if targets:
+            report += "│ 🎯 價位目標:\n"
+            report += f"│   Target 1: ${targets.get('target_1', 0):.2f}\n"
+            report += f"│   Target 2: ${targets.get('target_2', 0):.2f}\n"
+            report += f"│   止損:     ${targets.get('stop_loss', 0):.2f}\n"
+            report += "│\n"
+
+        signal = data.get('signal', 'wait')
+        confidence = data.get('confidence', 'low')
+        signal_emoji = {'long_call': '📈 Long Call', 'long_put': '📉 Long Put', 'wait': '⏸️ 等待'}
+        report += f"│ 🎯 信號: {signal_emoji.get(signal, signal)} ({confidence})\n"
+        report += f"│ 💡 建議: {data.get('option_suggestion', 'N/A')}\n"
+        report += "│\n"
+        report += f"│ 📖 分析: {data.get('reasoning', 'N/A')}\n"
+        report += "└────────────────────────────────────────────────┘\n"
+        return report
+
+    def _format_module_0dte(self, data: dict) -> str:
+        """格式化 0DTE/1DTE 篩選結果"""
+        if data.get('status') == 'skipped':
+            return f"\n┌─ 0DTE/1DTE 到期日篩選 ──────────────────────┐\n│ ⏸️ 已跳過: {data.get('reason', '數據不可用')}\n└────────────────────────────────────────────────┘\n"
+
+        report = "\n┌─ 0DTE/1DTE 到期日篩選 ──────────────────────────┐\n"
+        report += "│\n"
+        report += f"│ 📅 推薦到期日: {data.get('recommended_expiry', 'N/A')}\n"
+        report += f"│ 📊 DTE: {data.get('recommended_dte', 'N/A')} 天\n"
+        report += f"│ 💡 原因: {data.get('recommendation_reason', 'N/A')}\n"
+        report += "│\n"
+
+        report += f"│ ⏰ 時段: {data.get('time_period', 'N/A')}\n"
+        report += f"│ 📝 時段建議: {data.get('time_note', 'N/A')}\n"
+        report += "│\n"
+
+        combined = data.get('combined_signal', 'neutral')
+        signal_emoji = {'bullish': '📈 看漲', 'bearish': '📉 看跌', 'neutral': '➖ 中性'}
+        report += f"│ 🎯 綜合信號: {signal_emoji.get(combined, combined)}\n"
+        if data.get('vwap_signal'):
+            report += f"│   VWAP 信號: {data['vwap_signal']}\n"
+        if data.get('orb_signal'):
+            report += f"│   ORB 信號: {data['orb_signal']}\n"
+        report += "│\n"
+
+        # 到期日評估列表
+        expirations = data.get('expirations_assessed', [])
+        if expirations:
+            report += f"│ 📋 已評估到期日 ({len(expirations)} 個):\n"
+            for exp in expirations[:5]:  # 最多顯示5個
+                dte = exp.get('dte', '?')
+                suit = exp.get('suitability', 'N/A')
+                theta = exp.get('theta_risk', 'N/A')
+                report += f"│   {exp.get('expiration', 'N/A')} (DTE={dte}) - {suit} | Theta: {theta}\n"
+
+        report += "└────────────────────────────────────────────────┘\n"
+        return report

@@ -1615,17 +1615,24 @@ class DataFetcher:
                     except:
                         pass
                     
+                    from datetime import datetime as _dt
                     stock_data = {
                         'ticker': ticker,
                         'current_price': quote.get('c', 0),  # current price
                         'open': quote.get('o', 0),  # open
-                        'high': quote.get('h', 0),  # high
-                        'low': quote.get('l', 0),  # low
+                        # Fix: 改名 intraday_high/low，明確這是盤中未結算值（非歷史已確定值）
+                        # 避免下游 ML/HV 計算誤用未結算盤中數據（倒推風險）
+                        'intraday_high': quote.get('h', 0),   # ⚠️ 盤中最高（未結算）
+                        'intraday_low': quote.get('l', 0),    # ⚠️ 盤中最低（未結算）
+                        'high': quote.get('h', 0),            # 向後兼容保留
+                        'low': quote.get('l', 0),             # 向後兼容保留
                         'previous_close': quote.get('pc', 0),  # previous close
-                        'change': quote.get('d', 0),  # change
-                        'change_percent': quote.get('dp', 0),  # change percent
+                        'change': quote.get('d', 0),          # change
+                        'change_percent': quote.get('dp', 0), # change percent
                         'volume': None,  # Finnhub quote 不提供 volume
-                        'data_source': 'Finnhub'
+                        'data_source': 'Finnhub',
+                        'is_market_hours': True,              # 標記為盤中數據
+                        'data_timestamp': _dt.now().isoformat(),  # 記錄抓取時間
                     }
                     
                     # 補充公司資料
@@ -1645,7 +1652,7 @@ class DataFetcher:
                     logger.info(f"* 成功獲取 {ticker} 基本信息 (Finnhub)")
                     logger.info(f"  當前股價: ${stock_data['current_price']:.2f}")
                     self._record_fallback('stock_info', 'Finnhub')
-                    return stock_data
+                    # 不提早返回，留到後面合併 IBKR 數據
                 else:
                     logger.warning("! Finnhub 返回無效數據，降級到 Alpha Vantage")
                     self._record_fallback_failure('stock_info', 'Finnhub', '返回無效數據')
@@ -1700,7 +1707,7 @@ class DataFetcher:
                     logger.info(f"* 成功獲取 {ticker} 基本信息 (Alpha Vantage)")
                     logger.info(f"  當前股價: ${stock_data['current_price']:.2f}")
                     self._record_fallback('stock_info', 'Alpha Vantage')
-                    return stock_data
+                    # 不提早返回
                 else:
                     logger.warning("! Alpha Vantage 返回無效數據，降級到 Finviz")
                     self._record_fallback_failure('stock_info', 'Alpha Vantage', '返回無效數據')
@@ -1771,7 +1778,7 @@ class DataFetcher:
                             logger.info(f"  i 補充字段: {', '.join(stock_data['supplemented_fields'])}")
                         
                         self._record_fallback('stock_info', 'Finviz')
-                        return stock_data
+                        # 不提早返回
                     else:
                         logger.warning("! Finviz 數據驗證失敗，降級到 Yahoo Finance")
                         self._record_fallback_failure('stock_info', 'Finviz', '數據驗證失敗')
@@ -1784,29 +1791,49 @@ class DataFetcher:
                 self._record_api_failure('Finviz', f"get_stock_info: {e}")
                 self._record_fallback_failure('stock_info', 'Finviz', str(e))
         
-        # 方案3: 降級到 IBKR (新增)
-        if self.use_ibkr and self.ibkr_client and self.ibkr_client.is_connected():
+        # 如果前面都失敗了，才完全依賴 IBKR
+        if not stock_data and self.use_ibkr and self.ibkr_client and self.ibkr_client.is_connected():
             try:
-                logger.info("  使用 IBKR 獲取股價...")
-                price = self.ibkr_client.get_stock_price(ticker)
+                logger.info("  使用 IBKR 獲取股價與進階Tick...")
+                ibkr_data = self.ibkr_client.get_stock_full_data(ticker)
                 
-                if price and price > 0:
+                if ibkr_data and ibkr_data.get('price') and ibkr_data['price'] > 0:
+                    price = ibkr_data['price']
                     stock_data = {
                         'ticker': ticker,
                         'current_price': price,
                         'open': price, # 暫時用當前價代替
                         'high': price, 
                         'low': price,
+                        'dividend_rate': ibkr_data.get('dividend_yield', 0),
+                        'historical_volatility': ibkr_data.get('historical_volatility', 0) * 100 if ibkr_data.get('historical_volatility') else None,
+                        'mark_price': ibkr_data.get('mark_price'),
                         'data_source': 'IBKR'
                     }
                     logger.info(f"* 成功獲取 {ticker} 基本信息 (IBKR)")
                     logger.info(f"  當前股價: ${price:.2f}")
                     self._record_fallback('stock_info', 'IBKR')
-                    return stock_data
                 else:
                     logger.warning("! IBKR 返回無效股價")
             except Exception as e:
                 logger.warning(f"! IBKR 獲取股價失敗: {e}")
+                
+        # 最終合併 IBKR 的高級數據防護網 (HV, Dividends, MarkPrice)
+        if stock_data and self.use_ibkr and stock_data.get('data_source') != 'IBKR':
+            try:
+                ibkr_data = self.ibkr_client.get_stock_full_data(ticker)
+                if ibkr_data:
+                    if 'dividend_rate' not in stock_data or not stock_data['dividend_rate']:
+                        stock_data['dividend_rate'] = ibkr_data.get('dividend_yield', 0)
+                    if 'historical_volatility' not in stock_data or not stock_data['historical_volatility']:
+                        stock_data['historical_volatility'] = ibkr_data.get('historical_volatility', 0) * 100 if ibkr_data.get('historical_volatility') else None
+                    if 'mark_price' not in stock_data or not stock_data['mark_price']:
+                        stock_data['mark_price'] = ibkr_data.get('mark_price', stock_data.get('mark_price'))
+            except Exception as e:
+                logger.debug(f"合併 IBKR 進階 Tick 時發生錯誤: {e}")
+
+        if stock_data:
+            return stock_data
         
         # 最終檢查: 如果所有來源都失敗
         logger.error(f"x 無法獲取 {ticker} 基本信息 (所有來源失敗)")

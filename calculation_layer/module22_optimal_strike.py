@@ -455,12 +455,17 @@ class OptimalStrikeCalculator:
         
         Requirements: 1.1, 1.2, 1.3, 1.6
         """
-        # 獲取市場價格
+        # 獲取市場價格 (Fix 11: 優先使用 IBKR markPrice)
         market_price = option.get('lastPrice', 0) or 0
         if market_price <= 0:
-            bid = option.get('bid', 0) or 0
-            ask = option.get('ask', 0) or 0
-            market_price = (bid + ask) / 2 if (bid + ask) > 0 else 0
+            # 優先使用 IBKR Tick 232 Mark Price
+            mark_price = option.get('markPrice')
+            if mark_price and mark_price > 0:
+                market_price = mark_price
+            else:
+                bid = option.get('bid', 0) or 0
+                ask = option.get('ask', 0) or 0
+                market_price = (bid + ask) / 2 if (bid + ask) > 0 else 0
         
         # 策略 1: 使用 Module 17 從市場價格反推 IV
         if market_price > 0 and time_to_expiration > 0:
@@ -931,8 +936,12 @@ class OptimalStrikeCalculator:
                     logger.debug(f"  Short Put 過濾: 跳過行使價 ${strike:.2f} - {skip_reason}")
                     return None
             
-            # 計算 Bid-Ask Spread 百分比
-            mid_price = (bid + ask) / 2 if (bid + ask) > 0 else last_price
+            # 計算 Bid-Ask Spread 百分比 (Fix 11: 優先使用 IBKR markPrice)
+            mark_price = option.get('markPrice')
+            if mark_price and mark_price > 0:
+                mid_price = mark_price
+            else:
+                mid_price = (bid + ask) / 2 if (bid + ask) > 0 else last_price
             bid_ask_spread_pct = ((ask - bid) / mid_price * 100) if mid_price > 0 else 0
             
             # 創建分析對象
@@ -1537,14 +1546,18 @@ class OptimalStrikeCalculator:
             atm_call = call_strikes[atm_strike]
             atm_put = put_strikes[atm_strike]
             
-            # 獲取價格（優先使用 lastPrice，否則使用 mid price）
+            # 獲取價格（優先使用 lastPrice，其次 markPrice，否則使用 mid price）
             call_price = atm_call.get('lastPrice', 0) or 0
+            if call_price <= 0:
+                call_price = atm_call.get('markPrice') or 0
             if call_price <= 0:
                 bid = atm_call.get('bid', 0) or 0
                 ask = atm_call.get('ask', 0) or 0
                 call_price = (bid + ask) / 2 if (bid + ask) > 0 else 0
             
             put_price = atm_put.get('lastPrice', 0) or 0
+            if put_price <= 0:
+                put_price = atm_put.get('markPrice') or 0
             if put_price <= 0:
                 bid = atm_put.get('bid', 0) or 0
                 ask = atm_put.get('ask', 0) or 0

@@ -106,16 +106,19 @@ class MomentumFilter:
                   ticker: str,
                   historical_data: Optional[pd.DataFrame] = None,
                   benchmark_data: Optional[pd.DataFrame] = None,
-                  calculation_date: str = None) -> MomentumResult:
+                  calculation_date: str = None,
+                  as_of_date: str = None) -> MomentumResult:  # Fix 7: 加入截止日期參數
         """
         計算動量得分
-        
+
         參數:
             ticker: 股票代碼
             historical_data: 歷史價格數據（包含Close和Volume列）
             benchmark_data: 基準指數數據（默認SPY）
             calculation_date: 計算日期
-        
+            as_of_date: Fix 7 - 數據截止日期 (YYYY-MM-DD)，默認為今天。
+                        設定此參數可消除倒推風險，確保只使用截止日期前的數據。
+
         返回:
             MomentumResult: 動量分析結果
         """
@@ -124,12 +127,17 @@ class MomentumFilter:
             
             if calculation_date is None:
                 calculation_date = datetime.now().strftime('%Y-%m-%d')
-            
+
+            # Fix 7: 截止日期控制，預設為今天
+            effective_end_date = as_of_date or datetime.now().strftime('%Y-%m-%d')
+
             # 如果沒有提供歷史數據，嘗試從data_fetcher獲取
             if historical_data is None:
                 if self.data_fetcher is None:
                     raise ValueError("需要提供historical_data或data_fetcher")
-                historical_data = self._fetch_historical_data(ticker, days=90)
+                historical_data = self._fetch_historical_data(
+                    ticker, days=90, end_date=effective_end_date  # Fix 7: 傳入截止日期
+                )
             
             # 驗證數據
             if historical_data is None or len(historical_data) < 30:
@@ -374,14 +382,18 @@ class MomentumFilter:
             calculation_date=calculation_date
         )
     
-    def _fetch_historical_data(self, ticker: str, days: int) -> Optional[pd.DataFrame]:
-        """從data_fetcher獲取歷史數據"""
+    def _fetch_historical_data(self, ticker: str, days: int,
+                               end_date: str = None) -> Optional[pd.DataFrame]:  # Fix 7: 加入 end_date
+        """從data_fetcher獲取歷史數據，支援截止日期以消除倒推風險"""
         try:
             if self.data_fetcher is None:
                 return None
-            
-            # 調用data_fetcher的方法
-            # 注意：這需要data_fetcher有get_historical_data方法
+            # Fix 7: 傳入 end_date，確保只取截止日期前的數據
+            if hasattr(self.data_fetcher, 'get_historical_data'):
+                import inspect
+                sig = inspect.signature(self.data_fetcher.get_historical_data)
+                if 'end_date' in sig.parameters:
+                    return self.data_fetcher.get_historical_data(ticker, days=days, end_date=end_date)
             return self.data_fetcher.get_historical_data(ticker, days=days)
             
         except Exception as e:

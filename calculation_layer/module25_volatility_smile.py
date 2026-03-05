@@ -349,8 +349,12 @@ class VolatilitySmileAnalyzer:
                 ask = opt.get('ask', 0) or 0
                 
                 if bid > 0 and ask > 0:
-                    # 使用 mid price 作為 IV 估計的輸入
-                    mid_price = (bid + ask) / 2
+                    # Fix 11: 優先使用 IBKR markPrice，否則 (bid+ask)/2
+                    mark_price = opt.get('markPrice')
+                    if mark_price and mark_price > 0:
+                        mid_price = mark_price
+                    else:
+                        mid_price = (bid + ask) / 2
                     # 簡化：IV = (mid_price / strike) × volatility_factor
                     # 實際應使用完整的 IV 計算
                     iv_raw = mid_price / strike * 0.3 if strike > 0 else 0.3
