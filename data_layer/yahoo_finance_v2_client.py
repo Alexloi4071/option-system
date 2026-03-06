@@ -509,7 +509,9 @@ class YahooFinanceV2Client:
     
     def _make_request(self, endpoint: str, params: dict = None, retry_count: int = 0, use_v2: bool = True) -> dict:
         """
-        發送 HTTP 請求並處理錯誤
+        發送 HTTP 請求並處理錯誤（增強版 - Task 16.2）
+        
+        Implements intelligent retry with exponential backoff for 429 errors.
         
         Args:
             endpoint: API 端點
@@ -519,8 +521,11 @@ class YahooFinanceV2Client:
         
         Returns:
             dict: 響應數據
+        
+        Requirements: 1.8, 2.8, 3.12
         """
         start_time = time.time()
+        base_delay = 2.0  # Base delay for exponential backoff
         
         try:
             # 設置請求間隔以避免 429
@@ -555,15 +560,26 @@ class YahooFinanceV2Client:
                 timeout=self.connection_config.timeout
             )
             
-            # 處理 429 錯誤
+            # Task 16.2: Handle 429 errors with exponential backoff
             if response.status_code == 429:
                 logger.error(f"x HTTP 429 - Too Many Requests: {endpoint}")
-                if retry_count < 2:  # 最多重試 2 次
+                
+                if retry_count < self.max_retries:
+                    # Calculate exponential backoff delay
+                    delay = min(base_delay * (2 ** retry_count), 60)
+                    logger.warning(f"Rate limit hit, retrying in {delay}s... (attempt {retry_count + 1}/{self.max_retries})")
+                    
+                    # Refresh session to clear tracking
                     self._handle_429_error(endpoint)
+                    
+                    # Wait with exponential backoff
+                    time.sleep(delay)
+                    
+                    # Retry
                     return self._make_request(endpoint, params, retry_count + 1, use_v2)
                 else:
                     logger.error("x 已達到最大重試次數，放棄請求")
-                    raise Exception("429 錯誤重試失敗")
+                    raise Exception(f"MaxRetriesExceeded: Failed after {self.max_retries} attempts due to rate limiting (429)")
             
             # 處理其他 HTTP 錯誤
             response.raise_for_status()
@@ -577,15 +593,19 @@ class YahooFinanceV2Client:
         except requests.exceptions.Timeout as e:
             elapsed = time.time() - start_time
             logger.error(f"x Request timeout after {elapsed:.2f}s - URL: {endpoint}")
-            if retry_count < 2:
-                time.sleep(5)
+            if retry_count < self.max_retries:
+                delay = min(base_delay * (2 ** retry_count), 60)
+                logger.warning(f"Timeout error, retrying in {delay}s...")
+                time.sleep(delay)
                 return self._make_request(endpoint, params, retry_count + 1, use_v2)
             raise
             
         except requests.exceptions.ConnectionError as e:
             logger.error(f"x Connection error - URL: {endpoint}")
-            if retry_count < 2:
-                time.sleep(5)
+            if retry_count < self.max_retries:
+                delay = min(base_delay * (2 ** retry_count), 60)
+                logger.warning(f"Connection error, retrying in {delay}s...")
+                time.sleep(delay)
                 return self._make_request(endpoint, params, retry_count + 1, use_v2)
             raise
             

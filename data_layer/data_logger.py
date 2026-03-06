@@ -24,6 +24,15 @@ class DataLogger:
         """
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 初始化數據庫管理器
+        try:
+            from data_layer.database_manager import DatabaseManager
+            self.db = DatabaseManager()
+        except ImportError:
+            self.db = None
+            logger.warning("DatabaseManager not found, falling back to local logging only")
+            
         logger.info(f"數據日誌系統已初始化，目錄: {self.log_dir}")
     
     def log_data_fetch(self, ticker: str, data_type: str, 
@@ -95,7 +104,7 @@ class DataLogger:
     def log_calculation(self, ticker: str, module: str, 
                        status: str, result: Dict[str, Any] = None):
         """
-        記錄計算日誌
+        記錄計算日誌 (並寫入 Supabase module_run_log)
         
         參數:
             ticker: 股票代碼
@@ -103,8 +112,9 @@ class DataLogger:
             status: 狀態
             result: 計算結果
         """
+        timestamp = datetime.now().isoformat()
         log_entry = {
-            'timestamp': datetime.now().isoformat(),
+            'timestamp': timestamp,
             'ticker': ticker,
             'module': module,
             'status': status,
@@ -119,8 +129,86 @@ class DataLogger:
             
             logger.info(f"計算日誌已記錄: {ticker} - {module} - {status}")
             
+            # 同步寫入 Supabase
+            if hasattr(self, 'db') and self.db and self.db.is_configured:
+                # 簡單提取評分
+                score = None
+                signal = None
+                if result:
+                    score = result.get('score', result.get('confidence', None))
+                    signal = result.get('signal', result.get('trend', None))
+                
+                # 計算時間轉為 short date
+                an_date = datetime.now().strftime('%Y-%m-%d')
+                self.db.insert_module_log(
+                    run_id=f"run_{int(datetime.now().timestamp())}",
+                    ticker=ticker,
+                    analysis_date=an_date,
+                    module_name=module,
+                    score=float(score) if score is not None else None,
+                    signal=str(signal) if signal is not None else None,
+                    raw_data=result or {}
+                )
+                
         except Exception as e:
             logger.error(f"記錄計算日誌失敗: {e}")
+            
+    def log_iv_surface(self, ticker: str, expiration_date: str, 
+                       strike_price: float, option_type: str, 
+                       implied_volatility: float, delta: float = None):
+        """將 IV 歷史資料寫入 Supabase (取代部分冗餘的 jsonl 紀錄)"""
+        record_date = datetime.now().strftime('%Y-%m-%d')
+        if hasattr(self, 'db') and self.db and self.db.is_configured:
+            try:
+                self.db.insert_iv_history(
+                    ticker=ticker,
+                    record_date=record_date,
+                    expiration_date=expiration_date,
+                    strike_price=strike_price,
+                    option_type=option_type,
+                    implied_volatility=implied_volatility,
+                    delta=delta
+                )
+            except Exception as e:
+                logger.error(f"寫入 IV 歷史資料庫失敗: {e}")
+
+    def log_scanner_alert(self, ticker: str, alert_type: str, message: str, data: dict = None):
+        """記錄 IBKR 掃描器觸發的 Alerts"""
+        alert_time = datetime.now().isoformat()
+        if hasattr(self, 'db') and self.db and self.db.is_configured:
+            try:
+                self.db.insert_scanner_alert(
+                    ticker=ticker,
+                    alert_time=alert_time,
+                    alert_type=alert_type,
+                    message=message,
+                    data=data or {}
+                )
+            except Exception as e:
+                logger.error(f"寫入掃描器 Alert 到資料庫失敗: {e}")
+
+    def log_trade_decision(self, ticker: str, action: str, 
+                           strategy_name: str = None, 
+                           option_details: dict = None, 
+                           ai_confidence_score: float = None, 
+                           ai_reasoning: str = None):
+        """記錄 AI 或策略模組產生的最終交易決策"""
+        decision_time = datetime.now().isoformat()
+        decision_id = f"dec_{int(datetime.now().timestamp())}"
+        if hasattr(self, 'db') and self.db and self.db.is_configured:
+            try:
+                self.db.insert_trade_decision(
+                    decision_id=decision_id,
+                    ticker=ticker,
+                    decision_time=decision_time,
+                    action=action,
+                    strategy_name=strategy_name,
+                    option_details=option_details,
+                    ai_confidence_score=ai_confidence_score,
+                    ai_reasoning=ai_reasoning
+                )
+            except Exception as e:
+                logger.error(f"寫入交易決策至資料庫失敗: {e}")
     
     def log_validation(self, ticker: str, validation_type: str, 
                       status: str, errors: list = None):

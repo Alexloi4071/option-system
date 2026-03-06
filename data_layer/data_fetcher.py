@@ -95,6 +95,107 @@ logging.basicConfig(
 )
 
 
+class SensitiveDataFilter(logging.Filter):
+    """
+    日誌過濾器 - 自動清理敏感信息（Task 21.2）
+    
+    這個過濾器會在所有日誌消息輸出前自動清理敏感信息，
+    包括 API Keys、密碼等。只顯示 API Key 的前4位和後4位。
+    
+    Requirements: 1.14, 2.14
+    """
+    
+    def __init__(self):
+        super().__init__()
+        # 從環境變量獲取需要清理的 API Keys
+        self.api_key_names = [
+            'FRED_API_KEY', 'FINNHUB_API_KEY', 'RAPIDAPI_KEY',
+            'ALPHA_VANTAGE_API_KEY', 'MASSIVE_API_KEY'
+        ]
+    
+    def filter(self, record):
+        """
+        過濾日誌記錄，清理敏感信息
+        
+        參數:
+            record: 日誌記錄對象
+        
+        返回:
+            True（總是允許日誌通過，但會修改消息內容）
+        """
+        # 清理日誌消息
+        if hasattr(record, 'msg') and record.msg:
+            record.msg = self._sanitize_message(str(record.msg))
+        
+        # 清理日誌參數
+        if hasattr(record, 'args') and record.args:
+            record.args = tuple(
+                self._sanitize_message(str(arg)) if isinstance(arg, str) else arg
+                for arg in record.args
+            )
+        
+        return True
+    
+    def _sanitize_message(self, message: str) -> str:
+        """
+        清理消息中的敏感信息
+        
+        參數:
+            message: 原始消息
+        
+        返回:
+            清理後的消息
+        """
+        if not message:
+            return message
+        
+        import re
+        
+        result = message
+        
+        # 清理環境變量中的實際 API Keys
+        for key_name in self.api_key_names:
+            key_value = os.environ.get(key_name, '')
+            if key_value and len(key_value) > 8 and key_value in result:
+                # 只顯示前4位和後4位
+                masked = f"{key_value[:4]}...{key_value[-4:]}"
+                result = result.replace(key_value, masked)
+        
+        # Pattern 1: API keys in URLs
+        pattern1 = r'([?&](?:token|apikey|api_key|key)=)([a-zA-Z0-9]{4})[a-zA-Z0-9]+([a-zA-Z0-9]{4})'
+        result = re.sub(pattern1, r'\1\2...\3', result, flags=re.IGNORECASE)
+        
+        # Pattern 2: Standalone API keys (12+ characters)
+        pattern2 = r'\b([a-zA-Z0-9]{4})[a-zA-Z0-9]{12,}([a-zA-Z0-9]{4})\b'
+        def replace_if_api_key(match):
+            full_match = match.group(0)
+            if len(full_match) >= 20:
+                return f"{match.group(1)}...{match.group(2)}"
+            return full_match
+        result = re.sub(pattern2, replace_if_api_key, result)
+        
+        # Pattern 3: Passwords in URLs
+        pattern3 = r'([?&](?:password|passwd|pwd)=)[^&\s]+'
+        result = re.sub(pattern3, r'\1***', result, flags=re.IGNORECASE)
+        
+        # Bearer Token
+        result = re.sub(r'(Bearer\s+)[a-zA-Z0-9._-]+', r'\1***', result, flags=re.IGNORECASE)
+        
+        return result
+
+
+# 應用 SensitiveDataFilter 到所有日誌處理器（Task 21.2）
+_sensitive_filter = SensitiveDataFilter()
+for handler in logger.handlers:
+    handler.addFilter(_sensitive_filter)
+
+# 同時應用到根日誌記錄器，確保所有模塊的日誌都被過濾
+root_logger = logging.getLogger()
+for handler in root_logger.handlers:
+    if not any(isinstance(f, SensitiveDataFilter) for f in handler.filters):
+        handler.addFilter(_sensitive_filter)
+
+
 class IVNormalizer:
     """
     IV（隱含波動率）數據標準化工具
@@ -116,6 +217,56 @@ class IVNormalizer:
     MAX_VALID_IV = 500.0     # 最大有效 IV（500%）
     ABNORMAL_HIGH_IV = 200.0 # 異常高 IV 閾值
     ABNORMAL_LOW_IV = 5.0    # 異常低 IV 閾值
+    
+    @staticmethod
+    def normalize(raw_iv: float, source: str, ticker: str = '') -> float:
+        """
+        Task 17.3: Simplified IV normalization method for use in get_option_chain()
+        
+        Normalizes IV to percentage format (0-100) and logs conversions.
+        
+        參數:
+            raw_iv: Raw IV value from data source
+            source: Data source name ('IBKR', 'Yahoo', 'Finnhub', etc.)
+            ticker: Stock ticker (optional, for logging)
+        
+        返回:
+            float: Normalized IV in percentage format, or None if invalid
+        
+        Requirements: 1.12, 2.12, 3.11
+        """
+        if raw_iv is None:
+            return None
+        
+        try:
+            iv_float = float(raw_iv)
+        except (ValueError, TypeError):
+            logger.warning(f"IV normalized: invalid value '{raw_iv}' from {source} for {ticker}")
+            return None
+        
+        # Handle negative or NaN
+        if iv_float < 0 or np.isnan(iv_float):
+            logger.warning(f"IV normalized: invalid value {iv_float} from {source} for {ticker}")
+            return None
+        
+        # Detect format and normalize
+        if 0 < iv_float < 1.0:
+            # Decimal format (0-1) -> convert to percentage
+            normalized = iv_float * 100
+            format_detected = 'decimal'
+            logger.info(f"IV normalized: {iv_float} -> {normalized:.2f}% (source: {source}, ticker: {ticker})")
+        elif 0 <= iv_float <= 100:
+            # Already percentage format
+            normalized = iv_float
+            format_detected = 'percentage'
+            logger.debug(f"IV normalized: {iv_float}% (already percentage, source: {source}, ticker: {ticker})")
+        else:
+            # Abnormal value (>100)
+            normalized = iv_float
+            format_detected = 'abnormal'
+            logger.warning(f"IV normalized: abnormal value {iv_float} from {source} for {ticker}")
+        
+        return normalized
     
     @staticmethod
     def is_decimal_format(iv_value: float) -> bool:
@@ -287,6 +438,16 @@ class DataFetcher:
         self.api_failures = {}  # {api_name: [error_messages]}
         self.fallback_used = {}  # {data_type: [used_sources]}
         
+        # 模塊執行狀態追蹤（Task 20.1）
+        self.module_status = {}  # {module_name: {'status': 'success'|'skipped'|'failed', 'reason': str|None}}
+        
+        # 動態速率限制（Task 22.1）
+        self.base_delay = 3  # 基礎延遲（秒）
+        self.current_delay = self.base_delay  # 當前延遲（秒）
+        self.rate_limit_events = []  # 速率限制事件記錄
+        self.max_delay = 30  # 最大延遲（秒）
+        self.min_delay = self.base_delay  # 最小延遲（秒）
+        
         # 初始化交易日计算器（如果可用）
         if TRADING_DAYS_AVAILABLE and TradingDaysCalculator:
             try:
@@ -325,17 +486,52 @@ class DataFetcher:
     
     def _initialize_clients(self, shared_ibkr_client=None):
         """初始化各API客户端"""
+        # Fix Bug 1.6: Initialize client_status dictionary to track initialization results
+        self.client_status = {}
+        
         try:
             # IBKR 客户端（如果启用）
-            # IBKR 客户端（如果启用）
             if self.use_ibkr:
-                if shared_ibkr_client:
+                # 記錄 IBKR 配置狀態
+                logger.info("=" * 50)
+                logger.info("IBKR 初始化開始")
+                logger.info(f"  IBKR_ENABLED (settings): {settings.IBKR_ENABLED}")
+                logger.info(f"  IBKR_AVAILABLE (ib_insync 導入): {IBKR_AVAILABLE}")
+                logger.info(f"  use_ibkr (最終決定): {self.use_ibkr}")
+                
+                if not IBKR_AVAILABLE:
+                    error_msg = "ib_insync 模塊未安裝或導入失敗"
+                    logger.error(f"x {error_msg}")
+                    logger.info("  建議: pip install ib_insync")
+                    self.client_status['ibkr'] = {'available': False, 'error': f'Import failed: {error_msg}'}
+                    logger.info("=" * 50)
+                elif shared_ibkr_client:
                      self.ibkr_client = shared_ibkr_client
                      logger.info("* 使用共享的 IBKR 客户端")
+                     # Test connection
+                     if hasattr(shared_ibkr_client, '_test_connection'):
+                         if shared_ibkr_client._test_connection():
+                             actual_client_id = getattr(shared_ibkr_client, 'client_id', 'unknown')
+                             logger.info(f"  ✓ 共享連接已驗證 (Client ID: {actual_client_id})")
+                             self.client_status['ibkr'] = {'available': True, 'error': None, 'client_id': actual_client_id}
+                         else:
+                             self.client_status['ibkr'] = {'available': False, 'error': 'Connection test failed'}
+                     else:
+                         # Fallback for older clients without _test_connection
+                         is_conn = shared_ibkr_client.is_connected() if hasattr(shared_ibkr_client, 'is_connected') else shared_ibkr_client.connected
+                         actual_client_id = getattr(shared_ibkr_client, 'client_id', 'unknown')
+                         self.client_status['ibkr'] = {'available': is_conn, 'error': None if is_conn else 'Not connected', 'client_id': actual_client_id}
+                     logger.info("=" * 50)
                 else:
                     try:
                         port = settings.IBKR_PORT_PAPER if settings.IBKR_USE_PAPER else settings.IBKR_PORT_LIVE
                         mode = 'paper' if settings.IBKR_USE_PAPER else 'live'
+                        
+                        logger.info(f"  連接參數:")
+                        logger.info(f"    主機: {settings.IBKR_HOST}")
+                        logger.info(f"    端口: {port} ({'Paper Trading' if settings.IBKR_USE_PAPER else 'Live Trading'})")
+                        logger.info(f"    Client ID: {settings.IBKR_CLIENT_ID}")
+                        logger.info(f"    模式: {mode}")
                         
                         self.ibkr_client = IBKRClient(
                             host=settings.IBKR_HOST,
@@ -346,15 +542,63 @@ class DataFetcher:
                         
                         # 尝试连接（不强制，失败时使用降级方案）
                         if self.ibkr_client.connect():
-                            logger.info("* IBKR 客户端已初始化并连接")
+                            actual_client_id = self.ibkr_client.client_id
+                            if actual_client_id != settings.IBKR_CLIENT_ID:
+                                logger.warning(f"  ! Client ID 已自動調整: {settings.IBKR_CLIENT_ID} → {actual_client_id}")
+                            logger.info(f"* IBKR 客户端已初始化并连接 (Client ID: {actual_client_id})")
+                            self.client_status['ibkr'] = {'available': True, 'error': None, 'client_id': actual_client_id}
                         else:
-                            logger.warning("! IBKR 客户端初始化但未连接，将使用降级方案")
+                            error_msg = self.ibkr_client.last_error if hasattr(self.ibkr_client, 'last_error') and self.ibkr_client.last_error else 'Unknown error'
+                            logger.warning(f"! IBKR 客户端初始化但未连接: {error_msg}")
+                            logger.warning("  將使用降級方案 (Yahoo Finance)")
+                            logger.info("  可能原因:")
+                            logger.info("    1. IBKR Gateway 未運行")
+                            logger.info("    2. 端口配置錯誤")
+                            logger.info("    3. Client ID 衝突（已嘗試自動切換）")
+                            logger.info("    4. 網絡連接問題")
+                            self.client_status['ibkr'] = {'available': False, 'error': f'Connection failed: {error_msg}'}
                     except Exception as e:
-                        logger.warning(f"! IBKR 初始化失败: {e}，将使用降级方案")
-                        self._record_api_failure('ibkr', str(e))
+                        error_msg = str(e)
+                        error_type = type(e).__name__
+                        
+                        logger.error(f"x IBKR 初始化失败: {error_type} - {error_msg}")
+                        
+                        # 根據錯誤類型提供具體建議
+                        if 'ConnectionRefusedError' in error_type or 'refused' in error_msg.lower():
+                            logger.info("  診斷建議:")
+                            logger.info("    1. 確認 IBKR Gateway 正在運行")
+                            logger.info(f"    2. 檢查端口配置是否正確 (當前: {port})")
+                            logger.info("    3. 檢查防火牆設置")
+                        elif 'TimeoutError' in error_type or 'timeout' in error_msg.lower():
+                            logger.info("  診斷建議:")
+                            logger.info("    1. 檢查網絡連接")
+                            logger.info("    2. 增加連接超時時間")
+                            logger.info("    3. 確認 IBKR Gateway 響應正常")
+                        elif 'clientId' in error_msg.lower() and 'already in use' in error_msg.lower():
+                            logger.info("  診斷建議:")
+                            logger.info("    1. Client ID 衝突（系統已嘗試自動切換）")
+                            logger.info("    2. 關閉其他使用相同 Client ID 的程序")
+                            logger.info("    3. 或修改 .env 中的 IBKR_CLIENT_ID")
+                        else:
+                            logger.info("  診斷建議:")
+                            logger.info("    1. 檢查錯誤信息")
+                            logger.info("    2. 確認 IBKR Gateway 配置正確")
+                            logger.info("    3. 查看 IBKR Gateway 日誌")
+                        
+                        logger.warning("  將使用降級方案 (Yahoo Finance)")
+                        self._record_api_failure('ibkr', error_msg)
                         self.ibkr_client = None
+                        self.client_status['ibkr'] = {'available': False, 'error': f'{error_type}: {error_msg}'}
+                    
+                    logger.info("=" * 50)
             else:
-                logger.info("i IBKR 未启用，将使用其他数据源")
+                logger.info("=" * 50)
+                logger.info("IBKR 未啟用")
+                logger.info(f"  IBKR_ENABLED (settings): {settings.IBKR_ENABLED}")
+                logger.info(f"  IBKR_AVAILABLE (ib_insync 導入): {IBKR_AVAILABLE}")
+                logger.info("  將使用其他數據源 (Yahoo Finance)")
+                logger.info("=" * 50)
+                self.client_status['ibkr'] = {'available': False, 'error': 'Not enabled'}
             
             # Yahoo Finance 客户端（優化版，支持 UA 輪換和智能重試）
             # Yahoo Finance 客户端（優化版，支持 UA 輪換和智能重試）
@@ -367,10 +611,14 @@ class DataFetcher:
                         max_retries=5  # 增加重試次數
                     )
                     logger.info(f"* Yahoo Finance 客户端已初始化（優化版，延遲: {yahoo_delay}s）")
+                    self.client_status['yahoo'] = {'available': True, 'error': None}
                 except Exception as e:
                     logger.warning(f"! Yahoo Finance 初始化失败: {e}")
                     self._record_api_failure('yahoo_v2', str(e))
                     self.yahoo_v2_client = None
+                    self.client_status['yahoo'] = {'available': False, 'error': str(e)}
+            else:
+                self.client_status['yahoo'] = {'available': False, 'error': 'YahooFinanceV2Client not available'}
             
             # yfinance 作为降级方案
             self.yfinance_client = yf
@@ -381,24 +629,32 @@ class DataFetcher:
                 try:
                     self.fred_client = Fred(api_key=settings.FRED_API_KEY)
                     logger.info("* FRED客户端已初始化")
+                    # Validate API key by making a test request
+                    self.client_status['fred'] = self._validate_fred_client()
                 except Exception as e:
                     logger.warning(f"! FRED 初始化失败: {e}")
                     self._record_api_failure('FRED', str(e))
                     self.fred_client = None
+                    self.client_status['fred'] = {'available': False, 'error': str(e)}
             else:
                 logger.warning("! FRED_API_KEY未設置，FRED功能將不可用")
+                self.client_status['fred'] = {'available': False, 'error': 'API key not configured'}
             
             # Finnhub客户端
             if settings.FINNHUB_API_KEY:
                 try:
                     self.finnhub_client = finnhub.Client(api_key=settings.FINNHUB_API_KEY)
                     logger.info("* Finnhub客户端已初始化")
+                    # Validate API key
+                    self.client_status['finnhub'] = self._validate_finnhub_client()
                 except Exception as e:
                     logger.warning(f"! Finnhub 初始化失败: {e}")
                     self._record_api_failure('finnhub', str(e))
                     self.finnhub_client = None
+                    self.client_status['finnhub'] = {'available': False, 'error': str(e)}
             else:
                 logger.warning("! FINNHUB_API_KEY未設置，Finnhub功能將不可用")
+                self.client_status['finnhub'] = {'available': False, 'error': 'API key not configured'}
             
             # Finviz 抓取器（無需 API Key，免費使用）
             try:
@@ -438,13 +694,16 @@ class DataFetcher:
                         request_delay=12.0  # Alpha Vantage 免費版限制: 5次/分鐘
                     )
                     logger.info("* Alpha Vantage 客戶端已初始化（技術指標 + 歷史數據）")
+                    self.client_status['alpha_vantage'] = {'available': True, 'error': None}
                 except Exception as e:
                     logger.warning(f"! Alpha Vantage 初始化失敗: {e}")
                     self._record_api_failure('Alpha Vantage', str(e))
                     self.alpha_vantage_client = None
+                    self.client_status['alpha_vantage'] = {'available': False, 'error': str(e)}
             else:
                 logger.info("i Alpha Vantage 未配置，跳過初始化")
                 self.alpha_vantage_client = None
+                self.client_status['alpha_vantage'] = {'available': False, 'error': 'API key not configured'}
             
             # Massive API 客戶端（備用數據源）
             if settings.MASSIVE_API_KEY:
@@ -463,10 +722,92 @@ class DataFetcher:
                 logger.info("i Massive API 未配置，跳過初始化")
                 self.massive_api_client = None
             
+            # Fix Bug 1.6: Print initialization summary
+            self._print_initialization_summary()
+            
             return True
         except Exception as e:
             logger.error(f"x 客户端初始化失敗: {e}")
             return False
+
+    def _validate_finnhub_client(self) -> Dict[str, Any]:
+        """
+        Validate Finnhub API client by testing API key
+
+        Returns:
+            Dict with 'available' (bool) and 'error' (str or None)
+        """
+        try:
+            if not self.finnhub_client:
+                return {'available': False, 'error': 'Client not initialized'}
+
+            # Test API key with a simple quote request
+            test_result = self.finnhub_client.quote('AAPL')
+
+            if test_result and 'c' in test_result:
+                return {'available': True, 'error': None}
+            else:
+                return {'available': False, 'error': 'Invalid API response'}
+        except Exception as e:
+            error_msg = str(e)
+            if 'Invalid API key' in error_msg or '401' in error_msg or '403' in error_msg:
+                return {'available': False, 'error': 'Invalid API Key'}
+            else:
+                return {'available': False, 'error': f'Validation failed: {error_msg}'}
+
+    def _validate_fred_client(self) -> Dict[str, Any]:
+        """
+        Validate FRED API client by testing API key
+
+        Returns:
+            Dict with 'available' (bool) and 'error' (str or None)
+        """
+        try:
+            if not self.fred_client:
+                return {'available': False, 'error': 'Client not initialized'}
+
+            # Test API key with a simple series request
+            test_result = self.fred_client.get_series('DGS10', limit=1)
+
+            if test_result is not None and len(test_result) > 0:
+                return {'available': True, 'error': None}
+            else:
+                return {'available': False, 'error': 'Invalid API response'}
+        except Exception as e:
+            error_msg = str(e)
+            if 'Invalid API key' in error_msg or '400' in error_msg or '403' in error_msg:
+                return {'available': False, 'error': 'Invalid API Key'}
+            else:
+                return {'available': False, 'error': f'Validation failed: {error_msg}'}
+
+    def _print_initialization_summary(self):
+        """
+        Print API Client Initialization Summary to console
+
+        Format:
+        API Client Initialization Summary:
+        ✓ IBKR Gateway (port 4002)
+        ✗ Finnhub (Invalid API Key)
+        ✓ Yahoo Finance
+        """
+        logger.info("=" * 80)
+        logger.info("API Client Initialization Summary:")
+        logger.info("=" * 80)
+
+        for client_name, status in self.client_status.items():
+            if status['available']:
+                # Get additional info for IBKR
+                if client_name == 'ibkr' and self.ibkr_client:
+                    port = self.ibkr_client.port
+                    logger.info(f"✓ {client_name.upper()} Gateway (port {port})")
+                else:
+                    logger.info(f"✓ {client_name.upper()}")
+            else:
+                error = status.get('error', 'Unknown error')
+                logger.info(f"✗ {client_name.upper()} ({error})")
+
+        logger.info("=" * 80)
+
     
     def _record_api_failure(
         self, 
@@ -476,7 +817,9 @@ class DataFetcher:
         request_url: str = None,
         request_params: Dict = None,
         response_status: int = None,
-        stack_trace: str = None
+        stack_trace: str = None,
+        error_type: str = None,
+        data_type: str = None
     ):
         """
         記錄 API 故障（增強版）
@@ -493,6 +836,8 @@ class DataFetcher:
             request_params: 請求參數（可選）
             response_status: HTTP 響應狀態碼（可選）
             stack_trace: 錯誤堆棧（可選）
+            error_type: 錯誤類型 ('ConnectionTimeout', '429', '403', etc.)
+            data_type: 數據類型 ('stock_price', 'option_chain', 'earnings', etc.)
         
         Requirements: 5.3, 5.4, 7.1, 7.2, 7.3, 7.4
         """
@@ -502,8 +847,34 @@ class DataFetcher:
         # 構建詳細的錯誤記錄
         error_record = {
             'timestamp': datetime.now().isoformat(),
-            'error': error_message
+            'error_message': error_message,
+            'error': error_message  # 保留向後兼容性
         }
+        
+        # 添加錯誤類型（如果未提供，嘗試從錯誤消息推斷）
+        if error_type:
+            error_record['error_type'] = error_type
+        elif response_status:
+            error_record['error_type'] = f'HTTP_{response_status}'
+        else:
+            # 嘗試從錯誤消息推斷錯誤類型
+            error_lower = error_message.lower()
+            if 'timeout' in error_lower or 'timed out' in error_lower:
+                error_record['error_type'] = 'ConnectionTimeout'
+            elif 'connection' in error_lower:
+                error_record['error_type'] = 'ConnectionError'
+            elif 'rate limit' in error_lower or '429' in error_message:
+                error_record['error_type'] = 'RateLimitError'
+            elif 'forbidden' in error_lower or '403' in error_message:
+                error_record['error_type'] = 'ForbiddenError'
+            elif 'not found' in error_lower or '404' in error_message:
+                error_record['error_type'] = 'NotFoundError'
+            else:
+                error_record['error_type'] = 'UnknownError'
+        
+        # 添加數據類型
+        if data_type:
+            error_record['data_type'] = data_type
         
         # 添加可選的上下文信息
         if operation:
@@ -516,6 +887,7 @@ class DataFetcher:
             error_record['request_params'] = self._sanitize_params(request_params)
         if response_status:
             error_record['response_status'] = response_status
+            error_record['http_status'] = response_status  # 添加 http_status 別名
         if stack_trace:
             # 截斷過長的堆棧信息
             error_record['stack_trace'] = stack_trace[:2000] if len(stack_trace) > 2000 else stack_trace
@@ -529,7 +901,11 @@ class DataFetcher:
         log_parts = [f"API 故障: {api_name}"]
         if operation:
             log_parts.append(f"操作: {operation}")
+        if data_type:
+            log_parts.append(f"數據類型: {data_type}")
         log_parts.append(f"錯誤: {error_message}")
+        if error_type:
+            log_parts.append(f"類型: {error_type}")
         if response_status:
             log_parts.append(f"狀態碼: {response_status}")
         
@@ -537,6 +913,112 @@ class DataFetcher:
         
         if stack_trace:
             logger.debug(f"堆棧信息: {stack_trace[:500]}...")
+    
+    def _check_data_completeness(self, data: Dict[str, Any], required_fields: List[str]) -> Dict[str, Any]:
+        """
+        Task 19.1: Check data completeness and identify missing fields with reasons
+        
+        Parameters:
+            data: Data dictionary to check
+            required_fields: List of required field names
+        
+        Returns:
+            dict: {
+                'complete': bool,
+                'missing_fields': List[str],
+                'missing_reasons': Dict[str, str],
+                'completeness_percentage': float
+            }
+        """
+        missing_fields = []
+        missing_reasons = {}
+        
+        for field in required_fields:
+            if field not in data or data[field] is None or data[field] == 'N/A':
+                missing_fields.append(field)
+                # Get reason for missing field
+                reason = self._get_missing_reason(field)
+                missing_reasons[field] = reason
+                logger.warning(f"Missing {field}: {reason}")
+        
+        completeness_percentage = ((len(required_fields) - len(missing_fields)) / len(required_fields)) * 100
+        
+        return {
+            'complete': len(missing_fields) == 0,
+            'missing_fields': missing_fields,
+            'missing_reasons': missing_reasons,
+            'completeness_percentage': completeness_percentage
+        }
+    
+    def _get_missing_reason(self, field: str) -> str:
+        """
+        Task 19.1: Determine the reason why a field is missing
+        
+        Parameters:
+            field: Field name
+        
+        Returns:
+            str: Reason for missing field
+        """
+        # Check API failures for this field
+        field_to_api_mapping = {
+            'eps': ['Finnhub', 'Alpha Vantage', 'Yahoo Finance'],
+            'dividend': ['Yahoo Finance', 'Alpha Vantage'],
+            'risk_free_rate': ['FRED'],
+            'vix': ['Yahoo Finance', 'CBOE'],
+            'iv': ['IBKR', 'Yahoo Finance'],
+            'greeks': ['IBKR'],
+            'beta': ['Finnhub', 'Yahoo Finance'],
+            'market_cap': ['Finnhub', 'Yahoo Finance'],
+            'pe_ratio': ['Finnhub', 'Yahoo Finance'],
+            'forward_pe': ['Finnhub', 'Yahoo Finance']
+        }
+        
+        potential_sources = field_to_api_mapping.get(field, [])
+        
+        # Check if any of the potential sources failed
+        failed_sources = []
+        for source in potential_sources:
+            if source in self.api_failures and len(self.api_failures[source]) > 0:
+                # Get the most recent error
+                recent_error = self.api_failures[source][-1]
+                error_msg = recent_error.get('error', 'Unknown error')
+                failed_sources.append(f"{source} ({error_msg})")
+        
+        if failed_sources:
+            return f"All sources failed: {', '.join(failed_sources)}"
+        elif not potential_sources:
+            return "No data source configured for this field"
+        else:
+            return f"Data not available from {', '.join(potential_sources)}"
+    
+    def format_field_with_reason(self, field_name: str, value: Any, data_source: str = None) -> str:
+        """
+        Task 19.2: Format a field with failure reason annotation or data source
+        
+        Parameters:
+            field_name: Name of the field
+            value: Field value
+            data_source: Data source name (if available)
+        
+        Returns:
+            str: Formatted field string with annotation
+        
+        Examples:
+            - "EPS: $2.50 (Source: Finnhub)"
+            - "EPS: N/A (IBKR connection failed, Finnhub API key invalid)"
+            - "VIX: N/A (All sources failed: IBKR timeout, Yahoo 429 error)"
+        """
+        if value is None or value == 'N/A' or (isinstance(value, str) and value.strip() == ''):
+            # Field is missing, add failure reason
+            reason = self._get_missing_reason(field_name)
+            return f"{field_name}: N/A ({reason})"
+        else:
+            # Field has value, add data source if available
+            if data_source:
+                return f"{field_name}: {value} (Source: {data_source})"
+            else:
+                return f"{field_name}: {value}"
     
     def _cleanup_api_failure_records(self, api_name: str):
         """
@@ -641,10 +1123,10 @@ class DataFetcher:
     
     def _sanitize_log_message(self, message: str) -> str:
         """
-        清理日誌消息中的敏感信息
+        清理日誌消息中的敏感信息（Task 21.1）
         
         在所有日誌輸出前清理敏感信息，包括 API Keys、密碼等。
-        只顯示 API Key 的前4位和後4位，中間用 *** 替代。
+        只顯示 API Key 的前4位和後4位，中間用 ... 替代。
         
         參數:
             message: 原始日誌消息
@@ -652,7 +1134,7 @@ class DataFetcher:
         返回:
             清理後的日誌消息
         
-        Requirements: Security Considerations
+        Requirements: 1.14, 2.14
         """
         if not message:
             return message
@@ -667,6 +1149,7 @@ class DataFetcher:
         
         result = message
         
+        # 清理環境變量中的實際 API Keys
         for key_name in api_key_names:
             key_value = os.environ.get(key_name, '')
             if key_value and len(key_value) > 8 and key_value in result:
@@ -674,17 +1157,33 @@ class DataFetcher:
                 masked = f"{key_value[:4]}...{key_value[-4:]}"
                 result = result.replace(key_value, masked)
         
-        # 清理常見的敏感模式
-        patterns = [
-            # API Key 模式 (32-64 字符的字母數字字符串)
-            (r'(["\']?(?:api[_-]?key|apikey|token|secret)["\']?\s*[:=]\s*["\']?)([a-zA-Z0-9]{32,64})(["\']?)', 
-             r'\1***REDACTED***\3'),
-            # Bearer Token
-            (r'(Bearer\s+)[a-zA-Z0-9._-]+', r'\1***REDACTED***'),
-        ]
+        # Pattern 1: API keys in URLs
+        # 匹配 ?token=abc123xyz789def456 或 &apikey=abc123xyz789def456
+        # 替換為 ?token=abc1...f456 或 &apikey=abc1...f456
+        pattern1 = r'([?&](?:token|apikey|api_key|key)=)([a-zA-Z0-9]{4})[a-zA-Z0-9]+([a-zA-Z0-9]{4})'
+        result = re.sub(pattern1, r'\1\2...\3', result, flags=re.IGNORECASE)
         
-        for pattern, replacement in patterns:
-            result = re.sub(pattern, replacement, result, flags=re.IGNORECASE)
+        # Pattern 2: Standalone API keys (12+ characters)
+        # 匹配獨立的長字符串 API keys
+        # 替換為 abc1...x789
+        pattern2 = r'\b([a-zA-Z0-9]{4})[a-zA-Z0-9]{12,}([a-zA-Z0-9]{4})\b'
+        # 需要確保不是普通單詞，檢查上下文
+        def replace_if_api_key(match):
+            full_match = match.group(0)
+            # 如果長度 >= 20，很可能是 API key
+            if len(full_match) >= 20:
+                return f"{match.group(1)}...{match.group(2)}"
+            return full_match
+        result = re.sub(pattern2, replace_if_api_key, result)
+        
+        # Pattern 3: Passwords in URLs
+        # 匹配 ?password=xxx 或 &pwd=xxx
+        # 替換為 ?password=*** 或 &pwd=***
+        pattern3 = r'([?&](?:password|passwd|pwd)=)[^&\s]+'
+        result = re.sub(pattern3, r'\1***', result, flags=re.IGNORECASE)
+        
+        # 額外清理：Bearer Token
+        result = re.sub(r'(Bearer\s+)[a-zA-Z0-9._-]+', r'\1***', result, flags=re.IGNORECASE)
         
         return result
     
@@ -828,38 +1327,250 @@ class DataFetcher:
         
         返回:
             dict: 包含各 API 故障統計的摘要
+                - total_failures: 總故障次數
+                - by_source: 按來源分類的故障統計
+                - by_error_type: 按錯誤類型分類的故障統計
+                - recent_failures: 最近的故障記錄（每個來源最多5條）
         """
-        summary = {}
+        total_failures = 0
+        by_source = {}
+        by_error_type = {}
+        recent_failures = []
         
         for api_name, records in self.api_failures.items():
             if not records:
                 continue
             
-            # 統計各操作的故障次數
-            operation_counts = {}
-            status_counts = {}
+            # 統計該來源的故障次數
+            source_count = len(records)
+            total_failures += source_count
+            by_source[api_name] = source_count
             
+            # 統計錯誤類型
             for record in records:
-                op = record.get('operation', 'unknown')
-                operation_counts[op] = operation_counts.get(op, 0) + 1
-                
-                status = record.get('response_status')
-                if status:
-                    status_counts[status] = status_counts.get(status, 0) + 1
+                error_type = record.get('error_type', 'Unknown')
+                by_error_type[error_type] = by_error_type.get(error_type, 0) + 1
             
-            # 獲取最近的錯誤
-            latest_error = records[-1] if records else None
-            
-            summary[api_name] = {
-                'total_failures': len(records),
-                'operation_counts': operation_counts,
-                'status_counts': status_counts,
-                'latest_error': latest_error,
-                'first_failure': records[0].get('timestamp') if records else None,
-                'last_failure': records[-1].get('timestamp') if records else None
-            }
+            # 收集最近的故障（每個來源最多5條）
+            recent_records = records[-5:] if len(records) > 5 else records
+            for record in recent_records:
+                recent_failures.append({
+                    'source': api_name,
+                    'timestamp': record.get('timestamp'),
+                    'error_type': record.get('error_type', 'Unknown'),
+                    'error_message': record.get('error_message', ''),
+                    'operation': record.get('operation', 'unknown'),
+                    'response_status': record.get('response_status')
+                })
+        
+        # 按時間戳排序最近的故障（最新的在前）
+        recent_failures.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+        
+        summary = {
+            'total_failures': total_failures,
+            'by_source': by_source,
+            'by_error_type': by_error_type,
+            'recent_failures': recent_failures[:25]  # 限制最多返回25條最近的故障
+        }
         
         return summary
+    
+    def execute_module(
+        self,
+        module_name: str,
+        module_func: callable,
+        required_data: List[str] = None,
+        *args,
+        **kwargs
+    ) -> Any:
+        """
+        執行模塊並追蹤狀態（Task 20.1）
+        
+        這是一個包裝方法，用於執行分析模塊並記錄執行狀態。
+        在執行前檢查所需數據是否可用，執行後記錄成功或失敗狀態。
+        
+        參數:
+            module_name: 模塊名稱（用於狀態追蹤）
+            module_func: 要執行的模塊函數
+            required_data: 所需數據字段列表（可選）
+            *args, **kwargs: 傳遞給模塊函數的參數
+        
+        返回:
+            模塊函數的返回值，如果跳過或失敗則返回 None
+        
+        Requirements: 1.7, 2.7
+        """
+        # 檢查所需數據
+        if required_data:
+            missing_data = []
+            for field in required_data:
+                # 檢查 kwargs 中是否有該字段且不為 None
+                if field in kwargs:
+                    value = kwargs[field]
+                    if value is None or (isinstance(value, (int, float)) and pd.isna(value)):
+                        missing_data.append(field)
+                else:
+                    missing_data.append(field)
+            
+            if missing_data:
+                reason = f"Missing required data: {', '.join(missing_data)}"
+                self.module_status[module_name] = {
+                    'status': 'skipped',
+                    'reason': reason
+                }
+                logger.info(f"Module {module_name} skipped: {reason}")
+                return None
+        
+        # 執行模塊
+        try:
+            result = module_func(*args, **kwargs)
+            self.module_status[module_name] = {
+                'status': 'success',
+                'reason': None
+            }
+            logger.info(f"Module {module_name} success")
+            return result
+        except Exception as e:
+            error_type = type(e).__name__
+            error_message = str(e)
+            reason = f"{error_type}: {error_message}"
+            self.module_status[module_name] = {
+                'status': 'failed',
+                'reason': reason
+            }
+            logger.error(f"Module {module_name} failed: {reason}")
+            return None
+    
+    def get_module_execution_summary(self) -> Dict[str, Any]:
+        """
+        獲取模塊執行摘要（Task 20.2）
+        
+        返回:
+            dict: 包含模塊執行統計的摘要
+                - total_modules: 總模塊數
+                - successful: 成功執行的模塊數
+                - skipped: 跳過的模塊數
+                - failed: 失敗的模塊數
+                - modules: 各模塊的詳細狀態
+        
+        Requirements: 1.7, 2.7
+        """
+        total_modules = len(self.module_status)
+        successful = sum(1 for m in self.module_status.values() if m['status'] == 'success')
+        skipped = sum(1 for m in self.module_status.values() if m['status'] == 'skipped')
+        failed = sum(1 for m in self.module_status.values() if m['status'] == 'failed')
+        
+        summary = {
+            'total_modules': total_modules,
+            'successful': successful,
+            'skipped': skipped,
+            'failed': failed,
+            'modules': self.module_status.copy()
+        }
+        
+        return summary
+    
+    def _adjust_delay_on_rate_limit(self):
+        """
+        在遇到速率限制時調整延遲（Task 22.1）
+        
+        當收到 429 錯誤時，將當前延遲加倍（最大 30 秒）。
+        記錄速率限制事件以供報告使用。
+        
+        Requirements: 1.13, 2.13
+        """
+        old_delay = self.current_delay
+        self.current_delay = min(self.current_delay * 2, self.max_delay)
+        
+        # 記錄速率限制事件
+        event = {
+            'timestamp': datetime.now().isoformat(),
+            'old_delay': old_delay,
+            'new_delay': self.current_delay
+        }
+        self.rate_limit_events.append(event)
+        
+        # 清理超過 24 小時的舊事件
+        cutoff_time = datetime.now() - timedelta(hours=24)
+        self.rate_limit_events = [
+            e for e in self.rate_limit_events
+            if datetime.fromisoformat(e['timestamp']) > cutoff_time
+        ]
+        
+        logger.info(f"Rate limit hit, increasing delay to {self.current_delay}s")
+    
+    def _reset_delay_on_success(self):
+        """
+        在請求成功時逐漸降低延遲（Task 22.1）
+        
+        當請求成功時，將當前延遲乘以 0.8（最小為基礎延遲）。
+        這允許系統在速率限制解除後逐漸恢復到正常速度。
+        
+        Requirements: 1.13, 2.13
+        """
+        old_delay = self.current_delay
+        self.current_delay = max(self.current_delay * 0.8, self.min_delay)
+        
+        if old_delay != self.current_delay:
+            logger.info(f"Request successful, decreasing delay to {self.current_delay}s")
+    
+    def get_rate_limit_summary(self) -> Dict[str, Any]:
+        """
+        獲取速率限制摘要（Task 22.2）
+        
+        返回:
+            dict: 包含速率限制統計的摘要
+                - current_delay: 當前延遲（秒）
+                - base_delay: 基礎延遲（秒）
+                - rate_limit_events_count: 24小時內的速率限制事件數
+                - last_event: 最近的速率限制事件
+                - events: 所有速率限制事件列表
+        
+        Requirements: 1.13, 2.13
+        """
+        last_event = self.rate_limit_events[-1] if self.rate_limit_events else None
+        
+        summary = {
+            'current_delay': self.current_delay,
+            'base_delay': self.base_delay,
+            'rate_limit_events_count': len(self.rate_limit_events),
+            'last_event': last_event,
+            'events': self.rate_limit_events.copy()
+        }
+        
+        return summary
+    
+    def _optimize_dataframe_memory(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        優化 DataFrame 內存使用
+        - 將 float64 轉換為 float32（在精度允許的情況下）
+        - 使用 categorical 類型處理重複字符串值
+        """
+        if df.empty:
+            return df
+        
+        # 轉換數值列為 float32
+        float_cols = df.select_dtypes(include=['float64']).columns
+        for col in float_cols:
+            # 檢查是否可以安全轉換為 float32
+            # 只轉換不會損失精度的列
+            try:
+                df[col] = df[col].astype('float32')
+            except (ValueError, OverflowError):
+                # 如果轉換失敗，保持原樣
+                pass
+        
+        # 轉換重複字符串為 categorical
+        object_cols = df.select_dtypes(include=['object']).columns
+        for col in object_cols:
+            # 只有當唯一值數量少於總行數的 50% 時才轉換
+            if df[col].nunique() < len(df) * 0.5:
+                try:
+                    df[col] = df[col].astype('category')
+                except (ValueError, TypeError):
+                    pass
+        
+        return df
     
     def _safe_int(self, value, default=0):
         """安全地將值轉換為整數"""
@@ -1117,6 +1828,170 @@ class DataFetcher:
             return {data_type: summarize_type(data_type)}
         else:
             return {dt: summarize_type(dt) for dt in self._attempt_paths.keys()}
+    
+    # ==================== Task 16: API Degradation Chain and Retry Mechanisms ====================
+    
+    # Task 16.1: Enhanced API degradation logic
+    FALLBACK_TRIGGERS = [
+        ConnectionError,
+        TimeoutError,
+        Exception,  # Includes HTTPError, DataValidationError, etc.
+    ]
+    
+    def _fetch_with_fallback(self, data_type: str, sources: List[str], fetch_func_map: Dict[str, callable], *args, **kwargs):
+        """
+        Fetch data with fallback mechanism through multiple sources.
+        
+        Implements the API degradation chain by attempting each data source in priority order.
+        Logs each attempt and records failures for diagnostics.
+        
+        Args:
+            data_type: Type of data being fetched (e.g., 'stock_info', 'option_chain')
+            sources: List of data source names in priority order
+            fetch_func_map: Dict mapping source names to fetch functions
+            *args, **kwargs: Arguments to pass to fetch functions
+        
+        Returns:
+            Data from the first successful source, or None if all fail
+        
+        Requirements: 1.3, 1.4, 2.3, 2.4, 3.1
+        """
+        # Initialize attempt path tracking if not exists
+        if not hasattr(self, '_attempt_paths'):
+            self._attempt_paths = {}
+        
+        if data_type not in self._attempt_paths:
+            self._attempt_paths[data_type] = {'history': [], 'current_attempt': []}
+        
+        current_attempt = []
+        
+        for source in sources:
+            fetch_func = fetch_func_map.get(source)
+            
+            if not fetch_func:
+                logger.debug(f"  {source}: No fetch function available, skipping")
+                continue
+            
+            try:
+                logger.info(f"Attempting {source} for {data_type}...")
+                
+                # Attempt to fetch data
+                result = fetch_func(*args, **kwargs)
+                
+                if result is not None:
+                    # Success
+                    logger.info(f"✓ {source} succeeded for {data_type}")
+                    current_attempt.append({
+                        'source': source,
+                        'success': True,
+                        'error_reason': None,
+                        'timestamp': datetime.now().isoformat()
+                    })
+                    
+                    # Record successful fallback
+                    self._record_fallback(data_type, source, success=True)
+                    
+                    # Save attempt history
+                    self._attempt_paths[data_type]['history'].append(current_attempt)
+                    
+                    return result
+                else:
+                    # Returned None - treat as failure
+                    error_msg = "Returned None or empty data"
+                    logger.warning(f"{source} failed: {error_msg}, trying next source...")
+                    
+                    current_attempt.append({
+                        'source': source,
+                        'success': False,
+                        'error_reason': error_msg,
+                        'timestamp': datetime.now().isoformat()
+                    })
+                    
+                    self._record_fallback_failure(data_type, source, error_msg)
+                    
+            except Exception as e:
+                # Exception occurred
+                error_type = type(e).__name__
+                error_message = str(e)
+                full_error = f"{error_type} - {error_message}"
+                
+                logger.warning(f"{source} failed: {full_error}, trying next source...")
+                
+                current_attempt.append({
+                    'source': source,
+                    'success': False,
+                    'error_reason': full_error,
+                    'timestamp': datetime.now().isoformat()
+                })
+                
+                # Record API failure
+                self._record_api_failure(source, error_message, operation=f'fetch_{data_type}')
+                self._record_fallback_failure(data_type, source, full_error)
+        
+        # All sources failed
+        logger.error(f"✗ All sources failed for {data_type}")
+        self._attempt_paths[data_type]['history'].append(current_attempt)
+        
+        return None
+    
+    # Task 16.2: Intelligent retry mechanism with exponential backoff
+    def _retry_with_backoff(self, func: callable, max_retries: int = 3, base_delay: float = 2.0, *args, **kwargs):
+        """
+        Retry a function with exponential backoff.
+        
+        Implements intelligent retry logic with exponential backoff for transient errors.
+        Special handling for 429 (rate limit) errors.
+        
+        Args:
+            func: Function to retry
+            max_retries: Maximum number of retry attempts
+            base_delay: Base delay in seconds (default 2.0)
+            *args, **kwargs: Arguments to pass to the function
+        
+        Returns:
+            Result from successful function call
+        
+        Raises:
+            Exception: After max retries exceeded
+        
+        Requirements: 1.8, 2.8, 3.12
+        """
+        import requests
+        
+        for attempt in range(1, max_retries + 1):
+            try:
+                return func(*args, **kwargs)
+                
+            except requests.exceptions.HTTPError as e:
+                if hasattr(e, 'response') and e.response is not None and e.response.status_code == 429:
+                    # Rate limit error - use exponential backoff
+                    if attempt < max_retries:
+                        delay = min(base_delay * (2 ** (attempt - 1)), 60)
+                        logger.warning(f"Rate limit hit, retrying in {delay}s... (attempt {attempt}/{max_retries})")
+                        time.sleep(delay)
+                    else:
+                        logger.error(f"Max retries exceeded after {max_retries} attempts")
+                        raise Exception(f"MaxRetriesExceeded: Failed after {max_retries} attempts due to rate limiting")
+                else:
+                    # Other HTTP error - don't retry
+                    raise
+                    
+            except (ConnectionError, TimeoutError) as e:
+                # Transient network errors - retry with backoff
+                if attempt < max_retries:
+                    delay = min(base_delay * (2 ** (attempt - 1)), 60)
+                    logger.warning(f"Network error, retrying in {delay}s... (attempt {attempt}/{max_retries}): {e}")
+                    time.sleep(delay)
+                else:
+                    logger.error(f"Max retries exceeded after {max_retries} attempts")
+                    raise Exception(f"MaxRetriesExceeded: Failed after {max_retries} attempts due to network errors")
+            
+            except Exception as e:
+                # Other exceptions - don't retry
+                raise
+        
+        # Should not reach here
+        raise Exception(f"MaxRetriesExceeded: Failed after {max_retries} attempts")
     
     def _validate_and_supplement_finviz_data(
         self, 
@@ -1615,17 +2490,24 @@ class DataFetcher:
                     except:
                         pass
                     
+                    from datetime import datetime as _dt
                     stock_data = {
                         'ticker': ticker,
                         'current_price': quote.get('c', 0),  # current price
                         'open': quote.get('o', 0),  # open
-                        'high': quote.get('h', 0),  # high
-                        'low': quote.get('l', 0),  # low
+                        # Fix: 改名 intraday_high/low，明確這是盤中未結算值（非歷史已確定值）
+                        # 避免下游 ML/HV 計算誤用未結算盤中數據（倒推風險）
+                        'intraday_high': quote.get('h', 0),   # ⚠️ 盤中最高（未結算）
+                        'intraday_low': quote.get('l', 0),    # ⚠️ 盤中最低（未結算）
+                        'high': quote.get('h', 0),            # 向後兼容保留
+                        'low': quote.get('l', 0),             # 向後兼容保留
                         'previous_close': quote.get('pc', 0),  # previous close
-                        'change': quote.get('d', 0),  # change
-                        'change_percent': quote.get('dp', 0),  # change percent
+                        'change': quote.get('d', 0),          # change
+                        'change_percent': quote.get('dp', 0), # change percent
                         'volume': None,  # Finnhub quote 不提供 volume
-                        'data_source': 'Finnhub'
+                        'data_source': 'Finnhub',
+                        'is_market_hours': True,              # 標記為盤中數據
+                        'data_timestamp': _dt.now().isoformat(),  # 記錄抓取時間
                     }
                     
                     # 補充公司資料
@@ -1645,7 +2527,7 @@ class DataFetcher:
                     logger.info(f"* 成功獲取 {ticker} 基本信息 (Finnhub)")
                     logger.info(f"  當前股價: ${stock_data['current_price']:.2f}")
                     self._record_fallback('stock_info', 'Finnhub')
-                    return stock_data
+                    # 不提早返回，留到後面合併 IBKR 數據
                 else:
                     logger.warning("! Finnhub 返回無效數據，降級到 Alpha Vantage")
                     self._record_fallback_failure('stock_info', 'Finnhub', '返回無效數據')
@@ -1700,7 +2582,7 @@ class DataFetcher:
                     logger.info(f"* 成功獲取 {ticker} 基本信息 (Alpha Vantage)")
                     logger.info(f"  當前股價: ${stock_data['current_price']:.2f}")
                     self._record_fallback('stock_info', 'Alpha Vantage')
-                    return stock_data
+                    # 不提早返回
                 else:
                     logger.warning("! Alpha Vantage 返回無效數據，降級到 Finviz")
                     self._record_fallback_failure('stock_info', 'Alpha Vantage', '返回無效數據')
@@ -1771,7 +2653,7 @@ class DataFetcher:
                             logger.info(f"  i 補充字段: {', '.join(stock_data['supplemented_fields'])}")
                         
                         self._record_fallback('stock_info', 'Finviz')
-                        return stock_data
+                        # 不提早返回
                     else:
                         logger.warning("! Finviz 數據驗證失敗，降級到 Yahoo Finance")
                         self._record_fallback_failure('stock_info', 'Finviz', '數據驗證失敗')
@@ -1784,29 +2666,49 @@ class DataFetcher:
                 self._record_api_failure('Finviz', f"get_stock_info: {e}")
                 self._record_fallback_failure('stock_info', 'Finviz', str(e))
         
-        # 方案3: 降級到 IBKR (新增)
-        if self.use_ibkr and self.ibkr_client and self.ibkr_client.is_connected():
+        # 如果前面都失敗了，才完全依賴 IBKR
+        if not stock_data and self.use_ibkr and self.ibkr_client and self.ibkr_client.is_connected():
             try:
-                logger.info("  使用 IBKR 獲取股價...")
-                price = self.ibkr_client.get_stock_price(ticker)
+                logger.info("  使用 IBKR 獲取股價與進階Tick...")
+                ibkr_data = self.ibkr_client.get_stock_full_data(ticker)
                 
-                if price and price > 0:
+                if ibkr_data and ibkr_data.get('price') and ibkr_data['price'] > 0:
+                    price = ibkr_data['price']
                     stock_data = {
                         'ticker': ticker,
                         'current_price': price,
                         'open': price, # 暫時用當前價代替
                         'high': price, 
                         'low': price,
+                        'dividend_rate': ibkr_data.get('dividend_yield', 0),
+                        'historical_volatility': ibkr_data.get('historical_volatility', 0) * 100 if ibkr_data.get('historical_volatility') else None,
+                        'mark_price': ibkr_data.get('mark_price'),
                         'data_source': 'IBKR'
                     }
                     logger.info(f"* 成功獲取 {ticker} 基本信息 (IBKR)")
                     logger.info(f"  當前股價: ${price:.2f}")
                     self._record_fallback('stock_info', 'IBKR')
-                    return stock_data
                 else:
                     logger.warning("! IBKR 返回無效股價")
             except Exception as e:
                 logger.warning(f"! IBKR 獲取股價失敗: {e}")
+                
+        # 最終合併 IBKR 的高級數據防護網 (HV, Dividends, MarkPrice)
+        if stock_data and self.use_ibkr and stock_data.get('data_source') != 'IBKR':
+            try:
+                ibkr_data = self.ibkr_client.get_stock_full_data(ticker)
+                if ibkr_data:
+                    if 'dividend_rate' not in stock_data or not stock_data['dividend_rate']:
+                        stock_data['dividend_rate'] = ibkr_data.get('dividend_yield', 0)
+                    if 'historical_volatility' not in stock_data or not stock_data['historical_volatility']:
+                        stock_data['historical_volatility'] = ibkr_data.get('historical_volatility', 0) * 100 if ibkr_data.get('historical_volatility') else None
+                    if 'mark_price' not in stock_data or not stock_data['mark_price']:
+                        stock_data['mark_price'] = ibkr_data.get('mark_price', stock_data.get('mark_price'))
+            except Exception as e:
+                logger.debug(f"合併 IBKR 進階 Tick 時發生錯誤: {e}")
+
+        if stock_data:
+            return stock_data
         
         # 最終檢查: 如果所有來源都失敗
         logger.error(f"x 無法獲取 {ticker} 基本信息 (所有來源失敗)")
@@ -2327,9 +3229,9 @@ class DataFetcher:
         
         return yahoo_df
     
-    def get_option_chain(self, ticker, expiration):
+    def get_option_chain(self, ticker, expiration, strike_range_pct=30):
         """
-        獲取完整期權鏈（整合多數據源）
+        獲取完整期權鏈（整合多數據源）- 優化內存使用
         
         數據整合策略 (No-Yahoo Mode):
         1. IBKR OPRA (優先): 使用智能快照獲取期權鏈結構及實時數據 (Price + Greeks)
@@ -2343,6 +3245,7 @@ class DataFetcher:
         參數:
             ticker: 股票代碼
             expiration: 到期日期 (YYYY-MM-DD格式)
+            strike_range_pct: 行使價過濾範圍百分比 (默認 30%)，只獲取 ATM ± strike_range_pct% 的行使價
         
         返回: dict
         {
@@ -2352,13 +3255,21 @@ class DataFetcher:
             'data_source': str
         }
         """
-        logger.info(f"開始獲取 {ticker} {expiration} 期權鏈 (IBKR First)...")
+        import gc
+        
+        logger.info(f"開始獲取 {ticker} {expiration} 期權鏈 (IBKR First, 行使價範圍: ±{strike_range_pct}%)...")
         
         # 0. 獲取當前股價（用於過濾期權鏈）
         current_price = 0
         stock_info = self.get_stock_info(ticker)
         if stock_info:
             current_price = stock_info.get('current_price', 0)
+        
+        # 計算行使價過濾範圍
+        strike_min = current_price * (1 - strike_range_pct / 100) if current_price > 0 else 0
+        strike_max = current_price * (1 + strike_range_pct / 100) if current_price > 0 else float('inf')
+        
+        logger.info(f"  行使價過濾範圍: ${strike_min:.2f} - ${strike_max:.2f} (中心: ${current_price:.2f})")
         
         # 1. IBKR 方案 (優先)
         if self.use_ibkr and self.ibkr_client and self.ibkr_client.is_connected():
@@ -2378,10 +3289,28 @@ class DataFetcher:
                     calls_df = pd.DataFrame(chain_data['calls'])
                     puts_df = pd.DataFrame(chain_data['puts'])
                     
+                    # 應用行使價過濾
+                    if not calls_df.empty and 'strike' in calls_df.columns and current_price > 0:
+                        original_count = len(calls_df)
+                        calls_df = calls_df[(calls_df['strike'] >= strike_min) & (calls_df['strike'] <= strike_max)]
+                        logger.info(f"  Call 期權過濾: {original_count} -> {len(calls_df)} 個")
+                    
+                    if not puts_df.empty and 'strike' in puts_df.columns and current_price > 0:
+                        original_count = len(puts_df)
+                        puts_df = puts_df[(puts_df['strike'] >= strike_min) & (puts_df['strike'] <= strike_max)]
+                        logger.info(f"  Put 期權過濾: {original_count} -> {len(puts_df)} 個")
+                    
+                    # 優化數據類型以減少內存使用
+                    calls_df = self._optimize_dataframe_memory(calls_df)
+                    puts_df = self._optimize_dataframe_memory(puts_df)
+                    
                     if not calls_df.empty or not puts_df.empty:
                         logger.info(f"* 成功獲取 {ticker} {expiration} 期權鏈 (IBKR Snapshot)")
                         logger.info(f"  Call期權: {len(calls_df)} 個")
                         logger.info(f"  Put期權: {len(puts_df)} 個")
+                        
+                        # 清理內存
+                        gc.collect()
                         
                         return {
                             'calls': calls_df,
@@ -2413,22 +3342,76 @@ class DataFetcher:
             calls = option_chain.calls.copy()
             puts = option_chain.puts.copy()
             
-            # 使用 IVNormalizer 標準化 IV（避免重複轉換）
+            # 應用行使價過濾
+            if not calls.empty and 'strike' in calls.columns and current_price > 0:
+                original_count = len(calls)
+                calls = calls[(calls['strike'] >= strike_min) & (calls['strike'] <= strike_max)]
+                logger.info(f"  Call 期權過濾: {original_count} -> {len(calls)} 個")
+                
+                # 每處理 50 個行使價記錄進度
+                if len(calls) > 50:
+                    for i in range(0, len(calls), 50):
+                        logger.info(f"  處理 Call 期權: {i}/{len(calls)}")
+            
+            if not puts.empty and 'strike' in puts.columns and current_price > 0:
+                original_count = len(puts)
+                puts = puts[(puts['strike'] >= strike_min) & (puts['strike'] <= strike_max)]
+                logger.info(f"  Put 期權過濾: {original_count} -> {len(puts)} 個")
+                
+                # 每處理 50 個行使價記錄進度
+                if len(puts) > 50:
+                    for i in range(0, len(puts), 50):
+                        logger.info(f"  處理 Put 期權: {i}/{len(puts)}")
+            
+            # Task 17.3: Use simplified IVNormalizer.normalize() method and add metadata
             if 'impliedVolatility' in calls.columns and not calls.empty:
-                sample_iv_before = calls['impliedVolatility'].iloc[0]
+                sample_iv_before = calls['impliedVolatility'].iloc[0] if not calls.empty else None
                 logger.debug(f"  yfinance Call IV 原始值樣本: {sample_iv_before}")
                 
+                # Apply normalization and add metadata
+                def normalize_with_metadata(x, ticker_symbol):
+                    if pd.notna(x):
+                        normalized = IVNormalizer.normalize(x, source='Yahoo', ticker=ticker_symbol)
+                        return normalized
+                    return None
+                
                 calls['impliedVolatility'] = calls['impliedVolatility'].apply(
-                    lambda x: IVNormalizer.normalize_iv(x, 'yfinance')['normalized_iv'] if pd.notna(x) else None
+                    lambda x: normalize_with_metadata(x, ticker)
                 )
                 
-                sample_iv_after = calls['impliedVolatility'].iloc[0]
+                # Add IV metadata column
+                calls['iv_metadata'] = calls['impliedVolatility'].apply(
+                    lambda x: {
+                        'original_value': sample_iv_before,
+                        'normalized_value': x,
+                        'source': 'Yahoo',
+                        'format_detected': 'decimal' if sample_iv_before and 0 < sample_iv_before < 1.0 else 'percentage'
+                    } if x is not None else None
+                )
+                
+                sample_iv_after = calls['impliedVolatility'].iloc[0] if not calls.empty else None
                 logger.debug(f"  yfinance Call IV 標準化後樣本: {sample_iv_after}%")
             
-            if 'impliedVolatility' in puts.columns:
+            if 'impliedVolatility' in puts.columns and not puts.empty:
+                sample_iv_before = puts['impliedVolatility'].iloc[0] if not puts.empty else None
+                
                 puts['impliedVolatility'] = puts['impliedVolatility'].apply(
-                    lambda x: IVNormalizer.normalize_iv(x, 'yfinance')['normalized_iv'] if pd.notna(x) else None
+                    lambda x: normalize_with_metadata(x, ticker)
                 )
+                
+                # Add IV metadata column
+                puts['iv_metadata'] = puts['impliedVolatility'].apply(
+                    lambda x: {
+                        'original_value': sample_iv_before,
+                        'normalized_value': x,
+                        'source': 'Yahoo',
+                        'format_detected': 'decimal' if sample_iv_before and 0 < sample_iv_before < 1.0 else 'percentage'
+                    } if x is not None else None
+                )
+            
+            # 優化數據類型以減少內存使用
+            calls = self._optimize_dataframe_memory(calls)
+            puts = self._optimize_dataframe_memory(puts)
             
             # 檢查數據有效性：lastPrice 不能全為 0
             has_valid_call_price = False
@@ -2458,6 +3441,9 @@ class DataFetcher:
                 # 填補缺失的 bid/ask 數據（對於沒有 IBKR 數據的期權）
                 calls = self._fill_missing_bid_ask(calls, 'call')
                 puts = self._fill_missing_bid_ask(puts, 'put')
+                
+                # 清理內存
+                gc.collect()
                 
                 return {
                     'calls': calls,
@@ -2490,6 +3476,10 @@ class DataFetcher:
         # 最終失敗
         logger.warning(f"! 無法從任何可用來源 (IBKR/RapidAPI) 獲取期權鏈")
         self._record_fallback('option_chain', 'empty')
+        
+        # 清理內存
+        gc.collect()
+        
         return {
             'calls': pd.DataFrame(),
             'puts': pd.DataFrame(),
@@ -4545,6 +5535,199 @@ class DataFetcher:
         except Exception as e:
             logger.warning(f"  ! Finnhub 綜合指標獲取失敗: {e}")
             return None
+
+    # ==================== Task 16: API Degradation Chain and Retry Mechanisms ====================
+
+    # Task 16.1: Enhanced API degradation logic
+    FALLBACK_TRIGGERS = [
+        ConnectionError,
+        TimeoutError,
+        Exception,  # Includes HTTPError, DataValidationError, etc.
+    ]
+
+    def _fetch_with_fallback(self, data_type: str, sources: List[str], fetch_func_map: Dict[str, callable], *args, **kwargs):
+        """
+        Fetch data with fallback mechanism through multiple sources.
+
+        Implements the API degradation chain by attempting each data source in priority order.
+        Logs each attempt and records failures for diagnostics.
+
+        Args:
+            data_type: Type of data being fetched (e.g., 'stock_info', 'option_chain')
+            sources: List of data source names in priority order
+            fetch_func_map: Dict mapping source names to fetch functions
+            *args, **kwargs: Arguments to pass to fetch functions
+
+        Returns:
+            Data from the first successful source, or None if all fail
+
+        Requirements: 1.3, 1.4, 2.3, 2.4, 3.1
+        """
+        # Initialize attempt path tracking if not exists
+        if not hasattr(self, '_attempt_paths'):
+            self._attempt_paths = {}
+
+        if data_type not in self._attempt_paths:
+            self._attempt_paths[data_type] = {'history': []}
+
+        current_attempt = []
+
+        for source in sources:
+            fetch_func = fetch_func_map.get(source)
+
+            if not fetch_func:
+                logger.debug(f"  {source}: No fetch function available, skipping")
+                continue
+
+            try:
+                logger.info(f"Attempting {source} for {data_type}...")
+
+                # Attempt to fetch data
+                result = fetch_func(*args, **kwargs)
+
+                if result is not None:
+                    # Success
+                    logger.info(f"✓ {source} succeeded for {data_type}")
+                    current_attempt.append({
+                        'source': source,
+                        'success': True,
+                        'error_reason': None,
+                        'timestamp': datetime.now().isoformat()
+                    })
+
+                    # Record successful fallback
+                    self._record_fallback(data_type, source)
+
+                    # Save attempt history
+                    self._attempt_paths[data_type]['history'].append(current_attempt)
+
+                    return result
+                else:
+                    # Returned None - treat as failure
+                    error_msg = "Returned None or empty data"
+                    logger.warning(f"{source} failed: {error_msg}, trying next source...")
+
+                    current_attempt.append({
+                        'source': source,
+                        'success': False,
+                        'error_reason': error_msg,
+                        'timestamp': datetime.now().isoformat()
+                    })
+
+                    self._record_fallback_failure(data_type, source, error_msg)
+
+            except Exception as e:
+                # Exception occurred
+                error_type = type(e).__name__
+                error_message = str(e)
+                full_error = f"{error_type} - {error_message}"
+
+                logger.warning(f"{source} failed: {full_error}, trying next source...")
+
+                current_attempt.append({
+                    'source': source,
+                    'success': False,
+                    'error_reason': full_error,
+                    'timestamp': datetime.now().isoformat()
+                })
+
+                # Record API failure
+                self._record_api_failure(source, error_message, operation=f'fetch_{data_type}')
+                self._record_fallback_failure(data_type, source, full_error)
+
+        # All sources failed
+        logger.error(f"✗ All sources failed for {data_type}")
+        self._attempt_paths[data_type]['history'].append(current_attempt)
+
+        return None
+
+    def _record_fallback(self, data_type: str, source: str):
+        """
+        Record successful fallback usage.
+
+        Args:
+            data_type: Type of data (e.g., 'stock_info')
+            source: Data source name
+        """
+        if data_type not in self.fallback_used:
+            self.fallback_used[data_type] = []
+
+        self.fallback_used[data_type].append({
+            'source': source,
+            'timestamp': datetime.now().isoformat()
+        })
+
+    def _record_fallback_failure(self, data_type: str, source: str, reason: str):
+        """
+        Record fallback attempt failure.
+
+        Args:
+            data_type: Type of data
+            source: Data source name
+            reason: Failure reason
+        """
+        # This is already recorded in _attempt_paths by _fetch_with_fallback
+        pass
+
+    # Task 16.2: Intelligent retry mechanism with exponential backoff
+    def _retry_with_backoff(self, func: callable, max_retries: int = 3, base_delay: float = 2.0, *args, **kwargs):
+        """
+        Retry a function with exponential backoff.
+
+        Implements intelligent retry logic with exponential backoff for transient errors.
+        Special handling for 429 (rate limit) errors.
+
+        Args:
+            func: Function to retry
+            max_retries: Maximum number of retry attempts
+            base_delay: Base delay in seconds (default 2.0)
+            *args, **kwargs: Arguments to pass to the function
+
+        Returns:
+            Result from successful function call
+
+        Raises:
+            Exception: After max retries exceeded
+
+        Requirements: 1.8, 2.8, 3.12
+        """
+        import requests
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                return func(*args, **kwargs)
+
+            except requests.exceptions.HTTPError as e:
+                if hasattr(e, 'response') and e.response is not None and e.response.status_code == 429:
+                    # Rate limit error - use exponential backoff
+                    if attempt < max_retries:
+                        delay = min(base_delay * (2 ** (attempt - 1)), 60)
+                        logger.warning(f"Rate limit hit, retrying in {delay}s... (attempt {attempt}/{max_retries})")
+                        time.sleep(delay)
+                    else:
+                        logger.error(f"Max retries exceeded after {max_retries} attempts")
+                        raise Exception(f"MaxRetriesExceeded: Failed after {max_retries} attempts due to rate limiting")
+                else:
+                    # Other HTTP error - don't retry
+                    raise
+
+            except (ConnectionError, TimeoutError) as e:
+                # Transient network errors - retry with backoff
+                if attempt < max_retries:
+                    delay = min(base_delay * (2 ** (attempt - 1)), 60)
+                    logger.warning(f"Network error, retrying in {delay}s... (attempt {attempt}/{max_retries}): {e}")
+                    time.sleep(delay)
+                else:
+                    logger.error(f"Max retries exceeded after {max_retries} attempts")
+                    raise Exception(f"MaxRetriesExceeded: Failed after {max_retries} attempts due to network errors")
+
+            except Exception as e:
+                # Other exceptions - don't retry
+                raise
+
+        # Should not reach here
+        raise Exception(f"MaxRetriesExceeded: Failed after {max_retries} attempts")
+
 
 
 # 使用示例

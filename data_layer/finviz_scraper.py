@@ -471,7 +471,7 @@ class FinvizScraper:
                 'data_source': 'Finviz'
             }
         
-        Requirements: 4.1-4.4, 5.1
+        Requirements: 4.1-4.4, 5.1, 1.2, 2.2
         """
         try:
             self._rate_limit()
@@ -490,6 +490,10 @@ class FinvizScraper:
             base_url = self.ELITE_BASE_URL if self.use_elite else self.BASE_URL
             url = f"{base_url}?t={ticker.upper()}"
             
+            # Task 17.1: Enhanced HTTP configuration with complete headers
+            # Task 17.1: Increase timeout to 15 seconds
+            timeout = 15  # Increased from default
+            
             # 發送請求（優先使用 curl_cffi 繞過反爬蟲）
             if USE_CURL_CFFI:
                 # 使用 curl_cffi 模擬 Chrome 瀏覽器的 TLS 指紋
@@ -498,8 +502,10 @@ class FinvizScraper:
                 fingerprint = browser_fingerprints[retry_count % len(browser_fingerprints)]
                 
                 try:
-                    # 添加更完整的 headers 模擬真實瀏覽器
+                    # Task 17.1: Complete headers (User-Agent Mozilla/5.0, Referer, Accept, Accept-Language)
                     curl_headers = {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                        'Referer': 'https://finviz.com/',
                         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
                         'Accept-Language': 'en-US,en;q=0.9',
                         'Accept-Encoding': 'gzip, deflate, br',
@@ -518,7 +524,7 @@ class FinvizScraper:
                         url, 
                         impersonate=fingerprint,
                         headers=curl_headers,
-                        timeout=self.connection_config.timeout
+                        timeout=timeout
                     )
                 except Exception as curl_error:
                     # curl_cffi 請求失敗時的重試邏輯
@@ -532,11 +538,22 @@ class FinvizScraper:
                         logger.error(f"x curl_cffi 請求失敗，已達最大重試次數")
                         return None
             else:
-                # 回退到普通 requests
-                response = self.session.get(url, headers=self.headers, timeout=self.connection_config.timeout)
+                # Task 17.1: Complete headers for regular requests
+                enhanced_headers = self.headers.copy()
+                enhanced_headers.update({
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Referer': 'https://finviz.com/',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                    'Accept-Language': 'en-US,en;q=0.5',
+                })
+                # 回退到普通 requests with enhanced headers and timeout
+                response = self.session.get(url, headers=enhanced_headers, timeout=timeout)
             
+            # Task 17.2: Catch and log specific HTTP errors (403, 503, timeout)
             # 檢測封鎖（curl_cffi 和 requests 都需要檢查）
             if self._detect_block(response):
+                # Task 17.2: Log format: "Finviz HTTP error: {status_code} - {reason}"
+                logger.error(f"Finviz HTTP error: {response.status_code} - {response.reason}")
                 if self.retry_handler.should_retry(response.status_code, retry_count):
                     wait_time = self.retry_handler.calculate_delay(retry_count + 1, 'exponential')
                     logger.warning(f"  重試 {retry_count + 1}，等待 {wait_time:.1f}s...")
@@ -649,7 +666,24 @@ class FinvizScraper:
             logger.info(f"  P/E: {SafeFormatter.format_number(result['pe'])}")
             logger.info(f"  Forward P/E: {SafeFormatter.format_number(result['forward_pe'])}")
             
-            # 計算數據質量
+            # Task 17.2: Validate parsed data - count non-None fields
+            # 計算數據質量 - 使用11個關鍵字段（與bugfix.md中的要求一致）
+            key_fields = [
+                'insider_own', 'inst_own', 'short_float', 'avg_volume', 'peg',
+                'roe', 'profit_margin', 'debt_eq', 'atr', 'rsi', 'beta'
+            ]
+            
+            available_fields = sum(1 for f in key_fields if result.get(f) is not None)
+            total_fields = len(key_fields)
+            
+            # Task 17.2: Log: "Finviz data: {available_fields}/11 fields available"
+            logger.info(f"Finviz data: {available_fields}/{total_fields} fields available")
+            
+            # Task 17.2: Warn if < 9 fields
+            if available_fields < 9:
+                logger.warning(f"Finviz data incomplete: only {available_fields}/{total_fields} fields")
+            
+            # 計算完整數據質量（包含所有字段）
             all_fields = [
                 'price', 'eps_ttm', 'pe', 'forward_pe', 'peg', 'market_cap',
                 'beta', 'atr', 'rsi', 'insider_own', 'inst_own', 'short_float',
@@ -683,8 +717,9 @@ class FinvizScraper:
             return result
             
         except requests.exceptions.Timeout as e:
+            # Task 17.2: Catch and log specific HTTP errors (timeout)
+            logger.error(f"Finviz HTTP error: timeout - Request timeout after 15s")
             # 超時重試邏輯
-            logger.warning(f"! Finviz 請求超時: {e}")
             if self.retry_handler.should_retry(0, retry_count):
                 wait_time = self.retry_handler.calculate_delay(retry_count + 1, 'linear')
                 logger.warning(f"  重試 {retry_count + 1}，等待 {wait_time:.1f}s...")
@@ -692,6 +727,21 @@ class FinvizScraper:
                 return self.get_stock_fundamentals(ticker, retry_count + 1)
             else:
                 logger.error(f"x Finviz 請求超時，已達最大重試次數")
+                return None
+        except requests.exceptions.HTTPError as e:
+            # Task 17.2: Catch and log specific HTTP errors (403, 503)
+            status_code = e.response.status_code if e.response else 'unknown'
+            reason = e.response.reason if e.response else str(e)
+            logger.error(f"Finviz HTTP error: {status_code} - {reason}")
+            
+            # 對於特定錯誤碼進行重試
+            if status_code in [403, 503] and self.retry_handler.should_retry(status_code, retry_count):
+                wait_time = self.retry_handler.calculate_delay(retry_count + 1, 'exponential')
+                logger.warning(f"  重試 {retry_count + 1}，等待 {wait_time:.1f}s...")
+                time.sleep(wait_time)
+                return self.get_stock_fundamentals(ticker, retry_count + 1)
+            else:
+                logger.error(f"x Finviz HTTP 錯誤，無法重試或已達最大重試次數")
                 return None
         except requests.exceptions.RequestException as e:
             logger.error(f"x Finviz 請求失敗: {e}")

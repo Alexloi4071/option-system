@@ -147,6 +147,21 @@ class Settings:
                 warnings.append("IBKR_HOST 未配置，已啟用 IBKR 但缺少主機設定")
             if cls.IBKR_CLIENT_ID is None:
                 warnings.append("IBKR_CLIENT_ID 未配置，已啟用 IBKR 但缺少 Client ID")
+            
+            # 端口範圍驗證
+            common_ports = [4001, 4002, 7496, 7497]
+            if cls.IBKR_PORT_PAPER not in common_ports:
+                warnings.append(f"IBKR_PORT_PAPER ({cls.IBKR_PORT_PAPER}) 不在常見範圍內 {common_ports}")
+            if cls.IBKR_PORT_LIVE not in common_ports:
+                warnings.append(f"IBKR_PORT_LIVE ({cls.IBKR_PORT_LIVE}) 不在常見範圍內 {common_ports}")
+            
+            # Client ID 範圍驗證
+            if cls.IBKR_CLIENT_ID < 0 or cls.IBKR_CLIENT_ID > 32767:
+                errors.append(f"IBKR_CLIENT_ID ({cls.IBKR_CLIENT_ID}) 必須在 0-32767 範圍內")
+            elif cls.IBKR_CLIENT_ID == 0:
+                warnings.append("IBKR_CLIENT_ID 為 0 是有效的但不推薦，建議使用 1-9999")
+            elif cls.IBKR_CLIENT_ID > 9999:
+                warnings.append(f"IBKR_CLIENT_ID ({cls.IBKR_CLIENT_ID}) 超過推薦範圍 (1-9999)")
             # IBKR 未配置時不報錯，僅記錄信息（將使用降級方案）
         # 注意：IBKR 未啟用時不顯示警告，因為這是正常的降級情況
         

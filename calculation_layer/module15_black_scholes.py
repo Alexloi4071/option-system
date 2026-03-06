@@ -363,13 +363,13 @@ class BlackScholesCalculator:
             # 第6步: 計算期權價格（使用調整後的股價）
             option_type_lower = option_type.lower()
             
-            if option_type_lower == 'call':
+            if option_type_lower in ('call', 'c'):
                 # Call: C = S_adjusted×N(d1) - K×e^(-r×T)×N(d2)
                 option_price = (
                     adjusted_stock_price * self.normal_cdf(d1) - 
                     strike_price * discount_factor * self.normal_cdf(d2)
                 )
-            elif option_type_lower == 'put':
+            elif option_type_lower in ('put', 'p'):
                 # Put: P = K×e^(-r×T)×N(-d2) - S_adjusted×N(-d1)
                 option_price = (
                     strike_price * discount_factor * self.normal_cdf(-d2) - 
@@ -593,7 +593,7 @@ class BlackScholesCalculator:
             logger.warning(f"⚠ 波動率異常高: {volatility*100:.2f}%")
         
         # 驗證期權類型
-        if option_type.lower() not in ['call', 'put']:
+        if option_type.lower() not in ['call', 'put', 'c', 'p']:
             logger.error(f"✗ 無效的期權類型: {option_type}")
             return False
         

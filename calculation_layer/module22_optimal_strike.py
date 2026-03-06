@@ -17,6 +17,7 @@ Module 22: 最佳行使價分析
 """
 
 import logging
+import pandas as pd
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any
 from datetime import datetime
@@ -455,12 +456,17 @@ class OptimalStrikeCalculator:
         
         Requirements: 1.1, 1.2, 1.3, 1.6
         """
-        # 獲取市場價格
+        # 獲取市場價格 (Fix 11: 優先使用 IBKR markPrice)
         market_price = option.get('lastPrice', 0) or 0
         if market_price <= 0:
-            bid = option.get('bid', 0) or 0
-            ask = option.get('ask', 0) or 0
-            market_price = (bid + ask) / 2 if (bid + ask) > 0 else 0
+            # 優先使用 IBKR Tick 232 Mark Price
+            mark_price = option.get('markPrice')
+            if mark_price and mark_price > 0:
+                market_price = mark_price
+            else:
+                bid = option.get('bid', 0) or 0
+                ask = option.get('ask', 0) or 0
+                market_price = (bid + ask) / 2 if (bid + ask) > 0 else 0
         
         # 策略 1: 使用 Module 17 從市場價格反推 IV
         if market_price > 0 and time_to_expiration > 0:
@@ -620,33 +626,50 @@ class OptimalStrikeCalculator:
             atm_strike = None
             min_atm_distance = float('inf')
             
-            for option in selected_options:
-                strike = option.get('strike', 0)
+            # 批處理配置（用於內存優化）
+            batch_size = 20  # 每批處理 20 個行使價
+            total_options = len(selected_options)
+            
+            logger.info(f"  開始批處理分析: 總共 {total_options} 個行使價，每批 {batch_size} 個")
+            
+            for batch_start in range(0, total_options, batch_size):
+                batch_end = min(batch_start + batch_size, total_options)
+                batch_options = selected_options[batch_start:batch_end]
                 
-                # 過濾流動性不足的行使價（金曹三不買原則）- 改為 OR 邏輯
-                volume = option.get('volume', 0) or 0
-                oi = option.get('openInterest', 0) or 0
+                logger.info(f"  處理批次 {batch_start//batch_size + 1}/{(total_options + batch_size - 1)//batch_size}: 行使價 {batch_start+1}-{batch_end}")
                 
-                # 修復：使用 OR 邏輯，只要 Volume 或 OI 其中一個達標即可
-                if volume < self.MIN_VOLUME and oi < self.MIN_OPEN_INTEREST:
-                    continue
-                
-                # 創建分析對象
-                analysis = self._analyze_single_strike(
-                    option, option_type, current_price, strategy_type,
-                    days_to_expiration, iv_rank, target_price,
-                    uoa_signals.get((strike, option_type), [])  # 傳入對應的異動信號
-                )
-                
-                if analysis:
-                    analyzed_strikes.append(analysis)
+                for option in batch_options:
+                    strike = option.get('strike', 0)
                     
-                    # 找到最接近 ATM 的行使價
-                    distance = abs(strike - current_price)
-                    if distance < min_atm_distance:
-                        min_atm_distance = distance
-                        atm_iv = analysis.iv
-                        atm_strike = strike
+                    # 過濾流動性不足的行使價（金曹三不買原則）- 改為 OR 邏輯
+                    volume = option.get('volume', 0) or 0
+                    oi = option.get('openInterest', 0) or 0
+                    
+                    # 修復：使用 OR 邏輯，只要 Volume 或 OI 其中一個達標即可
+                    if volume < self.MIN_VOLUME and oi < self.MIN_OPEN_INTEREST:
+                        continue
+                    
+                    # 創建分析對象
+                    analysis = self._analyze_single_strike(
+                        option, option_type, current_price, strategy_type,
+                        days_to_expiration, iv_rank, target_price,
+                        uoa_signals.get((strike, option_type), [])  # 傳入對應的異動信號
+                    )
+                    
+                    if analysis:
+                        analyzed_strikes.append(analysis)
+                        
+                        # 找到最接近 ATM 的行使價
+                        distance = abs(strike - current_price)
+                        if distance < min_atm_distance:
+                            min_atm_distance = distance
+                            atm_iv = analysis.iv
+                            atm_strike = strike
+                
+                # 批處理後清理內存
+                del batch_options
+                import gc
+                gc.collect()
             
             if not analyzed_strikes:
                 logger.warning("! 沒有符合條件的行使價")
@@ -767,6 +790,16 @@ class OptimalStrikeCalculator:
             # 輸出緩存統計
             cache_stats = self.get_cache_stats()
             logger.info(f"  緩存統計: 命中 {cache_stats['hits']}, 未命中 {cache_stats['misses']}, 命中率 {cache_stats['hit_rate']:.1f}%")
+            
+            # 清理大型中間數據結構以釋放內存
+            del selected_options
+            del analyzed_strikes
+            if 'calls_df' in locals():
+                del calls_df
+            if 'puts_df' in locals():
+                del puts_df
+            import gc
+            gc.collect()
             
             return result
             
@@ -931,8 +964,12 @@ class OptimalStrikeCalculator:
                     logger.debug(f"  Short Put 過濾: 跳過行使價 ${strike:.2f} - {skip_reason}")
                     return None
             
-            # 計算 Bid-Ask Spread 百分比
-            mid_price = (bid + ask) / 2 if (bid + ask) > 0 else last_price
+            # 計算 Bid-Ask Spread 百分比 (Fix 11: 優先使用 IBKR markPrice)
+            mark_price = option.get('markPrice')
+            if mark_price and mark_price > 0:
+                mid_price = mark_price
+            else:
+                mid_price = (bid + ask) / 2 if (bid + ask) > 0 else last_price
             bid_ask_spread_pct = ((ask - bid) / mid_price * 100) if mid_price > 0 else 0
             
             # 創建分析對象
@@ -1537,14 +1574,18 @@ class OptimalStrikeCalculator:
             atm_call = call_strikes[atm_strike]
             atm_put = put_strikes[atm_strike]
             
-            # 獲取價格（優先使用 lastPrice，否則使用 mid price）
+            # 獲取價格（優先使用 lastPrice，其次 markPrice，否則使用 mid price）
             call_price = atm_call.get('lastPrice', 0) or 0
+            if call_price <= 0:
+                call_price = atm_call.get('markPrice') or 0
             if call_price <= 0:
                 bid = atm_call.get('bid', 0) or 0
                 ask = atm_call.get('ask', 0) or 0
                 call_price = (bid + ask) / 2 if (bid + ask) > 0 else 0
             
             put_price = atm_put.get('lastPrice', 0) or 0
+            if put_price <= 0:
+                put_price = atm_put.get('markPrice') or 0
             if put_price <= 0:
                 bid = atm_put.get('bid', 0) or 0
                 ask = atm_put.get('ask', 0) or 0

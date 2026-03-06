@@ -73,10 +73,30 @@ CATALYSTS_PROFILE = StrategyProfile(
     )
 )
 
+# 4. 🚀 Small Cap Movers (AI / Quantum / High-Beta)
+# Focus: Mid/Small caps with strong options liquidity and momentum
+SMALL_CAP_PROFILE = StrategyProfile(
+    name="Small_Cap_Movers",
+    description="Mid/Small Cap AI, Quantum & Innovation stocks with options activity",
+    criteria=StrategyCriteria(
+        min_market_cap=0.5,          # Small cap (>$500M market cap)
+        min_volume=20_000,           # Lower bar for smaller stocks
+        min_relative_volume=2.0,     # Must show higher-than-normal activity
+        gap_min_pct=2.0,             # Larger gap required (small caps are noisier)
+        gap_max_pct=20.0,
+        iv_rank_max=None,            # Small caps often have sky-high IV, tolerate it
+        preferred_strategies=['LONG_CALL', 'LONG_PUT'],  # Long only for small caps
+        finviz_filters="f=cap_smallover,sh_opt_option,sh_avgvol_o500"  # Small+ cap, Optionable, Avg Vol>500k
+    )
+)
+
+
+
 ALL_PROFILES = {
     "titans": TITANS_PROFILE,
     "momentum": MOMENTUM_PROFILE,
-    "catalysts": CATALYSTS_PROFILE
+    "catalysts": CATALYSTS_PROFILE,
+    "small_cap": SMALL_CAP_PROFILE,
 }
 
 def get_profile_by_ticker(ticker: str, market_cap_b: float) -> StrategyProfile:

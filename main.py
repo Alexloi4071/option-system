@@ -88,6 +88,10 @@ from calculation_layer.module31_advanced_metrics import AdvancedMetricsAnalyzer
 from calculation_layer.module32_complex_strategies import ComplexStrategyAnalyzer
 # 新增: 策略推薦
 from calculation_layer.strategy_recommendation import StrategyRecommender
+# Phase 8: 日內交易模組
+from calculation_layer.module_vwap_intraday import VWAPIntradayAnalyzer
+from calculation_layer.module_orb import ORBAnalyzer
+from calculation_layer.module_0dte_filter import ZeroDTEFilter
 from output_layer.report_generator import ReportGenerator
 from output_layer.output_manager import OutputPathManager
 from output_layer.history_manager import HistoryManager
@@ -419,19 +423,26 @@ class OptionsAnalysisSystem:
             # US-1 Task 2.4.1: 獲取股息收益率（用於 Module 15 和 Module 19）
             logger.info("\n→ 獲取股息數據...")
             dividend_yield = 0.0  # 默認值
-            try:
-                dividend_yield = self.fetcher.get_dividend_yield(ticker)
-                if dividend_yield > 0:
-                    logger.info(f"  * 股息收益率: {dividend_yield:.4f} ({dividend_yield*100:.2f}%)")
-                    # 將股息數據添加到 analysis_data 中
-                    analysis_data['dividend_yield'] = dividend_yield
-                else:
-                    logger.info(f"  * {ticker} 無股息或股息數據不可用")
+            
+            # Fix 11: 優先從已經抓取的 stock_info 中獲取 (包含從 IBKR 來的最新數據)
+            stock_info = analysis_data.get('stock_info', {})
+            if 'dividend_rate' in stock_info and stock_info['dividend_rate'] > 0:
+                dividend_yield = stock_info['dividend_rate']
+                logger.info(f"  * Fix 11 ✅ 股息收益率: {dividend_yield:.4f} ({dividend_yield*100:.2f}%) (來自已獲取數據)")
+                analysis_data['dividend_yield'] = dividend_yield
+            else:
+                try:
+                    dividend_yield = self.fetcher.get_dividend_yield(ticker)
+                    if dividend_yield > 0:
+                        logger.info(f"  * 股息收益率: {dividend_yield:.4f} ({dividend_yield*100:.2f}%)")
+                        analysis_data['dividend_yield'] = dividend_yield
+                    else:
+                        logger.info(f"  * {ticker} 無股息或股息數據不可用")
+                        analysis_data['dividend_yield'] = 0.0
+                except Exception as e:
+                    logger.warning(f"  ! 獲取股息數據失敗: {e}，使用默認值 0.0")
+                    dividend_yield = 0.0
                     analysis_data['dividend_yield'] = 0.0
-            except Exception as e:
-                logger.warning(f"  ! 獲取股息數據失敗: {e}，使用默認值 0.0")
-                dividend_yield = 0.0
-                analysis_data['dividend_yield'] = 0.0
             
             # 第3步: 運行計算模塊
             report_progress(3, 28, "開始運行計算模塊...", "Module 1: 支持/阻力位")
@@ -1359,35 +1370,76 @@ class OptionsAnalysisSystem:
                     
                     # 方案2: 如果 API 失敗或數據無效，使用自主計算
                     if not api_call_price or not api_put_price:
-                        logger.info(f"  使用自主計算 (Black-Scholes 模型)")
-                        data_source = "Self-Calculated"
-                        bs_calc = BlackScholesCalculator()
-                        
-                        # 計算 Call 期權理論價格
-                        bs_call_result = bs_calc.calculate_option_price(
-                            stock_price=current_price,
-                            strike_price=strike_price,
-                            risk_free_rate=risk_free_rate,
-                            time_to_expiration=time_to_expiration_years,
-                            volatility=volatility_estimate,
-                            option_type='call',
-                            dividend_yield=dividend_yield  # US-1 Task 2.4.2: 傳遞股息率
-                        )
-                        
-                        # 計算 Put 期權理論價格
-                        bs_put_result = bs_calc.calculate_option_price(
-                            stock_price=current_price,
-                            strike_price=strike_price,
-                            risk_free_rate=risk_free_rate,
-                            time_to_expiration=time_to_expiration_years,
-                            volatility=volatility_estimate,
-                            option_type='put',
-                            dividend_yield=dividend_yield  # US-1 Task 2.4.2: 傳遞股息率
-                        )
+                        is_index = ticker.upper() in ['SPX', 'VIX', 'NDX', 'RUT', 'DJX']
+                        if is_index:
+                            logger.info(f"  使用自主計算 (Black-Scholes 模型 - 指數期權)")
+                            data_source = "Self-Calculated (Black-Scholes)"
+                            bs_calc = BlackScholesCalculator()
+                            
+                            bs_call_result = bs_calc.calculate_option_price(
+                                stock_price=current_price, strike_price=strike_price,
+                                risk_free_rate=risk_free_rate, time_to_expiration=time_to_expiration_years,
+                                volatility=volatility_estimate, option_type='call', dividend_yield=dividend_yield
+                            )
+                            bs_put_result = bs_calc.calculate_option_price(
+                                stock_price=current_price, strike_price=strike_price,
+                                risk_free_rate=risk_free_rate, time_to_expiration=time_to_expiration_years,
+                                volatility=volatility_estimate, option_type='put', dividend_yield=dividend_yield
+                            )
+                            call_dict = bs_call_result.to_dict()
+                            put_dict = bs_put_result.to_dict()
+                        else:
+                            logger.info(f"  使用自主計算 (BAW 美式定價模型 - 美股期權)")
+                            data_source = "Self-Calculated (American/BAW)"
+                            try:
+                                from calculation_layer.module32_american_pricing import AmericanOptionPricer
+                                am_calc = AmericanOptionPricer()
+                                am_call_result = am_calc.calculate_american_price(
+                                    stock_price=current_price, strike_price=strike_price,
+                                    risk_free_rate=risk_free_rate, time_to_expiration=time_to_expiration_years,
+                                    volatility=volatility_estimate, option_type='call', dividend_yield=dividend_yield
+                                )
+                                am_put_result = am_calc.calculate_american_price(
+                                    stock_price=current_price, strike_price=strike_price,
+                                    risk_free_rate=risk_free_rate, time_to_expiration=time_to_expiration_years,
+                                    volatility=volatility_estimate, option_type='put', dividend_yield=dividend_yield
+                                )
+                                call_dict = {
+                                    'option_price': round(am_call_result.american_price, 4),
+                                    'intrinsic_value': round(max(0.0, current_price - strike_price), 4),
+                                    'time_value': round(max(0.0, am_call_result.american_price - max(0.0, current_price - strike_price)), 4),
+                                    'early_exercise_premium': round(am_call_result.early_exercise_premium, 4),
+                                    'european_price': round(am_call_result.european_price, 4),
+                                    'model_used': am_call_result.model_used
+                                }
+                                put_dict = {
+                                    'option_price': round(am_put_result.american_price, 4),
+                                    'intrinsic_value': round(max(0.0, strike_price - current_price), 4),
+                                    'time_value': round(max(0.0, am_put_result.american_price - max(0.0, strike_price - current_price)), 4),
+                                    'early_exercise_premium': round(am_put_result.early_exercise_premium, 4),
+                                    'european_price': round(am_put_result.european_price, 4),
+                                    'model_used': am_put_result.model_used
+                                }
+                            except ImportError as e:
+                                logger.warning(f"美式模型加載失敗: {e}，回退到 Black-Scholes")
+                                data_source = "Self-Calculated (Black-Scholes Fallback)"
+                                bs_calc = BlackScholesCalculator()
+                                bs_call_result = bs_calc.calculate_option_price(
+                                    stock_price=current_price, strike_price=strike_price,
+                                    risk_free_rate=risk_free_rate, time_to_expiration=time_to_expiration_years,
+                                    volatility=volatility_estimate, option_type='call', dividend_yield=dividend_yield
+                                )
+                                bs_put_result = bs_calc.calculate_option_price(
+                                    stock_price=current_price, strike_price=strike_price,
+                                    risk_free_rate=risk_free_rate, time_to_expiration=time_to_expiration_years,
+                                    volatility=volatility_estimate, option_type='put', dividend_yield=dividend_yield
+                                )
+                                call_dict = bs_call_result.to_dict()
+                                put_dict = bs_put_result.to_dict()
                         
                         self.analysis_results['module15_black_scholes'] = {
-                            'call': bs_call_result.to_dict(),
-                            'put': bs_put_result.to_dict(),
+                            'call': call_dict,
+                            'put': put_dict,
                             'parameters': {
                                 'stock_price': current_price,
                                 'strike_price': strike_price,
@@ -1399,7 +1451,7 @@ class OptionsAnalysisSystem:
                             'data_source': data_source,
                             'dividend_adjusted': dividend_yield > 0  # US-1 Task 2.4.4: 標識是否使用股息調整
                         }
-                        logger.info(f"* 模塊15完成: Black-Scholes 定價 (Call=${bs_call_result.option_price:.2f}, Put=${bs_put_result.option_price:.2f}) [{data_source}]")
+                        logger.info(f"* 模塊15完成: Black-Scholes 定價 (Call=${call_dict['option_price']:.2f}, Put=${put_dict['option_price']:.2f}) [{data_source}]")
                     else:
                         # 使用 API 數據
                         self.analysis_results['module15_black_scholes'] = {
@@ -1682,46 +1734,76 @@ class OptionsAnalysisSystem:
                         logger.info(f"\n→ ATM IV 集成: 使用 ATM IV ({atm_iv*100:.2f}%) 更新 Module 15 計算...")
                         
                         try:
-                            bs_calc_atm = BlackScholesCalculator()
-                            
-                            # 使用 ATM IV 重新計算 Call 期權理論價格
-                            bs_call_atm = bs_calc_atm.calculate_option_price_with_atm_iv(
-                                stock_price=current_price,
-                                strike_price=strike_price,
-                                risk_free_rate=risk_free_rate,
-                                time_to_expiration=time_to_expiration_years,
-                                market_iv=volatility_estimate,
-                                atm_iv=atm_iv,
-                                option_type='call',
-                                dividend_yield=dividend_yield  # US-1 Task 2.4.2: 傳遞股息率
-                            )
-                            
-                            # 使用 ATM IV 重新計算 Put 期權理論價格
-                            bs_put_atm = bs_calc_atm.calculate_option_price_with_atm_iv(
-                                stock_price=current_price,
-                                strike_price=strike_price,
-                                risk_free_rate=risk_free_rate,
-                                time_to_expiration=time_to_expiration_years,
-                                market_iv=volatility_estimate,
-                                atm_iv=atm_iv,
-                                option_type='put',
-                                dividend_yield=dividend_yield  # US-1 Task 2.4.2: 傳遞股息率
-                            )
+                            is_index = ticker.upper() in ['SPX', 'VIX', 'NDX', 'RUT', 'DJX']
+                            if is_index:
+                                bs_calc_atm = BlackScholesCalculator()
+                                
+                                bs_call_atm = bs_calc_atm.calculate_option_price_with_atm_iv(
+                                    stock_price=current_price, strike_price=strike_price,
+                                    risk_free_rate=risk_free_rate, time_to_expiration=time_to_expiration_years,
+                                    market_iv=volatility_estimate, atm_iv=atm_iv, option_type='call', dividend_yield=dividend_yield
+                                )
+                                bs_put_atm = bs_calc_atm.calculate_option_price_with_atm_iv(
+                                    stock_price=current_price, strike_price=strike_price,
+                                    risk_free_rate=risk_free_rate, time_to_expiration=time_to_expiration_years,
+                                    market_iv=volatility_estimate, atm_iv=atm_iv, option_type='put', dividend_yield=dividend_yield
+                                )
+                                call_atm_dict = bs_call_atm.to_dict()
+                                put_atm_dict = bs_put_atm.to_dict()
+                                option_price_c = bs_call_atm.option_price
+                                option_price_p = bs_put_atm.option_price
+                                iv_source_c = bs_call_atm.iv_source
+                                iv_source_p = bs_put_atm.iv_source
+                            else:
+                                from calculation_layer.module32_american_pricing import AmericanOptionPricer
+                                am_calc = AmericanOptionPricer()
+                                am_call_atm = am_calc.calculate_american_price(
+                                    stock_price=current_price, strike_price=strike_price,
+                                    risk_free_rate=risk_free_rate, time_to_expiration=time_to_expiration_years,
+                                    volatility=atm_iv, option_type='call', dividend_yield=dividend_yield
+                                )
+                                am_put_atm = am_calc.calculate_american_price(
+                                    stock_price=current_price, strike_price=strike_price,
+                                    risk_free_rate=risk_free_rate, time_to_expiration=time_to_expiration_years,
+                                    volatility=atm_iv, option_type='put', dividend_yield=dividend_yield
+                                )
+                                call_atm_dict = {
+                                    'option_price': round(am_call_atm.american_price, 4),
+                                    'intrinsic_value': round(max(0.0, current_price - strike_price), 4),
+                                    'time_value': round(max(0.0, am_call_atm.american_price - max(0.0, current_price - strike_price)), 4),
+                                    'early_exercise_premium': round(am_call_atm.early_exercise_premium, 4),
+                                    'european_price': round(am_call_atm.european_price, 4),
+                                    'model_used': am_call_atm.model_used,
+                                    'iv_source': 'Module 17 (ATM Call IV)'
+                                }
+                                put_atm_dict = {
+                                    'option_price': round(am_put_atm.american_price, 4),
+                                    'intrinsic_value': round(max(0.0, strike_price - current_price), 4),
+                                    'time_value': round(max(0.0, am_put_atm.american_price - max(0.0, strike_price - current_price)), 4),
+                                    'early_exercise_premium': round(am_put_atm.early_exercise_premium, 4),
+                                    'european_price': round(am_put_atm.european_price, 4),
+                                    'model_used': am_put_atm.model_used,
+                                    'iv_source': 'Module 17 (ATM Call IV)'
+                                }
+                                option_price_c = am_call_atm.american_price
+                                option_price_p = am_put_atm.american_price
+                                iv_source_c = 'Module 17 (ATM Call IV)'
+                                iv_source_p = 'Module 17 (ATM Call IV)'
                             
                             # 更新 Module 15 結果，添加 ATM IV 信息
                             if 'module15_black_scholes' in self.analysis_results:
-                                self.analysis_results['module15_black_scholes']['call_atm_iv'] = bs_call_atm.to_dict()
-                                self.analysis_results['module15_black_scholes']['put_atm_iv'] = bs_put_atm.to_dict()
+                                self.analysis_results['module15_black_scholes']['call_atm_iv'] = call_atm_dict
+                                self.analysis_results['module15_black_scholes']['put_atm_iv'] = put_atm_dict
                                 self.analysis_results['module15_black_scholes']['atm_iv_used'] = round(atm_iv, 4)
                                 self.analysis_results['module15_black_scholes']['atm_iv_source'] = 'Module 17 (ATM Call IV)'
                                 
                                 # 更新主要的 call/put 結果為 ATM IV 版本
-                                self.analysis_results['module15_black_scholes']['call'] = bs_call_atm.to_dict()
-                                self.analysis_results['module15_black_scholes']['put'] = bs_put_atm.to_dict()
+                                self.analysis_results['module15_black_scholes']['call'] = call_atm_dict
+                                self.analysis_results['module15_black_scholes']['put'] = put_atm_dict
                             
                             logger.info(f"  * ATM IV 更新完成:")
-                            logger.info(f"    Call 理論價: ${bs_call_atm.option_price:.2f} (IV來源: {bs_call_atm.iv_source})")
-                            logger.info(f"    Put 理論價: ${bs_put_atm.option_price:.2f} (IV來源: {bs_put_atm.iv_source})")
+                            logger.info(f"    Call 理論價: ${option_price_c:.2f} (IV來源: {iv_source_c})")
+                            logger.info(f"    Put 理論價: ${option_price_p:.2f} (IV來源: {iv_source_p})")
                         except Exception as atm_exc:
                             logger.warning(f"! ATM IV 更新失敗: {atm_exc}，保留原始 Module 15 結果")
                         # ========== ATM IV 集成結束 ==========
@@ -1858,6 +1940,13 @@ class OptionsAnalysisSystem:
                         historical_data['Close'],
                         windows=[10, 20, 30]
                     )
+                    
+                    # Fix 11: 如果有 IBKR 提供的即時 HV，覆蓋 30 天的延遲計算結果
+                    ibkr_hv_pct = analysis_data.get('stock_info', {}).get('historical_volatility')
+                    if ibkr_hv_pct and 30 in hv_results:
+                        logger.info(f"  Fix 11 ✅ 取代自算數據，使用 IBKR Tick 104 即時 30 天 HV: {ibkr_hv_pct:.2f}%")
+                        hv_results[30].historical_volatility = ibkr_hv_pct / 100.0  # 內部以小數儲存
+                        hv_results[30].calculation_date += " (IBKR Tick 104)"
                     
                     # 使用 30 天 HV 與 IV 比較
                     hv_30 = hv_results.get(30)
@@ -2716,7 +2805,9 @@ class OptionsAnalysisSystem:
                         ticker=ticker,
                         daily_data=daily_data,
                         intraday_data=intraday_data,
-                        current_price=current_price
+                        current_price=current_price,
+                        finviz_rsi=analysis_data.get('rsi'),
+                        finviz_atr=analysis_data.get('atr')
                     )
                     
                     self.analysis_results['module24_technical_direction'] = tech_result.to_dict()
@@ -3315,6 +3406,75 @@ class OptionsAnalysisSystem:
             except Exception as exc:
                 logger.warning("! 策略推薦執行失敗: %s", exc)
 
+            # ========== Phase 8: 日內交易模組 (VWAP / ORB / 0DTE) ==========
+            # 設計: 可選執行 — 無日內數據時自動跳過，不影響現有分析
+            logger.info("\n→ Phase 8: 日內交易分析 (VWAP / ORB / 0DTE)...")
+            try:
+                # 獲取 1 分鐘 K 線（直接從 IBKR 取得）
+                intraday_df = None
+                if self.fetcher.ibkr_client and self.fetcher.ibkr_client.is_connected():
+                    intraday_df = self.fetcher.ibkr_client.get_intraday_bars(ticker, bar_size='1 min', duration='1 D')
+                else:
+                    logger.info("  * IBKR 未連接，跳過日內分析")
+                
+                if intraday_df is not None and len(intraday_df) >= 10:
+                    current_price = analysis_data.get('current_price', 0)
+                    logger.info(f"  * 獲取 {len(intraday_df)} 條 1 分鐘 K 線，開始日內分析...")
+                    
+                    # ── VWAP 分析 ──
+                    try:
+                        vwap_analyzer = VWAPIntradayAnalyzer()
+                        vwap_result = vwap_analyzer.calculate(ticker, intraday_df, current_price)
+                        self.analysis_results['module_vwap'] = vwap_result.to_dict()
+                        logger.info(f"  * VWAP: ${vwap_result.vwap:.2f} | 信號: {vwap_result.signal} ({vwap_result.signal_strength})")
+                    except Exception as e:
+                        logger.warning(f"  ! VWAP 分析失敗: {e}")
+                        vwap_result = None
+                    
+                    # ── ORB 分析 ──
+                    try:
+                        orb_analyzer = ORBAnalyzer(orb_minutes=15)
+                        orb_result = orb_analyzer.calculate(ticker, intraday_df, current_price)
+                        self.analysis_results['module_orb'] = orb_result.to_dict()
+                        logger.info(f"  * ORB: {orb_result.breakout_direction} | 信號: {orb_result.signal} ({orb_result.confidence})")
+                    except Exception as e:
+                        logger.warning(f"  ! ORB 分析失敗: {e}")
+                        orb_result = None
+                    
+                    # ── 0DTE 篩選（整合 VWAP / ORB 信號）──
+                    try:
+                        dte_filter = ZeroDTEFilter()
+                        # 從 fetcher 取得可用到期日
+                        all_expirations = []
+                        try:
+                            all_expirations = self.fetcher.get_option_expirations(ticker) or []
+                        except Exception:
+                            pass
+                        
+                        if all_expirations:
+                            dte_result = dte_filter.analyze(
+                                ticker=ticker,
+                                current_price=current_price,
+                                available_expirations=all_expirations,
+                                vwap_signal=vwap_result.signal if vwap_result else None,
+                                orb_signal=orb_result.signal if orb_result else None,
+                            )
+                            self.analysis_results['module_0dte'] = dte_result.to_dict()
+                            logger.info(f"  * 0DTE: 推薦到期日 {dte_result.recommended_expiry} | 綜合信號: {dte_result.combined_signal}")
+                        else:
+                            logger.info("  * 跳過 0DTE 分析: 無可用到期日")
+                    except Exception as e:
+                        logger.warning(f"  ! 0DTE 分析失敗: {e}")
+                    
+                    logger.info("* Phase 8 日內分析完成")
+                else:
+                    logger.info("  * 跳過日內分析: 無 1 分鐘 K 線數據（可能非盤中時段）")
+                    self.analysis_results['module_vwap'] = {'status': 'skipped', 'reason': '非盤中時段或數據不足'}
+                    self.analysis_results['module_orb'] = {'status': 'skipped', 'reason': '非盤中時段或數據不足'}
+                    self.analysis_results['module_0dte'] = {'status': 'skipped', 'reason': '非盤中時段或數據不足'}
+            except Exception as e:
+                logger.warning(f"! Phase 8 日內分析整體失敗: {e}")
+
             # 第4步: 生成報告
             logger.info("\n→ 第4步: 生成分析報告...")
             # 歷史記錄對比
@@ -3700,19 +3860,56 @@ class OptionsAnalysisSystem:
                 self.analysis_results['module10_short_put'] = short_put_results
                 logger.info("* 模塊10完成: Short Put 損益")
             
-            # 模塊15: Black-Scholes 理論價
-            bs_calc = BlackScholesCalculator()
+            # 模塊15: 理論價計算 (Black-Scholes 或 American BAW)
+            is_index = ticker.upper() in ['SPX', 'VIX', 'NDX', 'RUT', 'DJX'] if 'ticker' in locals() else False
             time_to_expiry = days_to_expiration / 365.0
-            bs_result = bs_calc.calculate_option_price(
-                stock_price=stock_price,
-                strike_price=strike,
-                time_to_expiration=time_to_expiry,
-                risk_free_rate=0.045,
-                volatility=iv / 100.0,
-                option_type=option_type
-            )
-            self.analysis_results['module15_black_scholes'] = bs_result.to_dict()
-            logger.info("* 模塊15完成: Black-Scholes 理論價")
+            
+            if is_index:
+                bs_calc = BlackScholesCalculator()
+                bs_result = bs_calc.calculate_option_price(
+                    stock_price=stock_price,
+                    strike_price=strike,
+                    time_to_expiration=time_to_expiry,
+                    risk_free_rate=0.045,
+                    volatility=iv / 100.0,
+                    option_type=option_type
+                )
+                self.analysis_results['module15_black_scholes'] = bs_result.to_dict()
+                logger.info("* 模塊15完成: Black-Scholes 理論價")
+            else:
+                try:
+                    from calculation_layer.module32_american_pricing import AmericanOptionPricer
+                    am_calc = AmericanOptionPricer()
+                    am_result = am_calc.calculate_american_price(
+                        stock_price=stock_price,
+                        strike_price=strike,
+                        risk_free_rate=0.045,
+                        time_to_expiration=time_to_expiry,
+                        volatility=iv / 100.0,
+                        option_type=option_type
+                    )
+                    self.analysis_results['module15_black_scholes'] = {
+                        'option_price': round(am_result.american_price, 4),
+                        'intrinsic_value': round(max(0.0, stock_price - strike if option_type.lower() == 'call' else strike - stock_price), 4),
+                        'time_value': round(max(0.0, am_result.american_price - max(0.0, stock_price - strike if option_type.lower() == 'call' else strike - stock_price)), 4),
+                        'early_exercise_premium': round(am_result.early_exercise_premium, 4),
+                        'european_price': round(am_result.european_price, 4),
+                        'model_used': am_result.model_used
+                    }
+                    logger.info("* 模塊15完成: American BAW 理論價")
+                except ImportError as e:
+                    logger.warning(f"美式模型載入失敗: {e}，回退使用 Black-Scholes")
+                    bs_calc = BlackScholesCalculator()
+                    bs_result = bs_calc.calculate_option_price(
+                        stock_price=stock_price,
+                        strike_price=strike,
+                        time_to_expiration=time_to_expiry,
+                        risk_free_rate=0.045,
+                        volatility=iv / 100.0,
+                        option_type=option_type
+                    )
+                    self.analysis_results['module15_black_scholes'] = bs_result.to_dict()
+                    logger.info("* 模塊15完成: Black-Scholes 理論價 (Fallback)")
             
             # 模塊16: Greeks（如果用戶沒提供，使用計算值）
             greeks_calc = GreeksCalculator()
@@ -3739,6 +3936,23 @@ class OptionsAnalysisSystem:
             
             self.analysis_results['module16_greeks'] = greeks_dict
             logger.info("* 模塊16完成: Greeks")
+            
+            # 模塊33: Wolfram 數學驗證
+            from calculation_layer.module33_wolfram_verification import WolframVerifier
+            wolfram_verifier = WolframVerifier()
+            # 估算損益平衡點
+            breakeven_target = strike + premium if option_type.lower() in ('c', 'call') else strike - premium
+            wolfram_result = wolfram_verifier.verify(
+                stock_price=stock_price,
+                strike_price=strike,
+                time_to_expiration_years=time_to_expiry,
+                risk_free_rate=0.045,
+                volatility=iv / 100.0,
+                option_type=option_type,
+                breakeven_price=breakeven_target
+            )
+            self.analysis_results['module33_wolfram_verification'] = wolfram_result
+            logger.info("* 模塊33完成: Wolfram 數學驗證")
             
             # 記錄手動輸入的數據
             self.analysis_results['manual_input'] = {
@@ -3786,9 +4000,10 @@ class OptionsAnalysisSystem:
                 'data_source': 'manual_input'
             }
             
-            report = self.report_generator.generate_complete_report(
+            report = self.report_generator.generate(
                 ticker=ticker,
-                analysis_data=analysis_data,
+                analysis_date=analysis_date_str,
+                raw_data=analysis_data,
                 calculation_results=self.analysis_results
             )
             
@@ -4036,19 +4251,56 @@ class OptionsAnalysisSystem:
                 self.analysis_results['module10_short_put'] = short_put_results
                 logger.info("* 模塊10完成: Short Put 損益")
             
-            # 模塊15: Black-Scholes 理論價
-            bs_calc = BlackScholesCalculator()
+            # 模塊15: 理論價計算 (Black-Scholes 或 American BAW)
+            is_index = ticker.upper() in ['SPX', 'VIX', 'NDX', 'RUT', 'DJX'] if 'ticker' in locals() else False
             time_to_expiry = days_to_expiration / 365.0
-            bs_result = bs_calc.calculate_option_price(
-                stock_price=stock_price,
-                strike_price=strike,
-                time_to_expiration=time_to_expiry,
-                risk_free_rate=risk_free_rate / 100.0,
-                volatility=iv / 100.0,
-                option_type=option_type
-            )
-            self.analysis_results['module15_black_scholes'] = bs_result.to_dict()
-            logger.info("* 模塊15完成: Black-Scholes 理論價")
+            
+            if is_index:
+                bs_calc = BlackScholesCalculator()
+                bs_result = bs_calc.calculate_option_price(
+                    stock_price=stock_price,
+                    strike_price=strike,
+                    time_to_expiration=time_to_expiry,
+                    risk_free_rate=risk_free_rate / 100.0,
+                    volatility=iv / 100.0,
+                    option_type=option_type
+                )
+                self.analysis_results['module15_black_scholes'] = bs_result.to_dict()
+                logger.info("* 模塊15完成: Black-Scholes 理論價")
+            else:
+                try:
+                    from calculation_layer.module32_american_pricing import AmericanOptionPricer
+                    am_calc = AmericanOptionPricer()
+                    am_result = am_calc.calculate_american_price(
+                        stock_price=stock_price,
+                        strike_price=strike,
+                        risk_free_rate=risk_free_rate / 100.0,
+                        time_to_expiration=time_to_expiry,
+                        volatility=iv / 100.0,
+                        option_type=option_type
+                    )
+                    self.analysis_results['module15_black_scholes'] = {
+                        'option_price': round(am_result.american_price, 4),
+                        'intrinsic_value': round(max(0.0, stock_price - strike if option_type.lower() == 'call' else strike - stock_price), 4),
+                        'time_value': round(max(0.0, am_result.american_price - max(0.0, stock_price - strike if option_type.lower() == 'call' else strike - stock_price)), 4),
+                        'early_exercise_premium': round(am_result.early_exercise_premium, 4),
+                        'european_price': round(am_result.european_price, 4),
+                        'model_used': am_result.model_used
+                    }
+                    logger.info("* 模塊15完成: American BAW 理論價")
+                except ImportError as e:
+                    logger.warning(f"美式模型載入失敗: {e}，回退使用 Black-Scholes")
+                    bs_calc = BlackScholesCalculator()
+                    bs_result = bs_calc.calculate_option_price(
+                        stock_price=stock_price,
+                        strike_price=strike,
+                        time_to_expiration=time_to_expiry,
+                        risk_free_rate=risk_free_rate / 100.0,
+                        volatility=iv / 100.0,
+                        option_type=option_type
+                    )
+                    self.analysis_results['module15_black_scholes'] = bs_result.to_dict()
+                    logger.info("* 模塊15完成: Black-Scholes 理論價 (Fallback)")
             
             # 模塊16: Greeks
             greeks_calc = GreeksCalculator()
@@ -4081,6 +4333,23 @@ class OptionsAnalysisSystem:
             
             self.analysis_results['module16_greeks'] = greeks_dict
             logger.info("* 模塊16完成: Greeks")
+            
+            # 模塊33: Wolfram 數學驗證
+            from calculation_layer.module33_wolfram_verification import WolframVerifier
+            wolfram_verifier = WolframVerifier()
+            # 估算損益平衡點
+            breakeven_target = strike + premium if option_type.lower() in ('c', 'call') else strike - premium
+            wolfram_result = wolfram_verifier.verify(
+                stock_price=stock_price,
+                strike_price=strike,
+                time_to_expiration_years=time_to_expiry,
+                risk_free_rate=risk_free_rate / 100.0,
+                volatility=iv / 100.0,
+                option_type=option_type,
+                breakeven_price=breakeven_target
+            )
+            self.analysis_results['module33_wolfram_verification'] = wolfram_result
+            logger.info("* 模塊33完成: Wolfram 數學驗證")
             
             # 記錄數據來源
             self.analysis_results['data_sources'] = {
@@ -4257,7 +4526,7 @@ def main():
             'strike': args.strike,
             'expiration': args.expiration,
             'premium': args.premium or ((args.bid + args.ask) / 2 if args.bid and args.ask else 0),
-            'option_type': (args.type or 'C').upper(),
+            'option_type': 'call' if (args.type or 'C').upper().startswith('C') else 'put',
             'iv': args.iv,
             'bid': args.bid,
             'ask': args.ask,
@@ -4331,38 +4600,67 @@ def main():
         print("分析成功！")
         print("=" * 70)
         print(f"股票: {results['ticker']}")
-        print(f"\n計算結果:")
+        # Fix: 使用 safe print 避免 Windows cp950 UnicodeEncodeError
+        def safe_print(text):
+            """安全列印，處理 Windows 終端編碼問題"""
+            try:
+                # 將 Unicode 特殊字符替換為 ASCII 等價物
+                safe_text = str(text).replace('\u2212', '-').replace('\u2013', '-').replace('\u2014', '-')
+                print(safe_text)
+            except UnicodeEncodeError:
+                print(text.encode('ascii', 'replace').decode('ascii'))
+        
+        safe_print(f"\n計算結果:")
         
         for module, data in results['calculations'].items():
-            print(f"\n{module}:")
+            safe_print(f"\n{module}:")
             # 處理列表類型的數據（如 module7_long_call）
             if isinstance(data, list):
                 for i, item in enumerate(data):
-                    print(f"  場景 {i+1}:")
+                    safe_print(f"  場景 {i+1}:")
                     if isinstance(item, dict):
                         for key, value in item.items():
-                            print(f"    {key}: {value}")
+                            safe_print(f"    {key}: {value}")
                     else:
-                        print(f"    {item}")
+                        safe_print(f"    {item}")
             # 處理字典類型的數據
             elif isinstance(data, dict):
                 for key, value in data.items():
-                    print(f"  {key}: {value}")
+                    safe_print(f"  {key}: {value}")
             # 處理其他類型
             else:
-                print(f"  {data}")
+                safe_print(f"  {data}")
         
-        print(f"\n報告文件:")
+        safe_print(f"\n報告文件:")
         for file_type, file_path in results['report'].items():
             if file_type != 'timestamp':
-                print(f"  {file_type}: {file_path}")
+                safe_print(f"  {file_type}: {file_path}")
         
-        print("=" * 70)
+        safe_print("=" * 70)
+        
+        # 清理 IBKR 連接
+        if 'system' in locals() and hasattr(system, 'fetcher') and hasattr(system.fetcher, 'ibkr_client'):
+            if system.fetcher.ibkr_client and system.fetcher.ibkr_client.is_connected():
+                try:
+                    system.fetcher.ibkr_client.disconnect()
+                    logger.info("已斷開 IBKR 連接")
+                except Exception as e:
+                    logger.warning(f"斷開 IBKR 連接時出錯: {e}")
     else:
         if results and 'message' in results:
             print(f"\n x 分析失敗: {results['message']}")
         else:
             print(f"\n x 分析失敗: 未知錯誤 (Results: {results})")
+        
+        # 清理 IBKR 連接
+        if 'system' in locals() and hasattr(system, 'fetcher') and hasattr(system.fetcher, 'ibkr_client'):
+            if system.fetcher.ibkr_client and system.fetcher.ibkr_client.is_connected():
+                try:
+                    system.fetcher.ibkr_client.disconnect()
+                    logger.info("已斷開 IBKR 連接")
+                except Exception as e:
+                    logger.warning(f"斷開 IBKR 連接時出錯: {e}")
+        
         sys.exit(1)
 
 

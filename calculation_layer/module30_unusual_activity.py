@@ -50,11 +50,11 @@ class UnusualActivityAnalyzer:
     專注於捕捉機構大戶的踪跡 (Smart Money)。
     """
     
-    # 閾值設定
-    MIN_VOLUME = 100              # 最低成交量門檻
-    MIN_PREMIUM = 100000          # 大單門檻 ($100k)
-    HIGH_VOL_OI_RATIO = 2.0       # 成交量是 OI 的 2 倍以上
-    VOLUME_SPIKE_RATIO = 3.0      # 相對平均成交量的倍數 (如有)
+    # 閾值設定 (動態調整以適應盤前/剛開盤階段)
+    MIN_VOLUME = 10               # 最低成交量門檻
+    MIN_PREMIUM = 20000           # 大單門檻 ($20k)
+    HIGH_VOL_OI_RATIO = 1.5       # 成交量是 OI 的 1.5 倍以上
+    VOLUME_SPIKE_RATIO = 2.0      # 相對平均成交量的倍數 (如有)
     
     def __init__(self):
         logger.info("* 異動偵測模塊 (UOA) 已初始化")
@@ -126,17 +126,17 @@ class UnusualActivityAnalyzer:
             # 尤其是當 OI 不低的時候
             if oi > 0:
                 ratio = vol / oi
-                if ratio >= self.HIGH_VOL_OI_RATIO and vol > 500:
+                if ratio >= self.HIGH_VOL_OI_RATIO and vol > 50:
                     strength = min(100, ratio * 10)  # Ratio 10x = 100分
                     signals.append(UnusualActivitySignal(
                         strike=strike,
                         option_type=option_type,
                         signal_type='high_vol_oi',
                         strength=strength,
-                        description=f"成交量爆炸: Vol/OI = {ratio:.1f}x (Vol: {vol}, OI: {oi})",
+                        description=f"成交量顯著: Vol/OI = {ratio:.1f}x (Vol: {vol}, OI: {oi})",
                         metrics={'volume': vol, 'oi': oi, 'ratio': ratio}
                     ))
-            elif oi == 0 and vol > 500:
+            elif oi == 0 and vol > 50:
                 # 0 OI 但有大量成交，絕對是新開倉
                 signals.append(UnusualActivitySignal(
                     strike=strike,

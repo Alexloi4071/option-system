@@ -29,7 +29,8 @@ class MultiExpiryAnalyzer:
         ticker: str,
         current_price: float,
         expiration_data: List[Dict[str, Any]],
-        strategy_type: str = 'long_call'  # long_call, long_put, short_put, short_call
+        strategy_type: str = 'long_call',  # long_call, long_put, short_put, short_call
+        max_expirations: int = 10  # 最多分析 10 個最近的到期日
     ) -> Dict[str, Any]:
         """
         分析多個到期日的期權數據
@@ -40,6 +41,7 @@ class MultiExpiryAnalyzer:
             expiration_data: 各到期日的期權數據列表
                 [{'expiration': '2026-01-17', 'days': 5, 'atm_call': {...}, 'atm_put': {...}}, ...]
             strategy_type: 策略類型
+            max_expirations: 最多分析的到期日數量（默認 10）
         
         Returns:
             Dict: 多到期日比較分析結果
@@ -50,6 +52,14 @@ class MultiExpiryAnalyzer:
                     'status': 'error',
                     'reason': '無可用到期日數據'
                 }
+            
+            # 限制到期日數量：按日期排序，選擇最近的 max_expirations 個
+            if len(expiration_data) > max_expirations:
+                logger.info(f"  到期日限制: 從 {len(expiration_data)} 個到期日中選擇最近的 {max_expirations} 個")
+                # 按 days 排序（最近的在前）
+                sorted_data = sorted(expiration_data, key=lambda x: x.get('days', 999))
+                expiration_data = sorted_data[:max_expirations]
+                logger.info(f"  選擇的到期日範圍: {expiration_data[0].get('days')} - {expiration_data[-1].get('days')} 天")
             
             result = {
                 'status': 'success',
@@ -63,24 +73,40 @@ class MultiExpiryAnalyzer:
                 'recommendation': None
             }
             
-            # 分析每個到期日
-            for exp_data in expiration_data:
-                exp_analysis = self._analyze_single_expiration(
-                    exp_data, current_price, strategy_type
-                )
-                if exp_analysis:
-                    result['expiration_details'].append(exp_analysis)
-                    result['comparison_table'].append({
-                        'expiration': exp_data.get('expiration'),
-                        'days': exp_data.get('days'),
-                        'premium': exp_analysis.get('premium'),
-                        'iv': exp_analysis.get('iv'),
-                        'theta_daily': exp_analysis.get('theta_daily'),
-                        'theta_pct': exp_analysis.get('theta_pct'),
-                        'annualized_return': exp_analysis.get('annualized_return'),
-                        'score': exp_analysis.get('score'),
-                        'grade': exp_analysis.get('grade')
-                    })
+            # 分析每個到期日（使用批處理以優化內存）
+            batch_size = 5  # 每批處理 5 個到期日
+            total_expirations = len(expiration_data)
+            
+            logger.info(f"  開始批處理分析: 總共 {total_expirations} 個到期日，每批 {batch_size} 個")
+            
+            for batch_start in range(0, total_expirations, batch_size):
+                batch_end = min(batch_start + batch_size, total_expirations)
+                batch_data = expiration_data[batch_start:batch_end]
+                
+                logger.info(f"  處理批次 {batch_start//batch_size + 1}/{(total_expirations + batch_size - 1)//batch_size}: 到期日 {batch_start+1}-{batch_end}")
+                
+                for exp_data in batch_data:
+                    exp_analysis = self._analyze_single_expiration(
+                        exp_data, current_price, strategy_type
+                    )
+                    if exp_analysis:
+                        result['expiration_details'].append(exp_analysis)
+                        result['comparison_table'].append({
+                            'expiration': exp_data.get('expiration'),
+                            'days': exp_data.get('days'),
+                            'premium': exp_analysis.get('premium'),
+                            'iv': exp_analysis.get('iv'),
+                            'theta_daily': exp_analysis.get('theta_daily'),
+                            'theta_pct': exp_analysis.get('theta_pct'),
+                            'annualized_return': exp_analysis.get('annualized_return'),
+                            'score': exp_analysis.get('score'),
+                            'grade': exp_analysis.get('grade')
+                        })
+                
+                # 批處理後清理內存
+                del batch_data
+                import gc
+                gc.collect()
             
             # 找出最佳到期日
             if result['comparison_table']:
@@ -90,6 +116,11 @@ class MultiExpiryAnalyzer:
             
             # 生成 Theta 衰減分析
             result['theta_analysis'] = self._analyze_theta_curve(result['comparison_table'])
+            
+            # 清理大型中間數據結構
+            del expiration_data
+            import gc
+            gc.collect()
             
             return result
             

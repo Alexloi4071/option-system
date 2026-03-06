@@ -14,6 +14,7 @@ Interactive Brokers (IBKR) API 客戶端
 
 import logging
 import time
+import os
 from typing import Dict, Optional, Any, List
 from datetime import datetime, time as dt_time
 import pytz
@@ -133,6 +134,45 @@ except ImportError:
     class Option: pass
     logger.warning("! ib_insync 未安裝，IBKR 功能將不可用。安裝: pip install ib_insync")
 
+# Import dataclass for TickByTickData
+from dataclasses import dataclass, field
+from typing import Generator
+
+
+@dataclass
+class TickByTickData:
+    """
+    Tick-by-Tick data structure for real-time market data
+    
+    Attributes:
+        ticker: Stock symbol
+        timestamp: Tick timestamp
+        price: Trade price
+        size: Trade size (shares)
+        exchange: Exchange code ('D' for FINRA ADF/dark pools)
+        tick_type: Type of tick ('Last', 'AllLast', 'BidAsk', 'MidPoint')
+        tick_tags: Dictionary mapping tick tag IDs to values
+    """
+    ticker: str
+    timestamp: datetime
+    price: float
+    size: int
+    exchange: str
+    tick_type: str
+    tick_tags: Dict[int, Any] = field(default_factory=dict)
+    
+    def get_tag(self, tag_id: int) -> Any:
+        """Get value for a specific tick tag ID"""
+        return self.tick_tags.get(tag_id)
+    
+    def has_tag(self, tag_id: int) -> bool:
+        """Check if a specific tick tag exists"""
+        return tag_id in self.tick_tags
+    
+    def has_tags(self, *tag_ids: int) -> bool:
+        """Check if all specified tick tags exist"""
+        return all(tag_id in self.tick_tags for tag_id in tag_ids)
+
 
 class IBKRClient:
     """
@@ -154,7 +194,7 @@ class IBKRClient:
     - 數據質量評估
     """
     
-    def __init__(self, host: str = "127.0.0.1", port: int = 7497, 
+    def __init__(self, host: str = "127.0.0.1", port: int = None, 
                  client_id: int = 100, mode: str = 'paper',
                  market_data_type: int = None,
                  tick_tag_categories: List[str] = None,
@@ -170,7 +210,31 @@ class IBKRClient:
             raise ImportError("ib_insync 未安裝，無法使用 IBKR 功能")
         
         self.host = host
+        # Fix Bug 1.9: Read port from environment variable instead of hardcoded default
+        if port is None:
+            port = int(os.getenv('IBKR_PORT_PAPER', 4002))
+        
+        # 驗證端口配置
+        common_ports = [4001, 4002, 7496, 7497]
+        if port not in common_ports:
+            logger.warning(f"! 端口 {port} 不在常見範圍內 {common_ports}")
+            logger.warning("  常見端口配置:")
+            logger.warning("    4002 - IB Gateway Paper Trading")
+            logger.warning("    4001 - IB Gateway Live Trading")
+            logger.warning("    7497 - TWS Paper Trading")
+            logger.warning("    7496 - TWS Live Trading")
+        
         self.port = port
+        logger.info(f"Connecting to IBKR Gateway on port {port}")
+        
+        # 驗證 Client ID 範圍
+        if client_id < 0 or client_id > 9999:
+            logger.error(f"x Client ID {client_id} 超出有效範圍 (0-9999)")
+            logger.warning("  建議使用 1-9999 範圍內的 Client ID")
+        elif client_id == 0:
+            logger.warning(f"! Client ID 0 是有效的但不推薦使用")
+            logger.warning("  建議使用 1-9999 範圍內的 Client ID")
+        
         self.client_id = client_id
         self.mode = mode
         self.ib = ib_instance if ib_instance else IB() # Use existing or create new
@@ -196,12 +260,38 @@ class IBKRClient:
         # 新增: 數據質量追蹤
         self._data_quality_tracker: Dict[str, Any] = {}
         
+        # Fix Bug 1.9: Add connection status flag (renamed to avoid conflict with is_connected() method)
+        self._connection_verified = False
+        
         logger.info(f"IBKR 客戶端初始化: {host}:{port} (mode={mode}, client_id={client_id})")
         logger.info(f"  Generic Tick Tags (期權): {self._generic_tick_list}")
     
+    def _test_connection(self) -> bool:
+        """
+        Test IBKR connection after initialization
+        
+        Returns:
+            bool: True if connected, False otherwise
+        """
+        try:
+            if self.ib and self.ib.isConnected():
+                self._connection_verified = True
+                logger.info(f"✓ IBKR Gateway connection verified on port {self.port}")
+                return True
+            else:
+                self._connection_verified = False
+                logger.warning(f"✗ IBKR Gateway not connected on port {self.port}")
+                return False
+        except Exception as e:
+            self._connection_verified = False
+            error_msg = f"IBKR connection test failed: {type(e).__name__} - {str(e)}"
+            logger.error(error_msg)
+            self._record_error(0, error_msg, '_test_connection')
+            return False
+    
     def connect(self, timeout: int = 10, market_data_type: int = None) -> bool:
         """
-        連接到 TWS/Gateway（帶指數退避重試）
+        連接到 TWS/Gateway（帶指數退避重試和動態 Client ID 分配）
         
         參數:
             timeout: 連接超時時間（秒）
@@ -222,24 +312,46 @@ class IBKRClient:
         base_delay = 2.0  # 初始等待時間（秒）
         max_delay = 30.0  # 最大等待時間（秒）
         
+        # 動態 Client ID 分配參數
+        original_client_id = self.client_id
+        max_client_id_attempts = 10  # 最多嘗試 10 個不同的 Client ID
+        client_id_offset = 0
+        
         while self.connection_attempts < self.max_connection_attempts:
             try:
-                logger.info(f"嘗試連接 IBKR {self.host}:{self.port} (嘗試 {self.connection_attempts + 1}/{self.max_connection_attempts})...")
+                # 計算當前嘗試的 Client ID
+                current_client_id = original_client_id + client_id_offset
+                
+                # 確保 Client ID 在有效範圍內 (1-9999)
+                if current_client_id > 9999:
+                    logger.error(f"x Client ID {current_client_id} 超出有效範圍 (1-9999)，無法繼續嘗試")
+                    break
+                
+                if client_id_offset > 0:
+                    logger.info(f"  嘗試使用替代 Client ID: {current_client_id} (原始: {original_client_id})")
+                
+                logger.info(f"嘗試連接 IBKR {self.host}:{self.port} (嘗試 {self.connection_attempts + 1}/{self.max_connection_attempts}, Client ID: {current_client_id})...")
                 self.ib.connect(
                     host=self.host,
                     port=self.port,
-                    clientId=self.client_id,
+                    clientId=current_client_id,
                     timeout=timeout
                 )
                 
                 if self.ib.isConnected():
                     self.connected = True
+                    self._connection_verified = True  # Fix Bug 1.9: Set connection verified flag
                     self.connection_attempts = 0
+                    
+                    # 更新實際使用的 Client ID
+                    if current_client_id != original_client_id:
+                        logger.warning(f"! Client ID {original_client_id} 已被佔用，已自動切換到 Client ID {current_client_id}")
+                        self.client_id = current_client_id
                     
                     # 動態設置 Market Data Type
                     self._apply_market_data_type(market_data_type)
                     
-                    logger.info(f"* IBKR 連接成功 ({self.mode} mode)")
+                    logger.info(f"* IBKR 連接成功 ({self.mode} mode, Client ID: {current_client_id})")
                     logger.info("  數據源配置:")
                     logger.info(f"    - Market Data Type: {self._current_market_data_type} ({self._get_market_data_type_name()})")
                     logger.info(f"    - Generic Tick Tags: {self._generic_tick_list}")
@@ -250,10 +362,27 @@ class IBKRClient:
                     self.connection_attempts += 1
                     
             except Exception as e:
-                self.connection_attempts += 1
-                self.last_error = str(e)
-                self._record_error(0, str(e), 'connect')
-                logger.warning(f"! IBKR 連接失敗 (嘗試 {self.connection_attempts}/{self.max_connection_attempts}): {e}")
+                error_msg = str(e)
+                self.last_error = error_msg
+                self._record_error(0, error_msg, 'connect')
+                
+                # 檢查是否是 Client ID 衝突錯誤
+                is_client_id_conflict = (
+                    'clientId' in error_msg.lower() and 'already in use' in error_msg.lower()
+                ) or (
+                    'Error 326' in error_msg  # IBKR Error Code 326: Client ID already in use
+                )
+                
+                if is_client_id_conflict and client_id_offset < max_client_id_attempts:
+                    # Client ID 衝突，嘗試下一個 ID
+                    client_id_offset += 1
+                    logger.warning(f"! Client ID {current_client_id} 已被佔用，嘗試 Client ID {original_client_id + client_id_offset}")
+                    # 不增加 connection_attempts，因為這不是連接失敗，而是 Client ID 衝突
+                    continue
+                else:
+                    # 其他錯誤或已達到 Client ID 嘗試上限
+                    self.connection_attempts += 1
+                    logger.warning(f"! IBKR 連接失敗 (嘗試 {self.connection_attempts}/{self.max_connection_attempts}): {e}")
             
             # 如果還有重試機會，使用指數退避等待
             if self.connection_attempts < self.max_connection_attempts:
@@ -350,6 +479,26 @@ class IBKRClient:
         self._current_market_data_type = data_type
         self.ib.reqMarketDataType(data_type)
         logger.info(f"Market Data Type 從 {old_type} 切換到 {data_type} ({self._get_market_data_type_name()})")
+    
+    def get_market_data_type(self) -> Dict[str, Any]:
+        """
+        Task 18.1: Get current market data type information
+        
+        Returns:
+            dict: Market data type information including:
+                - data_type: 'Live', 'Frozen', 'Delayed', etc.
+                - code: Market data type code (1, 2, 3, 4)
+                - is_rth: Whether currently in regular trading hours
+                - timestamp: Current timestamp
+        """
+        from datetime import datetime, timezone
+        
+        return {
+            'data_type': self._get_market_data_type_name(),
+            'code': self._current_market_data_type,
+            'is_rth': self.is_rth(),
+            'timestamp': datetime.now(timezone.utc).isoformat()
+        }
     
     def refresh_market_data_type(self):
         """根據當前時間刷新 Market Data Type"""
@@ -726,6 +875,45 @@ class IBKRClient:
             logger.error(f"✗ IBKR 獲取歷史數據失敗: {e}")
             return None
     
+    def get_intraday_bars(self, ticker: str, bar_size: str = '1 min', duration: str = '1 D') -> Optional['pd.DataFrame']:
+        """
+        獲取日內 OHLCV K線數據（Phase 8: VWAP/ORB 用）
+        
+        參數:
+            ticker: 股票代碼
+            bar_size: K線尺寸 ('1 min', '5 mins', '15 mins')
+            duration: 時間範圍 ('1 D' = 今日數據)
+        
+        返回:
+            pandas DataFrame (Open, High, Low, Close, Volume)，
+            索引為 DatetimeIndex；失敗返回 None
+        """
+        # 將 bar_size 映射回 yfinance 格式，利用現有 get_historical_data
+        bar_to_interval = {
+            '1 min': '1m',
+            '5 mins': '5m',
+            '15 mins': '15m',
+            '30 mins': '30m',
+            '1 hour': '1h',
+        }
+        dur_to_period = {
+            '1 D': '1d',
+            '2 D': '2d',
+        }
+        interval = bar_to_interval.get(bar_size, '1m')
+        period = dur_to_period.get(duration, '1d')
+        
+        logger.info(f"Phase 8: 獲取 {ticker} 日內 K 線 (bar={bar_size}, duration={duration})...")
+        
+        result = self.get_historical_data(ticker, period=period, interval=interval)
+        
+        if result is not None and not result.empty:
+            logger.info(f"* Phase 8: 獲取 {ticker} 日內 {len(result)} 條 K 線")
+        else:
+            logger.warning(f"! Phase 8: {ticker} 日內 K 線為空（可能非盤中時段）")
+        
+        return result
+    
     def get_option_chain(self, ticker: str, expiration: str, stock_price: float = 0) -> Optional[Dict[str, Any]]:
         """
         獲取期權鏈數據（只獲取合約信息，不獲取市場數據）
@@ -853,6 +1041,19 @@ class IBKRClient:
                             'data_source': 'ibkr'
                         }
                         
+                        # Task 18.1: Add metadata with data type, timestamp
+                        from datetime import datetime, timezone
+                        option_data['metadata'] = {
+                            'data_type': self._get_market_data_type_name(),
+                            'timestamp': datetime.now(timezone.utc).isoformat(),
+                            'market_data_type_code': self._current_market_data_type,
+                            'is_rth': self.is_rth()
+                        }
+                        
+                        # Add warning for frozen data
+                        if self._current_market_data_type == MARKET_DATA_TYPE_FROZEN:
+                            option_data['metadata']['frozen_data_warning'] = True
+                        
                         if contract.right == 'C':
                             calls.append(option_data)
                         else:
@@ -953,6 +1154,22 @@ class IBKRClient:
                 'warnings': []
             }
             
+            # Task 18.1: Add metadata with data type, timestamp, and age
+            from datetime import datetime, timezone
+            current_time = datetime.now(timezone.utc)
+            
+            result['metadata'] = {
+                'data_type': self._get_market_data_type_name(),  # 'Live', 'Frozen', 'Delayed'
+                'timestamp': current_time.isoformat(),
+                'market_data_type_code': self._current_market_data_type,
+                'is_rth': self.is_rth()
+            }
+            
+            # Add warning for frozen data
+            if self._current_market_data_type == MARKET_DATA_TYPE_FROZEN:
+                result['warnings'].append('⚠️ Warning: Data is from previous trading session (Frozen data)')
+                result['metadata']['frozen_data_warning'] = True
+            
             # 等待 Greeks 收斂
             convergence_result = self._wait_for_greeks_convergence(option, GREEKS_INITIAL_TIMEOUT)
             
@@ -965,7 +1182,30 @@ class IBKRClient:
                 result['theta'] = greeks.get('theta')
                 result['vega'] = greeks.get('vega')
                 result['rho'] = greeks.get('rho')
-                result['impliedVol'] = greeks.get('impliedVol')
+                
+                # Task 17.3: Apply IV normalization to IBKR data
+                raw_iv = greeks.get('impliedVol')
+                if raw_iv is not None:
+                    # Import IVNormalizer
+                    try:
+                        from data_layer.data_fetcher import IVNormalizer
+                        normalized_iv = IVNormalizer.normalize(raw_iv, source='IBKR', ticker=ticker)
+                        result['impliedVol'] = normalized_iv
+                        
+                        # Add IV metadata
+                        result['iv_metadata'] = {
+                            'original_value': raw_iv,
+                            'normalized_value': normalized_iv,
+                            'source': 'IBKR',
+                            'format_detected': 'decimal' if 0 < raw_iv < 1.0 else 'percentage'
+                        }
+                    except ImportError:
+                        # Fallback if IVNormalizer not available
+                        result['impliedVol'] = raw_iv
+                        logger.warning("IVNormalizer not available, using raw IV value")
+                else:
+                    result['impliedVol'] = None
+                
                 result['undPrice'] = greeks.get('undPrice')
                 result['optPrice'] = greeks.get('optPrice')
                 result['greeks_converged'] = convergence_result['converged']
@@ -989,8 +1229,105 @@ class IBKRClient:
                     )
                     result['iv_spike_warning'] = True
             else:
+                # Task 18.3: Fallback to local Black-Scholes calculator when IBKR Greeks timeout
                 result['greeks_source'] = 'unavailable'
                 result['greeks_converged'] = False
+                
+                # Try to use local Black-Scholes calculator as fallback
+                logger.info("  IBKR Greeks unavailable, attempting local Black-Scholes calculator fallback...")
+                
+                try:
+                    # Import Black-Scholes calculator
+                    from calculation_layer.module15_black_scholes import BlackScholesCalculator
+                    from calculation_layer.module16_greeks import GreeksCalculator
+                    
+                    # Get stock price (from known_stock_price or fetch it)
+                    stock_price = known_stock_price
+                    if stock_price is None:
+                        # Try to get stock price from IBKR
+                        stock = Stock(ticker, 'SMART', 'USD')
+                        self.ib.qualifyContracts(stock)
+                        stock_ticker = self.ib.reqMktData(stock, '', False, False)
+                        self.ib.sleep(2)  # Wait for data
+                        if stock_ticker and stock_ticker.last:
+                            stock_price = float(stock_ticker.last)
+                        self.ib.cancelMktData(stock)
+                    
+                    if stock_price is None:
+                        logger.warning("  Cannot get stock price for local Greeks calculation")
+                        result['warnings'].append('IBKR Greeks timeout, local calculator unavailable (no stock price)')
+                    else:
+                        # Calculate time to expiration
+                        from datetime import datetime
+                        exp_date = datetime.strptime(expiration, '%Y-%m-%d')
+                        today = datetime.now()
+                        days_to_exp = (exp_date - today).days
+                        time_to_exp = days_to_exp / 365.0
+                        
+                        if time_to_exp <= 0:
+                            logger.warning("  Option expired, cannot calculate Greeks")
+                            result['warnings'].append('IBKR Greeks timeout, option expired')
+                        else:
+                            # Get risk-free rate (use default 5% if not available)
+                            risk_free_rate = 0.05
+                            
+                            # Get IV from option price if available
+                            option_price = result.get('mid') or result.get('last')
+                            
+                            if option_price and option_price > 0:
+                                # Calculate Greeks using local calculator
+                                greeks_calc = GreeksCalculator()
+                                
+                                # First, calculate IV from option price
+                                from calculation_layer.module17_implied_volatility import ImpliedVolatilityCalculator
+                                iv_calc = ImpliedVolatilityCalculator()
+                                
+                                calculated_iv = iv_calc.calculate_iv(
+                                    option_price=option_price,
+                                    stock_price=stock_price,
+                                    strike_price=strike,
+                                    time_to_expiration=time_to_exp,
+                                    risk_free_rate=risk_free_rate,
+                                    option_type='call' if option_type == 'C' else 'put'
+                                )
+                                
+                                if calculated_iv and calculated_iv.implied_volatility:
+                                    volatility = calculated_iv.implied_volatility
+                                    
+                                    # Calculate Greeks
+                                    local_greeks = greeks_calc.calculate_greeks(
+                                        stock_price=stock_price,
+                                        strike_price=strike,
+                                        time_to_expiration=time_to_exp,
+                                        risk_free_rate=risk_free_rate,
+                                        volatility=volatility,
+                                        option_type='call' if option_type == 'C' else 'put'
+                                    )
+                                    
+                                    # Fill in Greeks from local calculator
+                                    result['delta'] = local_greeks.delta
+                                    result['gamma'] = local_greeks.gamma
+                                    result['theta'] = local_greeks.theta
+                                    result['vega'] = local_greeks.vega
+                                    result['rho'] = local_greeks.rho
+                                    result['impliedVol'] = volatility * 100  # Convert to percentage
+                                    result['undPrice'] = stock_price
+                                    result['optPrice'] = option_price
+                                    result['greeks_source'] = 'local_calculator_fallback'
+                                    result['greeks_converged'] = True
+                                    
+                                    logger.info(f"  ✓ Local Black-Scholes calculator fallback successful")
+                                    result['warnings'].append('Using local Black-Scholes calculator (IBKR timeout)')
+                                else:
+                                    logger.warning("  Cannot calculate IV for local Greeks")
+                                    result['warnings'].append('IBKR Greeks timeout, local calculator failed (IV calculation)')
+                            else:
+                                logger.warning("  No option price available for local Greeks calculation")
+                                result['warnings'].append('IBKR Greeks timeout, local calculator unavailable (no option price)')
+                
+                except Exception as e:
+                    logger.error(f"  Local Black-Scholes calculator fallback failed: {e}")
+                    result['warnings'].append(f'IBKR Greeks timeout, local calculator error: {str(e)}')
             
             # 添加收斂警告
             if convergence_result.get('warnings'):
@@ -1166,7 +1503,28 @@ class IBKRClient:
                     result['gamma'] = ticker_data.modelGreeks.gamma
                     result['theta'] = ticker_data.modelGreeks.theta
                     result['vega'] = ticker_data.modelGreeks.vega
-                    result['impliedVol'] = ticker_data.modelGreeks.impliedVol
+                    
+                    # Task 17.3: Apply IV normalization to IBKR data
+                    raw_iv = ticker_data.modelGreeks.impliedVol
+                    if raw_iv is not None:
+                        try:
+                            from data_layer.data_fetcher import IVNormalizer
+                            normalized_iv = IVNormalizer.normalize(raw_iv, source='IBKR', ticker=ticker)
+                            result['impliedVol'] = normalized_iv
+                            
+                            # Add IV metadata
+                            result['iv_metadata'] = {
+                                'original_value': raw_iv,
+                                'normalized_value': normalized_iv,
+                                'source': 'IBKR',
+                                'format_detected': 'decimal' if 0 < raw_iv < 1.0 else 'percentage'
+                            }
+                        except ImportError:
+                            result['impliedVol'] = raw_iv
+                            logger.warning("IVNormalizer not available, using raw IV value")
+                    else:
+                        result['impliedVol'] = None
+                    
                     result['undPrice'] = ticker_data.modelGreeks.undPrice
                     result['optPrice'] = ticker_data.modelGreeks.optPrice
                     result['greeks_source'] = 'ibkr_model'
@@ -1179,8 +1537,21 @@ class IBKRClient:
             except (ValueError, TypeError) as e:
                 logger.debug(f"  處理報價數據時出錯: {e}")
             
-            # 計算中間價
-            if 'bid' in result and 'ask' in result:
+            # Fix 11: 優先使用 Tick 232 Mark Price 作為中間價
+            import math as _math
+            mark_price = getattr(ticker_data, 'markPrice', None)
+            if mark_price is not None:
+                try:
+                    mp = float(mark_price)
+                    if not _math.isnan(mp) and mp > 0:
+                        result['markPrice'] = mp
+                        result['mid'] = mp  # 使用 IBKR 的 markPrice 而非 (bid+ask)/2
+                        logger.debug(f"  Tick 232 Mark Price: ${mp:.4f}")
+                except (TypeError, ValueError):
+                    pass
+            
+            # Fallback: 如果沒有 markPrice，使用 (bid+ask)/2
+            if 'mid' not in result and 'bid' in result and 'ask' in result:
                 result['mid'] = (result['bid'] + result['ask']) / 2
             
             # 評估數據質量
@@ -1225,7 +1596,7 @@ class IBKRClient:
             
             option = Option(ticker, exp_formatted, strike, option_type, 'SMART')
             self.ib.qualifyContracts(option)
-            self.ib.reqMktData(option, '', False, False)
+            self.ib.reqMktData(option, self._generic_tick_list, False, False)
             time.sleep(1)
             
             ticker_data = self.ib.ticker(option)
@@ -1243,12 +1614,34 @@ class IBKRClient:
     def _get_option_data(self, contract: Contract) -> Optional[Dict[str, Any]]:
         """獲取單個期權合約的市場數據"""
         try:
-            self.ib.reqMktData(contract, '', False, False)
+            self.ib.reqMktData(contract, getattr(self, '_generic_tick_list', ''), False, False)
             time.sleep(0.5)  # 等待數據
             
             ticker_data = self.ib.ticker(contract)
             if not ticker_data:
                 return None
+            
+            # Task 17.3: Apply IV normalization to IBKR data
+            raw_iv = ticker_data.impliedVolatility if ticker_data.impliedVolatility else None
+            normalized_iv = None
+            iv_metadata = None
+            
+            if raw_iv is not None:
+                try:
+                    from data_layer.data_fetcher import IVNormalizer
+                    # Extract ticker from contract symbol
+                    ticker_symbol = contract.symbol
+                    normalized_iv = IVNormalizer.normalize(raw_iv, source='IBKR', ticker=ticker_symbol)
+                    iv_metadata = {
+                        'original_value': raw_iv,
+                        'normalized_value': normalized_iv,
+                        'source': 'IBKR',
+                        'format_detected': 'decimal' if 0 < raw_iv < 1.0 else 'percentage'
+                    }
+                except ImportError:
+                    # Fallback: manual conversion
+                    normalized_iv = raw_iv * 100 if 0 < raw_iv < 1.0 else raw_iv
+                    logger.warning("IVNormalizer not available, using manual conversion")
             
             return {
                 'strike': contract.strike,
@@ -1259,7 +1652,8 @@ class IBKRClient:
                 'last': float(ticker_data.last) if ticker_data.last else 0.0,
                 'volume': int(ticker_data.volume) if ticker_data.volume else 0,
                 'open_interest': int(ticker_data.openInterest) if ticker_data.openInterest else 0,
-                'implied_volatility': float(ticker_data.impliedVolatility) * 100 if ticker_data.impliedVolatility else None,  # 轉換為百分比
+                'implied_volatility': normalized_iv,
+                'iv_metadata': iv_metadata,
                 'delta': float(ticker_data.modelGreeks.delta) if ticker_data.modelGreeks and ticker_data.modelGreeks.delta else None,
                 'gamma': float(ticker_data.modelGreeks.gamma) if ticker_data.modelGreeks and ticker_data.modelGreeks.gamma else None,
                 'theta': float(ticker_data.modelGreeks.theta) if ticker_data.modelGreeks and ticker_data.modelGreeks.theta else None,
@@ -1281,8 +1675,8 @@ class IBKRClient:
             contract = Stock(ticker, 'SMART', 'USD')
             self.ib.qualifyContracts(contract)
             
-            # 使用 reqMktData (Snapshot)
-            self.ib.reqMktData(contract, '', True, False)
+            # 使用 reqMktData (Snapshot)，加入 generic_tick_list
+            self.ib.reqMktData(contract, getattr(self, '_generic_tick_list', ''), True, False)
             
             # 等待數據 (最多 4 秒)
             start_time = time.time()
@@ -1453,6 +1847,26 @@ class IBKRClient:
                     logger.debug(f"    callOpenInterest: {call_oi}, putOpenInterest: {put_oi}, openInterest: {generic_oi}")
                     logger.debug(f"    Ticker attrs: {[a for a in dir(t) if 'interest' in a.lower() or 'oi' in a.lower()]}")
                 
+                # Task 17.3: Apply IV normalization to IBKR data
+                raw_iv = t.modelGreeks.impliedVol if t.modelGreeks and t.modelGreeks.impliedVol else None
+                normalized_iv = None
+                iv_metadata = None
+                
+                if raw_iv is not None:
+                    try:
+                        from data_layer.data_fetcher import IVNormalizer
+                        normalized_iv = IVNormalizer.normalize(raw_iv, source='IBKR', ticker=ticker)
+                        iv_metadata = {
+                            'original_value': raw_iv,
+                            'normalized_value': normalized_iv,
+                            'source': 'IBKR',
+                            'format_detected': 'decimal' if 0 < raw_iv < 1.0 else 'percentage'
+                        }
+                    except ImportError:
+                        # Fallback: manual conversion
+                        normalized_iv = raw_iv * 100 if 0 < raw_iv < 1.0 else raw_iv
+                        logger.warning("IVNormalizer not available, using manual conversion")
+                
                 item = {
                     'contractSymbol': ticker,
                     'strike': contract.strike,
@@ -1460,9 +1874,11 @@ class IBKRClient:
                     'lastPrice': t.last if self._is_valid_price(t.last) else 0.0,
                     'bid': t.bid if self._is_valid_price(t.bid) else 0.0,
                     'ask': t.ask if self._is_valid_price(t.ask) else 0.0,
+                    'markPrice': getattr(t, 'markPrice', None),  # Fix 11: 添加 Tick 232 Mark Price
                     'volume': safe_int(t.volume),
                     'openInterest': safe_int(oi),
-                    'impliedVolatility': t.modelGreeks.impliedVol * 100 if t.modelGreeks and t.modelGreeks.impliedVol else None,
+                    'impliedVolatility': normalized_iv,
+                    'iv_metadata': iv_metadata,
                     'delta': t.modelGreeks.delta if t.modelGreeks else None,
                     'gamma': t.modelGreeks.gamma if t.modelGreeks else None,
                     'theta': t.modelGreeks.theta if t.modelGreeks else None,
@@ -1496,6 +1912,164 @@ class IBKRClient:
             logger.error(traceback.format_exc())
             return None
 
+    def get_stock_full_data(self, ticker: str) -> Optional[Dict[str, Any]]:
+        """
+        Fix 11: 獲取股票完整數據，直接使用 IBKR Tick 104 和 Tick 456
+        
+        Tick 104 (Historical Volatility 30-day) → 直接使用，替代 Yahoo Finance 重算
+        Tick 456 (IB Dividends / Dividend Yield) → 直接使用，傳入 module16 Greeks
+        Tick 232 (Mark Price) → IBKR 計算的理論中間價，比 (bid+ask)/2 更準
+        
+        返回:
+            dict: {
+                'price': float,
+                'bid': float,
+                'ask': float,
+                'mark_price': float,          # Tick 232 (修復 mark price 問題)
+                'historical_volatility': float, # Tick 104 (Fix 11: IBKR HV-30)
+                'implied_volatility_30d': float, # Tick 106
+                'dividend_yield': float,       # Tick 456 (Fix 11: IBKR Dividend)
+                'volume': int,
+                'hv_source': 'ibkr_tick104',   # 數據來源標識
+                'div_source': 'ibkr_tick456',
+            }
+        """
+        if not self.is_connected():
+            if not self.connect():
+                return None
+
+        try:
+            logger.info(f"Fix 11: 獲取 {ticker} 完整股票數據 (含 Tick 104/456)...")
+            self.refresh_market_data_type()
+
+            stock = Stock(ticker, 'SMART', 'USD')
+            self.ib.qualifyContracts(stock)
+
+            # 使用包含 Tick 104/456 的完整 tick list（含 STOCK_ONLY 的新聞 Tick 292）
+            stock_tick_list = self._stock_tick_list  # 包含 104, 106, 232, 456
+
+            self.ib.reqMktData(stock, stock_tick_list, False, False)
+
+            # 等待數據（最多 8 秒，確保 Tick 104/456 到達）
+            ticker_data = None
+            for i in range(8):
+                time.sleep(1)
+                ticker_data = self.ib.ticker(stock)
+                if ticker_data:
+                    # 等到至少有 price 和 hv
+                    has_price = (
+                        self._is_valid_price(getattr(ticker_data, 'last', None)) or
+                        self._is_valid_price(getattr(ticker_data, 'close', None))
+                    )
+                    if has_price and i >= 2:
+                        break
+
+            if not ticker_data:
+                logger.warning(f"! {ticker}: 無法獲取股票數據")
+                return None
+
+            result = {
+                'ticker': ticker,
+                'data_source': 'ibkr_tick',
+                'hv_source': 'ibkr_tick104',   # Fix 11: 數據來源標識
+                'div_source': 'ibkr_tick456',
+            }
+
+            import math
+
+            # ── 基本報價 ────────────────────────────────────
+            last = getattr(ticker_data, 'last', None)
+            close = getattr(ticker_data, 'close', None)
+            if self._is_valid_price(last):
+                result['price'] = float(last)
+            elif self._is_valid_price(close):
+                result['price'] = float(close)
+
+            if self._is_valid_price(getattr(ticker_data, 'bid', None)):
+                result['bid'] = float(ticker_data.bid)
+            if self._is_valid_price(getattr(ticker_data, 'ask', None)):
+                result['ask'] = float(ticker_data.ask)
+
+            # ── Tick 232: Mark Price（比 mid 更準） ─────────
+            # IBKR 的 markPrice 是理論計算的中間價，而非簡單 (bid+ask)/2
+            mark_price = getattr(ticker_data, 'markPrice', None)
+            if mark_price is not None:
+                try:
+                    mp = float(mark_price)
+                    if not math.isnan(mp) and mp > 0:
+                        result['mark_price'] = mp
+                        logger.info(f"  Tick 232 Mark Price: ${mp:.4f}")
+                except (TypeError, ValueError):
+                    pass
+
+            # ── Tick 104: Historical Volatility 30d ─────────
+            # Fix 11: 直接從 IBKR 獲取 HV，替代 Yahoo Finance 重算
+            hv = getattr(ticker_data, 'histVolatility', None)
+            if hv is None:
+                # ib_insync 可能用不同屬性名
+                hv = getattr(ticker_data, 'historicalVolatility', None)
+            if hv is not None:
+                try:
+                    hv_val = float(hv)
+                    if not math.isnan(hv_val) and hv_val > 0:
+                        result['historical_volatility'] = hv_val / 100  # 轉為小數
+                        logger.info(f"  Tick 104 HV-30: {hv_val:.2f}%  ← 直接使用 IBKR 數據")
+                except (TypeError, ValueError):
+                    pass
+
+            # ── Tick 106: Implied Volatility 30d ────────────
+            iv_30 = getattr(ticker_data, 'impliedVolatility', None)
+            if iv_30 is not None:
+                try:
+                    iv_val = float(iv_30)
+                    if not math.isnan(iv_val) and iv_val > 0:
+                        result['implied_volatility_30d'] = iv_val / 100
+                        logger.info(f"  Tick 106 IV-30:  {iv_val:.2f}%")
+                except (TypeError, ValueError):
+                    pass
+
+            # ── Tick 456: IB Dividends / Dividend Yield ─────
+            # Fix 11: 直接從 IBKR 獲取股息率，傳入 module16 Greeks
+            # ib_insync 中 Tick 456 對應 dividends 屬性（格式: "past12,next12,nextDate,nextAmount"）
+            div_info = getattr(ticker_data, 'dividends', None)
+            if div_info:
+                try:
+                    # 格式: "0.6600,0.7800,20250610,0.1950"
+                    # past12, next12, nextDate, nextAmount
+                    parts = str(div_info).split(',')
+                    if len(parts) >= 1 and parts[0]:
+                        annual_div = float(parts[0])  # past 12 months dividends
+                        price = result.get('price', 0)
+                        if price > 0 and annual_div > 0:
+                            div_yield = annual_div / price
+                            result['dividend_yield'] = div_yield
+                            result['annual_dividend'] = annual_div
+                            logger.info(f"  Tick 456 Div: ${annual_div:.4f}/年 → "
+                                        f"Yield {div_yield*100:.2f}%  ← 直接使用 IBKR 數據")
+                except (ValueError, IndexError):
+                    pass
+
+            # ── 成交量 ──────────────────────────────────────
+            vol = getattr(ticker_data, 'volume', None)
+            if vol is not None and vol > 0:
+                result['volume'] = int(vol)
+
+            # 取消訂閱
+            try:
+                self.ib.cancelMktData(stock)
+            except Exception:
+                pass
+
+            logger.info(f"* Fix 11: {ticker} 完整數據獲取成功 "
+                        f"(HV={'有' if 'historical_volatility' in result else '無'}, "
+                        f"DivYield={'有' if 'dividend_yield' in result else '無'})")
+            return result
+
+        except Exception as e:
+            self._record_error(0, str(e), f'get_stock_full_data({ticker})')
+            logger.error(f"x Fix 11 獲取完整股票數據失敗: {e}")
+            return None
+
     def __enter__(self):
         """上下文管理器入口"""
         self.connect()
@@ -1504,6 +2078,138 @@ class IBKRClient:
     def __exit__(self, exc_type, exc_val, exc_tb):
         """上下文管理器出口"""
         self.disconnect()
+
+    def req_tick_by_tick_data(
+        self,
+        contract: Contract,
+        tick_type: str = 'AllLast',
+        exchange_filter: Optional[str] = None,
+        timeout: float = 60.0,
+        max_ticks: Optional[int] = None
+    ) -> Generator[TickByTickData, None, None]:
+        """
+        Request tick-by-tick data stream with optional exchange filtering
+        
+        Args:
+            contract: IBKR contract object (Stock, Option, etc.)
+            tick_type: Type of tick data ('Last', 'AllLast', 'BidAsk', 'MidPoint')
+                      'AllLast' includes all trades including dark pools
+            exchange_filter: Optional exchange filter ('D' for FINRA ADF/dark pools)
+            timeout: Maximum time to stream data in seconds (default: 60.0)
+            max_ticks: Optional maximum number of ticks to receive before stopping
+        
+        Yields:
+            TickByTickData: Stream of tick-by-tick data objects
+        
+        Example:
+            >>> client = IBKRClient()
+            >>> client.connect()
+            >>> contract = Stock('NVDA', 'SMART', 'USD')
+            >>> # Stream for 30 seconds or until 100 ticks received
+            >>> for tick in client.req_tick_by_tick_data(contract, 'AllLast', 'D', timeout=30.0, max_ticks=100):
+            ...     print(f"Dark pool trade: {tick.price} x {tick.size}")
+        """
+        # Check connection before starting
+        if not self.is_connected():
+            logger.error("IBKR Gateway not connected, cannot start tick-by-tick stream")
+            return
+        
+        req_id = None
+        try:
+            # Qualify the contract first
+            self.ib.qualifyContracts(contract)
+            
+            # Request tick-by-tick data
+            # Note: ib_insync uses reqTickByTickData method
+            ticker = self.ib.reqTickByTickData(
+                contract,
+                tick_type,
+                numberOfTicks=0,  # 0 means streaming (not historical)
+                ignoreSize=False
+            )
+            
+            # Store request ID for cleanup
+            req_id = id(ticker)
+            
+            logger.info(f"Started tick-by-tick stream for {contract.symbol} (type={tick_type}, filter={exchange_filter}, timeout={timeout}s, max_ticks={max_ticks})")
+            
+            # Initialize loop control variables
+            start_time = time.time()
+            tick_count = 0
+            last_tick_time = None
+            
+            # Stream ticks as they arrive with exit conditions
+            while self.is_connected():
+                # Check timeout
+                elapsed = time.time() - start_time
+                if elapsed >= timeout:
+                    logger.info(f"Tick-by-tick stream timed out after {timeout} seconds")
+                    break
+                
+                # Check max_ticks limit
+                if max_ticks is not None and tick_count >= max_ticks:
+                    logger.info(f"Reached max_ticks limit: {max_ticks}")
+                    break
+                
+                # Wait for new tick data
+                self.ib.sleep(0.01)  # Small sleep to prevent busy waiting
+                
+                # Check if we have new tick data
+                if hasattr(ticker, 'ticks') and ticker.ticks:
+                    for tick in ticker.ticks:
+                        # Skip if we've already processed this tick
+                        if last_tick_time and tick.time <= last_tick_time:
+                            continue
+                        
+                        # Apply exchange filter if specified
+                        if exchange_filter and hasattr(tick, 'exchange'):
+                            if tick.exchange != exchange_filter:
+                                continue
+                        
+                        # Parse tick data
+                        tick_data = TickByTickData(
+                            ticker=contract.symbol,
+                            timestamp=tick.time if hasattr(tick, 'time') else datetime.now(),
+                            price=tick.price if hasattr(tick, 'price') else 0.0,
+                            size=tick.size if hasattr(tick, 'size') else 0,
+                            exchange=tick.exchange if hasattr(tick, 'exchange') else '',
+                            tick_type=tick_type,
+                            tick_tags={}
+                        )
+                        
+                        # Parse tick tags if available (Tick 48, 77, etc.)
+                        if hasattr(ticker, 'rtVolume'):
+                            tick_data.tick_tags[48] = ticker.rtVolume  # RT Volume
+                        if hasattr(ticker, 'rtTradeVolume'):
+                            tick_data.tick_tags[77] = ticker.rtTradeVolume  # RT Trade Volume
+                        
+                        last_tick_time = tick.time if hasattr(tick, 'time') else datetime.now()
+                        tick_count += 1
+                        
+                        yield tick_data
+                        
+                        # Check max_ticks after yielding
+                        if max_ticks is not None and tick_count >= max_ticks:
+                            break
+            
+            # Check if connection was lost during streaming
+            if not self.is_connected():
+                logger.warning("Connection lost during tick-by-tick stream")
+                
+        except Exception as e:
+            logger.error(f"Error in tick-by-tick stream: {e}")
+            self._record_error(0, str(e), f'req_tick_by_tick_data({contract.symbol})')
+            return
+        finally:
+            # Always cancel subscription to release resources
+            if req_id is not None:
+                try:
+                    self.ib.cancelTickByTickData(contract, tick_type)
+                    logger.debug(f"Cancelled tick-by-tick subscription for {contract.symbol}")
+                except Exception as e:
+                    logger.warning(f"Failed to cancel tick-by-tick subscription: {e}")
+
+
 
 
 # 使用示例

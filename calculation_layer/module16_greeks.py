@@ -136,7 +136,8 @@ class GreeksCalculator:
         risk_free_rate: float,
         time_to_expiration: float,
         volatility: float,
-        option_type: str = 'call'
+        option_type: str = 'call',
+        dividend_yield: float = 0.0  # 🆕 Fix 6: 股息率支持
     ) -> float:
         """
         計算 Delta
@@ -169,7 +170,7 @@ class GreeksCalculator:
             # 計算 d1
             d1, _ = self.bs_calculator.calculate_d1_d2(
                 stock_price, strike_price, risk_free_rate,
-                time_to_expiration, volatility
+                time_to_expiration, volatility, dividend_yield
             )
             
             # 計算 Delta
@@ -198,7 +199,8 @@ class GreeksCalculator:
         strike_price: float,
         risk_free_rate: float,
         time_to_expiration: float,
-        volatility: float
+        volatility: float,
+        dividend_yield: float = 0.0  # 🆕 Fix 6: 股息率支持
     ) -> float:
         """
         計算 Gamma
@@ -229,7 +231,7 @@ class GreeksCalculator:
             # 計算 d1
             d1, _ = self.bs_calculator.calculate_d1_d2(
                 stock_price, strike_price, risk_free_rate,
-                time_to_expiration, volatility
+                time_to_expiration, volatility, dividend_yield
             )
             
             # 計算 Gamma
@@ -257,7 +259,8 @@ class GreeksCalculator:
         risk_free_rate: float,
         time_to_expiration: float,
         volatility: float,
-        option_type: str = 'call'
+        option_type: str = 'call',
+        dividend_yield: float = 0.0  # 🆕 Fix 6: 股息率支持
     ) -> float:
         """
         計算年化 Theta（內部方法）
@@ -280,7 +283,7 @@ class GreeksCalculator:
         # 計算 d1 和 d2
         d1, d2 = self.bs_calculator.calculate_d1_d2(
             stock_price, strike_price, risk_free_rate,
-            time_to_expiration, volatility
+            time_to_expiration, volatility, dividend_yield
         )
         
         # 計算共同項
@@ -313,7 +316,8 @@ class GreeksCalculator:
         risk_free_rate: float,
         time_to_expiration: float,
         volatility: float,
-        option_type: str = 'call'
+        option_type: str = 'call',
+        dividend_yield: float = 0.0  # 🆕 Fix 6: 股息率支持
     ) -> float:
         """
         計算 Theta（每日時間衰減）
@@ -347,11 +351,12 @@ class GreeksCalculator:
             # 計算年化 Theta
             theta_annual = self._calculate_theta_annual(
                 stock_price, strike_price, risk_free_rate,
-                time_to_expiration, volatility, option_type
+                time_to_expiration, volatility, option_type, dividend_yield
             )
             
             # 轉換為每日 Theta
-            theta_daily = theta_annual / 365.0
+            # Fix 1: 使用 252（交易日）而非 365，與 IBKR/Bloomberg 標準一致
+            theta_daily = theta_annual / 252.0
             
             # 記錄年化值和每日值以便驗證
             logger.debug(f"  Theta ({option_type}): 年化={theta_annual:.6f}, 每日={theta_daily:.6f} ($/天)")
@@ -368,7 +373,8 @@ class GreeksCalculator:
         strike_price: float,
         risk_free_rate: float,
         time_to_expiration: float,
-        volatility: float
+        volatility: float,
+        dividend_yield: float = 0.0  # 🆕 Fix 6: 股息率支持
     ) -> float:
         """
         計算 Vega
@@ -430,7 +436,7 @@ class GreeksCalculator:
             # 計算 d1
             d1, _ = self.bs_calculator.calculate_d1_d2(
                 stock_price, strike_price, risk_free_rate,
-                time_to_expiration, volatility
+                time_to_expiration, volatility, dividend_yield
             )
             
             # 計算 Vega
@@ -473,7 +479,8 @@ class GreeksCalculator:
         risk_free_rate: float,
         time_to_expiration: float,
         volatility: float,
-        option_type: str = 'call'
+        option_type: str = 'call',
+        dividend_yield: float = 0.0  # 🆕 Fix 6: 股息率支持
     ) -> float:
         """
         計算 Rho
@@ -504,7 +511,7 @@ class GreeksCalculator:
             # 計算 d2
             _, d2 = self.bs_calculator.calculate_d1_d2(
                 stock_price, strike_price, risk_free_rate,
-                time_to_expiration, volatility
+                time_to_expiration, volatility, dividend_yield
             )
             
             # 計算折現因子
@@ -514,11 +521,11 @@ class GreeksCalculator:
             option_type_lower = option_type.lower()
             
             if option_type_lower == 'call':
-                # Call Rho: K×T×e^(-r×T)×N(d2)
-                rho = strike_price * time_to_expiration * discount_factor * self.bs_calculator.normal_cdf(d2)
+                # Fix 2: Call Rho: K×T×e^(-r×T)×N(d2) / 100（業界標準：每1%利率變化）
+                rho = strike_price * time_to_expiration * discount_factor * self.bs_calculator.normal_cdf(d2) / 100
             elif option_type_lower == 'put':
-                # Put Rho: -K×T×e^(-r×T)×N(-d2)
-                rho = -strike_price * time_to_expiration * discount_factor * self.bs_calculator.normal_cdf(-d2)
+                # Fix 2: Put Rho: -K×T×e^(-r×T)×N(-d2) / 100（業界標準：每1%利率變化）
+                rho = -strike_price * time_to_expiration * discount_factor * self.bs_calculator.normal_cdf(-d2) / 100
             else:
                 raise ValueError(f"無效的期權類型: {option_type}")
             
@@ -538,6 +545,7 @@ class GreeksCalculator:
         time_to_expiration: float,
         volatility: float,
         option_type: str = 'call',
+        dividend_yield: float = 0.0,  # 🆕 Fix 6: 股息率（對高股息股如 VZ 影響顯著）
         calculation_date: str = None
     ) -> GreeksResult:
         """
@@ -593,30 +601,30 @@ class GreeksCalculator:
             if calculation_date is None:
                 calculation_date = datetime.now().strftime('%Y-%m-%d')
             
-            # 計算所有 Greeks
+            # 計算所有 Greeks（Fix 6: 傳入 dividend_yield）
             delta = self.calculate_delta(
                 stock_price, strike_price, risk_free_rate,
-                time_to_expiration, volatility, option_type
+                time_to_expiration, volatility, option_type, dividend_yield
             )
             
             gamma = self.calculate_gamma(
                 stock_price, strike_price, risk_free_rate,
-                time_to_expiration, volatility
+                time_to_expiration, volatility, dividend_yield
             )
             
             theta = self.calculate_theta(
                 stock_price, strike_price, risk_free_rate,
-                time_to_expiration, volatility, option_type
+                time_to_expiration, volatility, option_type, dividend_yield
             )
             
             vega = self.calculate_vega(
                 stock_price, strike_price, risk_free_rate,
-                time_to_expiration, volatility
+                time_to_expiration, volatility, dividend_yield
             )
             
             rho = self.calculate_rho(
                 stock_price, strike_price, risk_free_rate,
-                time_to_expiration, volatility, option_type
+                time_to_expiration, volatility, option_type, dividend_yield
             )
             
             logger.info(f"  計算結果:")
