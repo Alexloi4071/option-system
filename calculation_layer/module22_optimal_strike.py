@@ -420,6 +420,47 @@ class OptimalStrikeCalculator:
             logger.debug(f"  IV 被限制: {normalized_iv:.4f} -> {clamped_iv:.4f}")
         
         return clamped_iv
+    def _normalize_greeks(
+        self,
+        theta: float,
+        vega: float,
+        source: str = 'IBKR'
+    ) -> tuple[float, float]:
+        """
+        統一 Greeks 單位
+
+        🔧 BUG-22-02 Fix: 標準化不同來源的 Greeks 單位
+
+        IBKR Greeks:
+        - theta: $/day -> 轉換為 $/year (乘以 365)
+        - vega: $/1% IV -> 轉換為 $/1.0 IV (乘以 100)
+
+        BS Greeks:
+        - theta: $/year (不轉換)
+        - vega: $/1.0 IV (不轉換)
+
+        參數:
+            theta: Theta 值
+            vega: Vega 值
+            source: Greeks 來源 ('IBKR' 或 'BS')
+
+        返回:
+            tuple[float, float]: (normalized_theta, normalized_vega)
+        """
+        if source == 'IBKR':
+            # IBKR theta 是 $/day，轉換為 $/year
+            normalized_theta = theta * 365.0
+            # IBKR vega 是 $/1% IV，轉換為 $/1.0 IV
+            normalized_vega = vega * 100.0
+            logger.debug(f"  Greeks 單位轉換 (IBKR): theta {theta:.4f} -> {normalized_theta:.4f}, vega {vega:.4f} -> {normalized_vega:.4f}")
+        else:
+            # BS Greeks 已經是標準單位
+            normalized_theta = theta
+            normalized_vega = vega
+            logger.debug(f"  Greeks 單位 (BS): theta {theta:.4f}, vega {vega:.4f}")
+
+        return normalized_theta, normalized_vega
+
     
     def _get_corrected_iv(
         self,
@@ -972,6 +1013,10 @@ class OptimalStrikeCalculator:
                 gamma = gamma or 0
                 theta = theta or 0
                 vega = vega or 0
+                
+                # 🔧 BUG-22-02 Fix: 統一 IBKR Greeks 單位
+                if greeks_source and 'ibkr' in greeks_source.lower():
+                    theta, vega = self._normalize_greeks(theta, vega, source='IBKR')
             
             # Short Put 安全過濾
             # Requirements: 2.1, 2.2, 2.3, 2.4
