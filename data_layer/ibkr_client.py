@@ -2144,6 +2144,11 @@ class IBKRClient:
         """
         Request tick-by-tick data stream with optional exchange filtering
         
+        Fix: Dark Pool Patch 1.1 - 修正 ib_insync API 使用錯誤
+        - 使用正確的屬性: tickByTickAllLasts / tickByTickBidAsks / tickByTickMidPoints
+        - 修正 cancelTickByTickData 調用方式
+        - 移除錯誤的 Tick 48/77 讀取邏輯（這些是 reqMktData 的屬性）
+        
         Args:
             contract: IBKR contract object (Stock, Option, etc.)
             tick_type: Type of tick data ('Last', 'AllLast', 'BidAsk', 'MidPoint')
@@ -2163,105 +2168,88 @@ class IBKRClient:
             >>> for tick in client.req_tick_by_tick_data(contract, 'AllLast', 'D', timeout=30.0, max_ticks=100):
             ...     print(f"Dark pool trade: {tick.price} x {tick.size}")
         """
-        # Check connection before starting
         if not self.is_connected():
-            logger.error("IBKR Gateway not connected, cannot start tick-by-tick stream")
+            logger.error("IBKR Gateway not connected")
             return
-        
-        req_id = None
+
         try:
-            # Qualify the contract first
             self.ib.qualifyContracts(contract)
-            
-            # Request tick-by-tick data
-            # Note: ib_insync uses reqTickByTickData method
+
             ticker = self.ib.reqTickByTickData(
-                contract,
-                tick_type,
-                numberOfTicks=0,  # 0 means streaming (not historical)
+                contract=contract,
+                tickType=tick_type,
+                numberOfTicks=0,  # 0 = streaming
                 ignoreSize=False
             )
-            
-            # Store request ID for cleanup
-            req_id = id(ticker)
-            
-            logger.info(f"Started tick-by-tick stream for {contract.symbol} (type={tick_type}, filter={exchange_filter}, timeout={timeout}s, max_ticks={max_ticks})")
-            
-            # Initialize loop control variables
+
+            logger.info(
+                f"Started tick-by-tick stream: {contract.symbol} "
+                f"(type={tick_type}, exchange_filter={exchange_filter}, "
+                f"timeout={timeout}s, max_ticks={max_ticks})"
+            )
+
             start_time = time.time()
             tick_count = 0
-            last_tick_time = None
-            
-            # Stream ticks as they arrive with exit conditions
+
             while self.is_connected():
-                # Check timeout
-                elapsed = time.time() - start_time
-                if elapsed >= timeout:
-                    logger.info(f"Tick-by-tick stream timed out after {timeout} seconds")
+                # Check timeout and max_ticks
+                if time.time() - start_time >= timeout:
+                    logger.info(f"Stream timeout after {timeout}s ({tick_count} ticks received)")
                     break
-                
-                # Check max_ticks limit
                 if max_ticks is not None and tick_count >= max_ticks:
-                    logger.info(f"Reached max_ticks limit: {max_ticks}")
+                    logger.info(f"Max ticks reached: {max_ticks}")
                     break
-                
-                # Wait for new tick data
-                self.ib.sleep(0.01)  # Small sleep to prevent busy waiting
-                
-                # Check if we have new tick data
-                if hasattr(ticker, 'ticks') and ticker.ticks:
-                    for tick in ticker.ticks:
-                        # Skip if we've already processed this tick
-                        if last_tick_time and tick.time <= last_tick_time:
-                            continue
-                        
-                        # Apply exchange filter if specified
-                        if exchange_filter and hasattr(tick, 'exchange'):
-                            if tick.exchange != exchange_filter:
-                                continue
-                        
-                        # Parse tick data
-                        tick_data = TickByTickData(
-                            ticker=contract.symbol,
-                            timestamp=tick.time if hasattr(tick, 'time') else datetime.now(),
-                            price=tick.price if hasattr(tick, 'price') else 0.0,
-                            size=tick.size if hasattr(tick, 'size') else 0,
-                            exchange=tick.exchange if hasattr(tick, 'exchange') else '',
-                            tick_type=tick_type,
-                            tick_tags={}
-                        )
-                        
-                        # Parse tick tags if available (Tick 48, 77, etc.)
-                        if hasattr(ticker, 'rtVolume'):
-                            tick_data.tick_tags[48] = ticker.rtVolume  # RT Volume
-                        if hasattr(ticker, 'rtTradeVolume'):
-                            tick_data.tick_tags[77] = ticker.rtTradeVolume  # RT Trade Volume
-                        
-                        last_tick_time = tick.time if hasattr(tick, 'time') else datetime.now()
-                        tick_count += 1
-                        
-                        yield tick_data
-                        
-                        # Check max_ticks after yielding
-                        if max_ticks is not None and tick_count >= max_ticks:
-                            break
-            
-            # Check if connection was lost during streaming
-            if not self.is_connected():
-                logger.warning("Connection lost during tick-by-tick stream")
-                
+
+                # Let ib_insync event loop fill Ticker
+                self.ib.sleep(0.02)
+
+                # Read correct attribute based on tick_type
+                if tick_type in ('AllLast', 'Last'):
+                    raw_ticks = ticker.tickByTickAllLasts
+                elif tick_type == 'BidAsk':
+                    raw_ticks = ticker.tickByTickBidAsks
+                elif tick_type == 'MidPoint':
+                    raw_ticks = ticker.tickByTickMidPoints
+                else:
+                    raw_ticks = ticker.tickByTickAllLasts
+
+                if not raw_ticks:
+                    continue
+
+                # Process and clear list to avoid duplicates
+                batch = list(raw_ticks)
+                raw_ticks.clear()  # Critical: clear processed ticks
+
+                for tick in batch:
+                    exchange = getattr(tick, 'exchange', '') or ''
+
+                    # Exchange filter ('D' = FINRA ADF = Dark Pool)
+                    if exchange_filter and exchange != exchange_filter:
+                        continue
+
+                    tick_data = TickByTickData(
+                        ticker=contract.symbol,
+                        timestamp=getattr(tick, 'time', datetime.now()),
+                        price=float(getattr(tick, 'price', 0.0)),
+                        size=int(getattr(tick, 'size', 0)),
+                        exchange=exchange,
+                        tick_type=tick_type,
+                        tick_tags={}
+                    )
+
+                    tick_count += 1
+                    yield tick_data
+
         except Exception as e:
-            logger.error(f"Error in tick-by-tick stream: {e}")
+            logger.error(f"req_tick_by_tick_data error: {e}")
             self._record_error(0, str(e), f'req_tick_by_tick_data({contract.symbol})')
-            return
         finally:
-            # Always cancel subscription to release resources
-            if req_id is not None:
-                try:
-                    self.ib.cancelTickByTickData(contract, tick_type)
-                    logger.debug(f"Cancelled tick-by-tick subscription for {contract.symbol}")
-                except Exception as e:
-                    logger.warning(f"Failed to cancel tick-by-tick subscription: {e}")
+            # cancelTickByTickData needs contract + tickType, not req_id
+            try:
+                self.ib.cancelTickByTickData(contract, tick_type)
+                logger.debug(f"Cancelled tick-by-tick: {contract.symbol} ({tick_type})")
+            except Exception as e:
+                logger.warning(f"Cancel tick-by-tick failed: {e}")
 
 
 
