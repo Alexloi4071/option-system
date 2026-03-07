@@ -340,7 +340,12 @@ class BlackScholesCalculator:
                 raise ValueError("輸入參數無效")
             
             # 驗證股息率
-            if dividend_yield < 0 or dividend_yield > 0.2:
+            if dividend_yield < 0:
+                raise ValueError(f"dividend_yield 不能為負: {dividend_yield}")
+            if dividend_yield > 0.5:
+                logger.error(f"dividend_yield 超過 50%，可能是傳入了百分比而非小數: {dividend_yield}")
+                raise ValueError(f"dividend_yield 超出合理範圍 (0-50%): {dividend_yield}")
+            if dividend_yield > 0.2:
                 logger.warning(f"⚠ 股息率超出常見範圍 [0%, 20%]: {dividend_yield*100:.2f}%")
             
             # 第2步: 獲取計算日期
@@ -377,6 +382,9 @@ class BlackScholesCalculator:
                 )
             else:
                 raise ValueError(f"無效的期權類型: {option_type}")
+            
+            # 🔧 BUG-15-01 Fix: 期權價格下限保護（避免浮點計算產生極小負值）
+            option_price = max(0.0, option_price)
             
             logger.info(f"  計算結果:")
             logger.info(f"    d1 = {d1:.6f}, d2 = {d2:.6f}")

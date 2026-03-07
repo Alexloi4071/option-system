@@ -228,6 +228,11 @@ class GreeksCalculator:
             - 高 Gamma 意味著需要頻繁調整對沖
         """
         try:
+            # 🔧 BUG-16-02 Fix: T=0 時避免 ZeroDivisionError
+            if time_to_expiration < 1e-10:
+                logger.debug("  Gamma: 0.0 (T≈0, 到期時 Gamma 趨向 0)")
+                return 0.0
+            
             # 計算 d1
             d1, _ = self.bs_calculator.calculate_d1_d2(
                 stock_price, strike_price, risk_free_rate,
@@ -280,6 +285,11 @@ class GreeksCalculator:
             Call: Θ = -[S×N'(d1)×σ / (2×√T)] - r×K×e^(-r×T)×N(d2)
             Put:  Θ = -[S×N'(d1)×σ / (2×√T)] + r×K×e^(-r×T)×N(-d2)
         """
+        # 🔧 BUG-16-02 Fix: T=0 時避免 ZeroDivisionError
+        if time_to_expiration < 1e-10:
+            logger.debug("  Theta: 0.0 (T≈0, 到期時 Theta 趨向 0)")
+            return 0.0
+        
         # 計算 d1 和 d2
         d1, d2 = self.bs_calculator.calculate_d1_d2(
             stock_price, strike_price, risk_free_rate,
@@ -778,11 +788,12 @@ class GreeksCalculator:
             float: Volga 值（總是正數）
         
         公式:
-            Volga = S × N'(d1) × d1 × d2 / σ
+            Volga = Vega_raw × d1 × d2 / σ = S × N'(d1) × √T × d1 × d2 / σ
             
             其中:
             - S = 股價
             - N'(d1) = 標準正態概率密度函數
+            - √T = 到期時間的平方根
             - d1, d2 = Black-Scholes 參數
             - σ = 波動率
         
@@ -810,8 +821,10 @@ class GreeksCalculator:
                 time_to_expiration, volatility, dividend_yield
             )
             
-            # Volga = S × N'(d1) × d1 × d2 / σ
-            volga = stock_price * self.bs_calculator.normal_pdf(d1) * d1 * d2 / volatility
+            # 🔧 BUG-16-01 Fix: Volga 公式需要包含 √T 因子
+            # Volga = S × N'(d1) × √T × d1 × d2 / σ
+            sqrt_t = math.sqrt(time_to_expiration)
+            volga = stock_price * self.bs_calculator.normal_pdf(d1) * sqrt_t * d1 * d2 / volatility
             
             logger.debug(f"  Volga: {volga:.6f}")
             
