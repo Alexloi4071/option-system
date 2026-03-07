@@ -31,10 +31,26 @@ logging.basicConfig(
     ]
 )
 
-# 設置 StreamHandler 使用 UTF-8
+# 設置 StreamHandler 使用 UTF-8（Windows 兼容）
 for handler in logging.root.handlers:
     if isinstance(handler, logging.StreamHandler) and handler.stream == sys.stdout:
-        handler.stream = open(sys.stdout.fileno(), mode='w', encoding='utf-8', buffering=1)
+        try:
+            # Windows 需要重新配置 stdout 為 UTF-8
+            handler.stream = open(sys.stdout.fileno(), mode='w', encoding='utf-8', buffering=1, errors='replace')
+        except Exception as e:
+            # 如果失敗，使用 errors='replace' 避免崩潰
+            handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+            pass
+
+# Windows 終端 UTF-8 支持
+if sys.platform == 'win32':
+    try:
+        # 設置 Windows 控制台為 UTF-8 模式
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        kernel32.SetConsoleOutputCP(65001)  # UTF-8 code page
+    except:
+        pass
 
 logger = logging.getLogger(__name__)
 

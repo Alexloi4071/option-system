@@ -78,7 +78,7 @@ TICK_TAGS_CONFIG = {
     },
     'ADVANCED_OPTION_SAFE': {
         # 進階分析數據 - 適用於期權（排除新聞相關標籤）
-        '225': 'Auction Data - Volume/Price/Imbalance (Tick 34-36,61)',
+        # '225': 'Auction Data - Volume/Price/Imbalance (Tick 34-36,61)',  # 需要額外訂閱，Paper Trading 不可用
         '293': 'Trade Count for the day (Tick 54)',
         '294': 'Trade Rate per minute (Tick 55)',
         '295': 'Volume Rate per minute (Tick 56)',
@@ -1510,28 +1510,20 @@ class IBKRClient:
                         try:
                             from data_layer.data_fetcher import IVNormalizer
                             normalized_iv = IVNormalizer.normalize(raw_iv, source='IBKR', ticker=ticker)
-                            result['impliedVol'] = normalized_iv
-                            
-                            # Add IV metadata
-                            result['iv_metadata'] = {
-                                'original_value': raw_iv,
-                                'normalized_value': normalized_iv,
-                                'source': 'IBKR',
-                                'format_detected': 'decimal' if 0 < raw_iv < 1.0 else 'percentage'
-                            }
+                            result['impliedVolatility'] = normalized_iv
                         except ImportError:
-                            result['impliedVol'] = raw_iv
+                            result['impliedVolatility'] = raw_iv
                             logger.warning("IVNormalizer not available, using raw IV value")
                     else:
-                        result['impliedVol'] = None
+                        result['impliedVolatility'] = None
                     
                     result['undPrice'] = ticker_data.modelGreeks.undPrice
                     result['optPrice'] = ticker_data.modelGreeks.optPrice
                     result['greeks_source'] = 'ibkr_model'
                     
                     # 檢查 IV 異常
-                    if result.get('impliedVol') and result['impliedVol'] > IV_SPIKE_THRESHOLD:
-                        result['warnings'].append(f'IV 異常高 ({result["impliedVol"]*100:.1f}%)')
+                    if result.get('impliedVolatility') and result['impliedVolatility'] > IV_SPIKE_THRESHOLD:
+                        result['warnings'].append(f'IV 異常高 ({result["impliedVolatility"]*100:.1f}%)')
                         result['iv_spike_warning'] = True
                     
             except (ValueError, TypeError) as e:
@@ -1624,7 +1616,6 @@ class IBKRClient:
             # Task 17.3: Apply IV normalization to IBKR data
             raw_iv = ticker_data.impliedVolatility if ticker_data.impliedVolatility else None
             normalized_iv = None
-            iv_metadata = None
             
             if raw_iv is not None:
                 try:
@@ -1632,12 +1623,6 @@ class IBKRClient:
                     # Extract ticker from contract symbol
                     ticker_symbol = contract.symbol
                     normalized_iv = IVNormalizer.normalize(raw_iv, source='IBKR', ticker=ticker_symbol)
-                    iv_metadata = {
-                        'original_value': raw_iv,
-                        'normalized_value': normalized_iv,
-                        'source': 'IBKR',
-                        'format_detected': 'decimal' if 0 < raw_iv < 1.0 else 'percentage'
-                    }
                 except ImportError:
                     # Fallback: manual conversion
                     normalized_iv = raw_iv * 100 if 0 < raw_iv < 1.0 else raw_iv
@@ -1651,9 +1636,8 @@ class IBKRClient:
                 'ask': float(ticker_data.ask) if ticker_data.ask else 0.0,
                 'last': float(ticker_data.last) if ticker_data.last else 0.0,
                 'volume': int(ticker_data.volume) if ticker_data.volume else 0,
-                'open_interest': int(ticker_data.openInterest) if ticker_data.openInterest else 0,
-                'implied_volatility': normalized_iv,
-                'iv_metadata': iv_metadata,
+                'openInterest': int(ticker_data.openInterest) if ticker_data.openInterest else 0,
+                'impliedVolatility': normalized_iv,
                 'delta': float(ticker_data.modelGreeks.delta) if ticker_data.modelGreeks and ticker_data.modelGreeks.delta else None,
                 'gamma': float(ticker_data.modelGreeks.gamma) if ticker_data.modelGreeks and ticker_data.modelGreeks.gamma else None,
                 'theta': float(ticker_data.modelGreeks.theta) if ticker_data.modelGreeks and ticker_data.modelGreeks.theta else None,

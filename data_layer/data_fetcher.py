@@ -3766,30 +3766,20 @@ class DataFetcher:
                     for i in range(0, len(puts), 50):
                         logger.info(f"  處理 Put 期權: {i}/{len(puts)}")
             
-            # Task 17.3: Use simplified IVNormalizer.normalize() method and add metadata
+            # Task 17.3: Use simplified IVNormalizer.normalize() method
             if 'impliedVolatility' in calls.columns and not calls.empty:
                 sample_iv_before = calls['impliedVolatility'].iloc[0] if not calls.empty else None
                 logger.debug(f"  yfinance Call IV 原始值樣本: {sample_iv_before}")
                 
-                # Apply normalization and add metadata
-                def normalize_with_metadata(x, ticker_symbol):
+                # Apply normalization
+                def normalize_iv(x, ticker_symbol):
                     if pd.notna(x):
                         normalized = IVNormalizer.normalize(x, source='Yahoo', ticker=ticker_symbol)
                         return normalized
                     return None
                 
                 calls['impliedVolatility'] = calls['impliedVolatility'].apply(
-                    lambda x: normalize_with_metadata(x, ticker)
-                )
-                
-                # Add IV metadata column
-                calls['iv_metadata'] = calls['impliedVolatility'].apply(
-                    lambda x: {
-                        'original_value': sample_iv_before,
-                        'normalized_value': x,
-                        'source': 'Yahoo',
-                        'format_detected': 'decimal' if sample_iv_before and 0 < sample_iv_before < 1.0 else 'percentage'
-                    } if x is not None else None
+                    lambda x: normalize_iv(x, ticker)
                 )
                 
                 sample_iv_after = calls['impliedVolatility'].iloc[0] if not calls.empty else None
@@ -3799,17 +3789,7 @@ class DataFetcher:
                 sample_iv_before = puts['impliedVolatility'].iloc[0] if not puts.empty else None
                 
                 puts['impliedVolatility'] = puts['impliedVolatility'].apply(
-                    lambda x: normalize_with_metadata(x, ticker)
-                )
-                
-                # Add IV metadata column
-                puts['iv_metadata'] = puts['impliedVolatility'].apply(
-                    lambda x: {
-                        'original_value': sample_iv_before,
-                        'normalized_value': x,
-                        'source': 'Yahoo',
-                        'format_detected': 'decimal' if sample_iv_before and 0 < sample_iv_before < 1.0 else 'percentage'
-                    } if x is not None else None
+                    lambda x: normalize_iv(x, ticker)
                 )
             
             # 優化數據類型以減少內存使用
