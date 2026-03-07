@@ -1703,30 +1703,37 @@ class IBKRClient:
     def get_option_chain_snapshot(self, ticker: str, expiration: str, 
                                  center_strike: float = None) -> Optional[Dict[str, Any]]:
         """
-        獲取期權鏈快照（結構 + 實時數據）
+        獲取期權鏈快照（結構 + 實時數據）- 統一 Schema
         
-        高效獲取整個期權鏈的實時數據。
+        高效獲取整個期權鏈的實時數據，返回統一的 OptionSnapshotSchema 格式。
+        
         策略：
         1. 獲取所有合約
-        2. 過濾（如果指定了 center_strike，只獲取附近的合約，例如 +/- 20%）
+        2. 過濾（如果指定了 center_strike，只獲取附近的合約，例如 +/- 25%）
         3. 批量請求快照數據
-        4. 收集結果
+        4. 收集結果並轉換為統一 schema
         
         參數:
             ticker: 股票代碼
-            expiration: 到期日
+            expiration: 到期日 (YYYY-MM-DD)
             center_strike: 中心行使價（通常是當前股價），用於過濾。如果為 None 則獲取全部（慎用）
             
         返回:
-            dict: 包含 'calls', 'puts' DataFrames
+            dict: {
+                'calls': List[OptionSnapshotSchema],
+                'puts': List[OptionSnapshotSchema]
+            }
+        
+        Ref: option-data-review.md Section III.4, data_policy.py OptionSnapshotSchema
         """
         if not self.is_connected() and not self.connect():
             return None
             
-        import math  # Move import here to fix UnboundLocalError
+        import math
+        from data_layer.data_policy import DataSource
             
         try:
-            logger.info(f"正在獲取 {ticker} {expiration} 期權鏈快照 (Base)...")
+            logger.info(f"正在獲取 {ticker} {expiration} 期權鏈快照（統一 Schema）...")
             
             # 1. 獲取鏈結構
             self.refresh_market_data_type()
@@ -1735,8 +1742,6 @@ class IBKRClient:
             exp_formatted = expiration.replace('-', '')
             
             # 查找合約
-            # 為了效率，我們直接使用 reqSecDefOptParams (如果已經有緩存最好，這裡簡化)
-            # 復用 get_option_chain 的邏輯獲取合約列表
             chain_structure = self.get_option_chain(ticker, expiration, stock_price=center_strike if center_strike else 0)
             
             if not chain_structure:
@@ -1783,118 +1788,41 @@ class IBKRClient:
             # 2. 批量請求數據
             logger.info(f"請求 {len(all_contracts)} 個合約的快照數據...")
             
-            # 直接請求 snapshot=False (使用流式數據短暫抓取)
-            # 原因: IBKR API 的纯 Snapshot 模式 (True) 經常會忽略 Generic Ticks (如 Greeks, 100, 101, 104, 106)。
-            # 使用流式訂閱 + 短暫等待 + 取消訂閱 (即 "Streaming Burst") 是確保獲取完整 Greeks 數據的官方推薦做法。
+            # 使用流式訂閱 + 短暫等待 + 取消訂閱 (Streaming Burst)
             for contract in all_contracts:
                 self.ib.reqMktData(contract, self._generic_tick_list, False, False) 
             
-            # 3. 等待數據填充
-            # 這裡我們等待最多 8 秒
+            # 3. 等待數據填充（最多 8 秒）
             start_time = time.time()
             while time.time() - start_time < 8:
                 self.ib.sleep(0.2)
-                # 檢查是否還有未返回數據的（簡單檢查 last/bid/ask 任意一個）
                 pending = 0
                 for c in all_contracts:
                     t = self.ib.ticker(c)
-                    has_data =  (t.last and not  math.isnan(t.last)) or \
-                                (t.bid and not math.isnan(t.bid)) or \
-                                (t.modelGreeks and t.modelGreeks.impliedVol)
+                    has_data = (t.last and not math.isnan(t.last)) or \
+                               (t.bid and not math.isnan(t.bid)) or \
+                               (t.modelGreeks and t.modelGreeks.impliedVol)
                     if not has_data:
                         pending += 1
                 
                 if pending == 0:
                     break
-                # Fast exit if most are done? Maybe not.
                     
-            # 4. 收集結果
+            # 4. 收集結果並轉換為統一 schema
             call_data = []
             put_data = []
             
             for contract in all_contracts:
-                t = self.ib.ticker(contract)
+                # 轉換為統一 schema
+                option_snapshot = self._convert_ticker_to_option_snapshot(
+                    contract, ticker, expiration
+                )
                 
-                # 提取數據 - 使用安全的屬性獲取方式
-                def safe_int(val, default=0):
-                    """安全轉換為整數，處理 None 和 NaN"""
-                    if val is None:
-                        return default
-                    try:
-                        if math.isnan(val):
-                            return default
-                        return int(val)
-                    except (TypeError, ValueError):
-                        return default
-                
-                # 獲取 Open Interest（根據期權類型選擇正確的屬性）
-                # 對於期權合約，IBKR 可能返回:
-                # - callOpenInterest / putOpenInterest (Tick 27/28 via generic tick 101)
-                # - 或直接的 openInterest 屬性
-                oi = None
-                call_oi = getattr(t, 'callOpenInterest', None)
-                put_oi = getattr(t, 'putOpenInterest', None) 
-                generic_oi = getattr(t, 'openInterest', None)
-                
-                if contract.right == 'C':
-                    oi = call_oi or generic_oi
-                else:
-                    oi = put_oi or generic_oi
-                
-                # DEBUG: 記錄第一個合約的 OI 信息
-                if contract == all_contracts[0]:
-                    logger.debug(f"  [OI Debug] Contract: {contract.localSymbol}")
-                    logger.debug(f"    callOpenInterest: {call_oi}, putOpenInterest: {put_oi}, openInterest: {generic_oi}")
-                    logger.debug(f"    Ticker attrs: {[a for a in dir(t) if 'interest' in a.lower() or 'oi' in a.lower()]}")
-                
-                # Task 17.3: Apply IV normalization to IBKR data
-                raw_iv = t.modelGreeks.impliedVol if t.modelGreeks and t.modelGreeks.impliedVol else None
-                normalized_iv = None
-                iv_metadata = None
-                
-                if raw_iv is not None:
-                    try:
-                        from data_layer.data_fetcher import IVNormalizer
-                        normalized_iv = IVNormalizer.normalize(raw_iv, source='IBKR', ticker=ticker)
-                        iv_metadata = {
-                            'original_value': raw_iv,
-                            'normalized_value': normalized_iv,
-                            'source': 'IBKR',
-                            'format_detected': 'decimal' if 0 < raw_iv < 1.0 else 'percentage'
-                        }
-                    except ImportError:
-                        # Fallback: manual conversion
-                        normalized_iv = raw_iv * 100 if 0 < raw_iv < 1.0 else raw_iv
-                        logger.warning("IVNormalizer not available, using manual conversion")
-                
-                item = {
-                    'contractSymbol': ticker,
-                    'strike': contract.strike,
-                    'currency': 'USD',
-                    'lastPrice': t.last if self._is_valid_price(t.last) else 0.0,
-                    'bid': t.bid if self._is_valid_price(t.bid) else 0.0,
-                    'ask': t.ask if self._is_valid_price(t.ask) else 0.0,
-                    'markPrice': getattr(t, 'markPrice', None),  # Fix 11: 添加 Tick 232 Mark Price
-                    'volume': safe_int(t.volume),
-                    'openInterest': safe_int(oi),
-                    'impliedVolatility': normalized_iv,
-                    'iv_metadata': iv_metadata,
-                    'delta': t.modelGreeks.delta if t.modelGreeks else None,
-                    'gamma': t.modelGreeks.gamma if t.modelGreeks else None,
-                    'theta': t.modelGreeks.theta if t.modelGreeks else None,
-                    'vega': t.modelGreeks.vega if t.modelGreeks else None,
-                    'inTheMoney': False,
-                    'expiration': expiration
-                }
-                
-                # 填充 greeks_source
-                if item['delta'] is not None:
-                    item['greeks_source'] = 'ibkr'
-                
-                if contract.right == 'C':
-                    call_data.append(item)
-                else:
-                    put_data.append(item)
+                if option_snapshot:
+                    if contract.right == 'C':
+                        call_data.append(option_snapshot)
+                    else:
+                        put_data.append(option_snapshot)
             
             # 取消訂閱
             for contract in all_contracts:
@@ -1911,6 +1839,146 @@ class IBKRClient:
             import traceback
             logger.error(traceback.format_exc())
             return None
+    
+    def _convert_ticker_to_option_snapshot(
+        self, 
+        contract: Contract, 
+        ticker: str, 
+        expiration: str
+    ) -> Optional[Dict[str, Any]]:
+        """
+        將 IBKR Ticker 數據轉換為統一的 OptionSnapshotSchema
+        
+        這是統一 schema 的核心轉換函式，確保所有 IBKR 期權數據都使用相同格式。
+        
+        參數:
+            contract: IBKR 合約對象
+            ticker: 股票代碼
+            expiration: 到期日 (YYYY-MM-DD)
+        
+        返回:
+            Dict: OptionSnapshotSchema 格式的數據
+        
+        Ref: data_policy.py OptionSnapshotSchema
+        """
+        import math
+        from data_layer.data_policy import DataSource, VOLATILITY_UNIT_STANDARD
+        
+        t = self.ib.ticker(contract)
+        
+        if not t:
+            return None
+        
+        # 安全轉換函式
+        def safe_int(val, default=0):
+            if val is None:
+                return default
+            try:
+                if math.isnan(val):
+                    return default
+                return int(val)
+            except (TypeError, ValueError):
+                return default
+        
+        def safe_float(val, default=0.0):
+            if val is None:
+                return default
+            try:
+                if math.isnan(val):
+                    return default
+                return float(val)
+            except (TypeError, ValueError):
+                return default
+        
+        # 獲取 Open Interest
+        oi = None
+        call_oi = getattr(t, 'callOpenInterest', None)
+        put_oi = getattr(t, 'putOpenInterest', None) 
+        generic_oi = getattr(t, 'openInterest', None)
+        
+        if contract.right == 'C':
+            oi = call_oi or generic_oi
+        else:
+            oi = put_oi or generic_oi
+        
+        # IV 標準化（統一為百分比格式 0-100）
+        raw_iv = t.modelGreeks.impliedVol if t.modelGreeks and t.modelGreeks.impliedVol else None
+        normalized_iv = None
+        
+        if raw_iv is not None:
+            try:
+                from data_layer.data_fetcher import IVNormalizer
+                normalized_iv = IVNormalizer.normalize(raw_iv, source='IBKR', ticker=ticker)
+            except ImportError:
+                # Fallback: manual conversion to percentage
+                normalized_iv = raw_iv * 100 if 0 < raw_iv < 1.0 else raw_iv
+        
+        # 構建統一 schema
+        option_snapshot = {
+            # 合約識別
+            'ticker': ticker,
+            'strike': float(contract.strike),
+            'expiration': expiration,
+            'option_type': contract.right,  # 'C' or 'P'
+            
+            # 價格數據
+            'bid': safe_float(t.bid if self._is_valid_price(t.bid) else None),
+            'ask': safe_float(t.ask if self._is_valid_price(t.ask) else None),
+            'lastPrice': safe_float(t.last if self._is_valid_price(t.last) else None),
+            'markPrice': safe_float(getattr(t, 'markPrice', None)),
+            
+            # 成交量與持倉
+            'volume': safe_int(t.volume),
+            'openInterest': safe_int(oi),
+            
+            # Greeks
+            'delta': safe_float(t.modelGreeks.delta if t.modelGreeks else None),
+            'gamma': safe_float(t.modelGreeks.gamma if t.modelGreeks else None),
+            'theta': safe_float(t.modelGreeks.theta if t.modelGreeks else None),
+            'vega': safe_float(t.modelGreeks.vega if t.modelGreeks else None),
+            'rho': safe_float(getattr(t.modelGreeks, 'rho', None) if t.modelGreeks else None),
+            
+            # 波動率（統一為百分比格式 0-100）
+            'impliedVolatility': normalized_iv,
+            
+            # Metadata
+            'greeks_source': DataSource.IBKR_SNAPSHOT if t.modelGreeks and t.modelGreeks.delta is not None else None,
+            'iv_source': DataSource.IBKR_SNAPSHOT if normalized_iv is not None else None,
+            'data_source': DataSource.IBKR_SNAPSHOT,
+            'data_quality': self._assess_option_data_quality(t, contract),
+        }
+        
+        return option_snapshot
+    
+    def _assess_option_data_quality(self, ticker_data, contract) -> str:
+        """
+        評估期權數據質量
+        
+        返回:
+            str: 'complete', 'partial', 'minimal'
+        """
+        required_fields = ['bid', 'ask', 'impliedVolatility']
+        optional_fields = ['delta', 'gamma', 'theta', 'vega', 'volume', 'openInterest']
+        
+        has_bid = ticker_data.bid and self._is_valid_price(ticker_data.bid)
+        has_ask = ticker_data.ask and self._is_valid_price(ticker_data.ask)
+        has_iv = ticker_data.modelGreeks and ticker_data.modelGreeks.impliedVol
+        
+        required_count = sum([has_bid, has_ask, has_iv])
+        
+        if required_count == 3:
+            # 檢查 optional fields
+            has_greeks = ticker_data.modelGreeks and ticker_data.modelGreeks.delta is not None
+            has_volume = ticker_data.volume and ticker_data.volume > 0
+            
+            if has_greeks and has_volume:
+                return 'complete'
+            else:
+                return 'partial'
+        elif required_count >= 2:
+            return 'partial'
+        else:
+            return 'minimal'
 
     def get_stock_full_data(self, ticker: str) -> Optional[Dict[str, Any]]:
         """
