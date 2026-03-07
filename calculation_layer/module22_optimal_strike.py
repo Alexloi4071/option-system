@@ -1472,10 +1472,15 @@ class OptimalStrikeCalculator:
         )
         
         # 添加 Bonus Score (如 UOA 加分)
-        # 允許總分超過 100 分 (Extra Credit)
-        final_score = weighted_score + analysis.bonus_score
+        composite_score = weighted_score + analysis.bonus_score
         
-        return round(final_score, 2)
+        # 🔧 BUG-22-05 Fix: 限制總分不超過 100
+        capped_score = min(100.0, composite_score)
+        
+        if capped_score < composite_score:
+            logger.debug(f"  Composite score 被限制: {composite_score:.2f} -> {capped_score:.2f}")
+        
+        return round(capped_score, 2)
     
     def _generate_recommendation_reason(self, analysis: StrikeAnalysis, strategy_type: str) -> str:
         """
