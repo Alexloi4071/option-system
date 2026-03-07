@@ -1545,6 +1545,7 @@ class DataFetcher:
         優化 DataFrame 內存使用
         - 將 float64 轉換為 float32（在精度允許的情況下）
         - 使用 categorical 類型處理重複字符串值
+        - 跳過包含 unhashable 類型（dict, list, set）的列
         """
         if df.empty:
             return df
@@ -1563,12 +1564,23 @@ class DataFetcher:
         # 轉換重複字符串為 categorical
         object_cols = df.select_dtypes(include=['object']).columns
         for col in object_cols:
-            # 只有當唯一值數量少於總行數的 50% 時才轉換
-            if df[col].nunique() < len(df) * 0.5:
-                try:
-                    df[col] = df[col].astype('category')
-                except (ValueError, TypeError):
-                    pass
+            try:
+                # 檢查列是否包含 unhashable 類型（dict, list, set）
+                sample_value = df[col].dropna().iloc[0] if not df[col].dropna().empty else None
+                if sample_value is not None and isinstance(sample_value, (dict, list, set)):
+                    logger.debug(f"跳過優化列 '{col}'：包含 unhashable 類型 {type(sample_value).__name__}")
+                    continue
+                
+                # 只有當唯一值數量少於總行數的 50% 時才轉換
+                if df[col].nunique() < len(df) * 0.5:
+                    try:
+                        df[col] = df[col].astype('category')
+                    except (ValueError, TypeError):
+                        pass
+            except (TypeError, KeyError, IndexError):
+                # 處理邊緣情況：空列、nunique() 失敗等
+                logger.debug(f"跳過優化列 '{col}'：發生錯誤")
+                continue
         
         return df
     
@@ -2707,15 +2719,11 @@ class DataFetcher:
             except Exception as e:
                 logger.debug(f"合併 IBKR 進階 Tick 時發生錯誤: {e}")
 
+        # 如果前面的主要來源都成功了，返回結果
         if stock_data:
             return stock_data
         
-        # 最終檢查: 如果所有來源都失敗
-        logger.error(f"x 無法獲取 {ticker} 基本信息 (所有來源失敗)")
-        self._record_fallback_failure('stock_info', 'All Sources', '全部失敗')
-        return None
-        
-        # 方案4: 降级到 Massive API
+        # 方案4: 降级到 Massive API（前面都失敗時才使用）
         if hasattr(self, 'massive_api_client') and self.massive_api_client:
             try:
                 logger.info("  使用 Massive API...")
@@ -2805,7 +2813,11 @@ class DataFetcher:
         except Exception as e:
             logger.error(f"x 獲取 {ticker} 基本信息失敗: {e}")
             self._record_api_failure('yfinance', f"get_stock_info: {e}")
-            return None
+        
+        # 最終檢查: 如果所有來源都失敗
+        logger.error(f"x 無法獲取 {ticker} 基本信息 (所有來源失敗)")
+        self._record_fallback_failure('stock_info', 'All Sources', '全部失敗')
+        return None
     
     def get_historical_data(self, ticker, period='1mo', interval='1d', max_retries=3):
         """
@@ -3429,6 +3441,7 @@ class DataFetcher:
                 logger.info(f"  Put期權: {len(puts)} 個")
                 
                 # 整合 IBKR OPRA 實時 bid/ask 數據（如果可用）
+                ibkr_available = self.use_ibkr and self.ibkr_client and self.ibkr_client.is_connected()
                 if ibkr_available:
                     calls = self._merge_ibkr_opra_with_yahoo(calls, ticker, expiration, 'call')
                     puts = self._merge_ibkr_opra_with_yahoo(puts, ticker, expiration, 'put')
