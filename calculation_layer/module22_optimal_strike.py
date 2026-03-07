@@ -1336,16 +1336,24 @@ class OptimalStrikeCalculator:
         # Requirements 3.1: 使用 Delta 估算勝率
         delta = abs(analysis.delta)
         
-        # 對於 Long Call/Short Put（看漲策略），勝率 = Delta
-        # 對於 Long Put/Short Call（看跌策略），勝率 = |Delta|
-        # Delta 代表期權到期時處於價內的概率
-        if strategy_type in ['long_call', 'short_put']:
-            # 看漲策略: Delta 直接代表勝率
+        # 🔧 BUG-22-06 Fix: 修正 Short Put 的勝率計算
+        # Long Call: Delta 直接代表勝率（股價上漲超過行使價的概率）
+        # Short Put: 勝率是「不被行使的概率」= 股價保持在行使價之上
+        #           對 Put，delta 是負值，abs(delta) 代表「被行使的概率」
+        #           因此勝率 = 1 - abs(delta)
+        # Long Put/Short Call: abs(delta) 代表價內概率
+        if strategy_type == 'long_call':
+            # Long Call: Delta 直接代表勝率
             analysis.win_probability = delta
+            logger.debug(f"  {strategy_type} 勝率計算: delta={delta:.4f}, win_probability={analysis.win_probability:.4f}")
+        elif strategy_type == 'short_put':
+            # Short Put: 勝率是「不被行使的概率」= 1 - abs(delta)
+            analysis.win_probability = 1.0 - delta
+            logger.debug(f"  {strategy_type} 勝率計算: delta={delta:.4f}, win_probability={analysis.win_probability:.4f} (1-delta)")
         else:
-            # 看跌策略: 1 - Delta 代表勝率（因為 Put 的 Delta 是負的，我們用絕對值）
-            # 但對於 Put，Delta 的絕對值本身就代表價內概率
+            # Long Put/Short Call: abs(delta) 代表價內概率
             analysis.win_probability = delta
+            logger.debug(f"  {strategy_type} 勝率計算: delta={delta:.4f}, win_probability={analysis.win_probability:.4f}")
         
         # 計算預期收益
         # Requirements 3.3: expected_return = potential_profit × win_probability - max_loss × (1 - win_probability)
