@@ -522,15 +522,15 @@ class HistoricalVolatilityCalculator:
     
     def get_iv_recommendation(
         self,
-        iv_rank: float,
-        iv_percentile: float
+        iv_rank: Optional[float],  # 🔧 BUG-18-04: 接受 None 值
+        iv_percentile: Optional[float]  # 🔧 BUG-18-04: 接受 None 值
     ) -> Dict:
         """
         根據IV Rank和IV Percentile生成交易建議
         
         參數:
-            iv_rank: IV Rank（0-100）
-            iv_percentile: IV Percentile（0-100）
+            iv_rank: IV Rank（0-100），失敗時為 None
+            iv_percentile: IV Percentile（0-100），失敗時為 None
         
         返回:
             Dict: {
@@ -540,18 +540,55 @@ class HistoricalVolatilityCalculator:
             }
         
         判斷邏輯:
-            - IV Rank > 80% 或 IV Percentile > 80%: 強烈建議賣期權
-            - IV Rank > 50% 或 IV Percentile > 70%: 建議賣期權
-            - IV Rank < 20% 或 IV Percentile < 30%: 建議買期權
+            - IV Rank > 80% 且 IV Percentile > 80%: 強烈建議賣期權（高信心）
+            - IV Rank > 50% 且 IV Percentile > 70%: 建議賣期權（中信心）
+            - IV Rank < 20% 且 IV Percentile < 30%: 建議買期權（中信心）
+            - 信號矛盾（一個高一個低）: 觀望（低信心）
             - 其他: 中性
         """
         try:
             logger.info(f"生成IV交易建議...")
-            logger.info(f"  IV Rank: {iv_rank:.2f}%")
-            logger.info(f"  IV Percentile: {iv_percentile:.2f}%")
+            logger.info(f"  IV Rank: {iv_rank if iv_rank is not None else 'N/A'}")
+            logger.info(f"  IV Percentile: {iv_percentile if iv_percentile is not None else 'N/A'}")
             
-            # 極高IV（強烈賣出信號）
-            if iv_rank >= 80 or iv_percentile >= 80:
+            # 🔧 BUG-18-04 Fix: 處理 None 值
+            if iv_rank is None or iv_percentile is None:
+                return {
+                    'action': 'Neutral',
+                    'reason': 'IV Rank/Percentile 計算失敗，無法生成建議',
+                    'confidence': 'Low',
+                    'iv_rank': iv_rank,
+                    'iv_percentile': iv_percentile
+                }
+            
+            # 🔧 BUG-18-05 Fix: 檢查信號一致性
+            rank_high = iv_rank >= 80
+            rank_mid_high = 50 <= iv_rank < 80
+            rank_low = iv_rank <= 20
+            
+            percentile_high = iv_percentile >= 80
+            percentile_mid_high = 70 <= iv_percentile < 80
+            percentile_low = iv_percentile <= 30
+            
+            # 檢測矛盾信號（一個高一個低，差異 > 30 個百分點）
+            conflicting = (
+                (rank_high and percentile_low) or 
+                (rank_low and percentile_high) or
+                (abs(iv_rank - iv_percentile) > 30)
+            )
+            
+            if conflicting:
+                recommendation = {
+                    'action': 'Neutral',
+                    'reason': f'IV 信號矛盾（Rank: {iv_rank:.1f}%, Percentile: {iv_percentile:.1f}%），建議觀望',
+                    'confidence': 'Low',
+                    'iv_rank': iv_rank,
+                    'iv_percentile': iv_percentile
+                }
+                logger.warning(f"  ! IV 信號矛盾: Rank={iv_rank:.1f}%, Percentile={iv_percentile:.1f}%")
+            
+            # 極高IV（兩個指標都高 - 高信心）
+            elif rank_high and percentile_high:
                 recommendation = {
                     'action': 'Short',
                     'reason': 'IV極高，處於歷史頂部區域，適合賣出期權收取高額權金',
@@ -561,8 +598,8 @@ class HistoricalVolatilityCalculator:
                 }
                 logger.info(f"  ! 建議: {recommendation['action']} (信心度: {recommendation['confidence']})")
             
-            # 偏高IV（賣出信號）
-            elif iv_rank >= 50 or iv_percentile >= 70:
+            # 偏高IV（至少一個指標高 - 中信心）
+            elif rank_high or percentile_high or (rank_mid_high and percentile_mid_high):
                 recommendation = {
                     'action': 'Short',
                     'reason': 'IV偏高，高於歷史中位數，適合賣出期權',
@@ -572,8 +609,8 @@ class HistoricalVolatilityCalculator:
                 }
                 logger.info(f"  建議: {recommendation['action']} (信心度: {recommendation['confidence']})")
             
-            # 偏低IV（買入信號）
-            elif iv_rank <= 20 or iv_percentile <= 30:
+            # 偏低IV（兩個指標都低 - 中信心）
+            elif rank_low and percentile_low:
                 recommendation = {
                     'action': 'Long',
                     'reason': 'IV偏低，低於歷史水平，適合買入期權',
