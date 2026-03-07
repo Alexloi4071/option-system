@@ -121,6 +121,7 @@ class StrikeAnalysis:
     bid: float = 0.0
     ask: float = 0.0
     last_price: float = 0.0
+    mark_price: float = 0.0  # 🔧 BUG-22-07 Fix: 添加 mark_price 欄位
     theoretical_price: float = 0.0
     
     # Greeks
@@ -179,6 +180,7 @@ class StrikeAnalysis:
             'bid': round(self.bid, 2),
             'ask': round(self.ask, 2),
             'last_price': round(self.last_price, 2),
+            'mark_price': round(self.mark_price, 2),  # 🔧 BUG-22-07 Fix: 添加 mark_price 到輸出
             'theoretical_price': round(self.theoretical_price, 2),
             'delta': round(self.delta, 4),
             'gamma': round(self.gamma, 4),
@@ -1041,6 +1043,7 @@ class OptimalStrikeCalculator:
                 bid=bid,
                 ask=ask,
                 last_price=last_price,
+                mark_price=mid_price,  # 🔧 BUG-22-07 Fix: 儲存 mark_price
                 delta=delta,
                 gamma=gamma,
                 theta=theta,
