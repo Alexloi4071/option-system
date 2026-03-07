@@ -402,7 +402,7 @@ class HistoricalVolatilityCalculator:
         self,
         current_iv: float,
         historical_iv_series: pd.Series
-    ) -> float:
+    ) -> Optional[float]:  # 🔧 BUG-18-04 Fix: 返回類型改為 Optional[float]
         """
         計算IV Rank（IV在52週範圍內的相對位置）
         
@@ -411,7 +411,7 @@ class HistoricalVolatilityCalculator:
             historical_iv_series: 過去252天的IV數據（pandas Series）
         
         返回:
-            float: IV Rank（0-100之間的百分比）
+            Optional[float]: IV Rank（0-100之間的百分比），失敗時返回 None
         
         公式:
             IV Rank = (當前IV - 52週最低IV) / (52週最高IV - 52週最低IV) × 100%
@@ -437,8 +437,8 @@ class HistoricalVolatilityCalculator:
             
             # 驗證輸入
             if len(historical_iv_series) < 2:
-                logger.warning("! 歷史IV數據不足，返回50%（中性）")
-                return 50.0
+                logger.warning("! 歷史IV數據不足，返回 None")
+                return None  # 🔧 BUG-18-04 Fix: 返回 None 而非 50.0
             
             # 計算52週範圍
             iv_min = historical_iv_series.min()
@@ -448,8 +448,8 @@ class HistoricalVolatilityCalculator:
             
             # 避免除以0
             if iv_max == iv_min:
-                logger.warning("! IV範圍為0，返回50%（中性）")
-                return 50.0
+                logger.warning("! IV範圍為0，返回 None")
+                return None  # 🔧 BUG-18-04 Fix: 返回 None 而非 50.0
             
             # 計算IV Rank
             iv_rank = (current_iv - iv_min) / (iv_max - iv_min) * 100
@@ -464,13 +464,13 @@ class HistoricalVolatilityCalculator:
             
         except Exception as e:
             logger.error(f"x IV Rank計算失敗: {e}")
-            return 50.0  # 返回中性值
+            return None  # 🔧 BUG-18-04 Fix: 返回 None 而非 50.0
     
     def calculate_iv_percentile(
         self,
         current_iv: float,
         historical_iv_series: pd.Series
-    ) -> float:
+    ) -> Optional[float]:  # 🔧 BUG-18-04 Fix: 返回類型改為 Optional[float]
         """
         計算IV Percentile（當前IV在歷史中的百分位）
         
@@ -479,7 +479,7 @@ class HistoricalVolatilityCalculator:
             historical_iv_series: 過去252天的IV數據（pandas Series）
         
         返回:
-            float: IV Percentile（0-100之間的百分比）
+            Optional[float]: IV Percentile（0-100之間的百分比），失敗時返回 None
         
         公式:
             IV Percentile = (歷史中IV低於當前IV的天數) / 總天數 × 100%
@@ -500,8 +500,8 @@ class HistoricalVolatilityCalculator:
             
             # 驗證輸入
             if len(historical_iv_series) < 2:
-                logger.warning("! 歷史IV數據不足，返回50%（中性）")
-                return 50.0
+                logger.warning("! 歷史IV數據不足，返回 None")
+                return None  # 🔧 BUG-18-04 Fix: 返回 None 而非 50.0
             
             # 計算低於當前IV的天數
             days_below = (historical_iv_series < current_iv).sum()
@@ -518,7 +518,7 @@ class HistoricalVolatilityCalculator:
             
         except Exception as e:
             logger.error(f"x IV Percentile計算失敗: {e}")
-            return 50.0  # 返回中性值
+            return None  # 🔧 BUG-18-04 Fix: 返回 None 而非 50.0
     
     def get_iv_recommendation(
         self,

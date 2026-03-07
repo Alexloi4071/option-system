@@ -2068,55 +2068,64 @@ class OptionsAnalysisSystem:
                                         historical_iv_series=historical_iv
                                     )
                                     
-                                    # Requirements 7.3: 計算歷史 IV 範圍
-                                    iv_min = float(historical_iv.min())
-                                    iv_max = float(historical_iv.max())
-                                    
-                                    # Requirements 7.2: IV Rank 為 0% 時的數據驗證
-                                    iv_rank_validation = {
-                                        'is_valid': True,
-                                        'warnings': []
-                                    }
-                                    
-                                    if iv_rank == 0.0:
-                                        # 檢查當前 IV 是否真的等於歷史最低
-                                        if abs(atm_iv_for_rank - iv_min) > 0.001:
-                                            iv_rank_validation['is_valid'] = False
-                                            iv_rank_validation['warnings'].append(
-                                                f"IV Rank 為 0% 但當前 IV ({atm_iv_for_rank*100:.2f}%) 不等於歷史最低 ({iv_min*100:.2f}%)"
-                                            )
-                                        # 檢查歷史數據是否有足夠變化
-                                        if iv_max - iv_min < 0.01:  # 歷史範圍小於 1%
-                                            iv_rank_validation['is_valid'] = False
-                                            iv_rank_validation['warnings'].append(
-                                                f"歷史 IV 範圍過小 ({iv_min*100:.2f}% - {iv_max*100:.2f}%)，數據可能不準確"
-                                            )
-                                        logger.warning(f"  ! IV Rank 為 0%，進行數據驗證...")
-                                        for warning in iv_rank_validation['warnings']:
-                                            logger.warning(f"    {warning}")
-                                    
-                                    # 獲取交易建議
-                                    iv_recommendation = hv_calc.get_iv_recommendation(iv_rank, iv_percentile)
-                                    
-                                    result_dict['iv_rank'] = iv_rank
-                                    result_dict['iv_percentile'] = iv_percentile
-                                    result_dict['iv_recommendation'] = iv_recommendation
-                                    result_dict['note'] = '基於252個交易日(52週)的歷史IV數據'
-                                    # 修復 (2025-12-07): 保存 historical_iv 供 Module 23 使用
-                                    result_dict['historical_iv'] = historical_iv
-                                    
-                                    # Requirements 7.1, 7.3: 記錄 IV 來源和歷史範圍
-                                    result_dict['iv_rank_details'] = {
-                                        'current_iv': round(atm_iv_for_rank, 6),
-                                        'current_iv_percent': round(atm_iv_for_rank * 100, 2),
-                                        'iv_source': iv_source_for_rank,
-                                        'historical_iv_min': round(iv_min, 6),
-                                        'historical_iv_max': round(iv_max, 6),
-                                        'historical_iv_min_percent': round(iv_min * 100, 2),
-                                        'historical_iv_max_percent': round(iv_max * 100, 2),
-                                        'historical_data_points': len(historical_iv),
-                                        'validation': iv_rank_validation
-                                    }
+                                    # 🔧 BUG-18-04 Fix: 處理 None 返回值
+                                    if iv_rank is None or iv_percentile is None:
+                                        logger.warning(f"  ! IV Rank/Percentile 計算失敗，跳過 IV 分析")
+                                        result_dict['iv_rank'] = None
+                                        result_dict['iv_percentile'] = None
+                                        result_dict['iv_recommendation'] = "無法計算（數據不足）"
+                                        result_dict['note'] = 'IV Rank/Percentile 計算失敗'
+                                        result_dict['historical_iv'] = historical_iv
+                                    else:
+                                        # 計算 IV 範圍
+                                        iv_min = float(historical_iv.min())
+                                        iv_max = float(historical_iv.max())
+                                        
+                                        # Requirements 7.2: IV Rank 為 0% 時的數據驗證
+                                        iv_rank_validation = {
+                                            'is_valid': True,
+                                            'warnings': []
+                                        }
+                                        
+                                        if iv_rank == 0.0:
+                                            # 檢查當前 IV 是否真的等於歷史最低
+                                            if abs(atm_iv_for_rank - iv_min) > 0.001:
+                                                iv_rank_validation['is_valid'] = False
+                                                iv_rank_validation['warnings'].append(
+                                                    f"IV Rank 為 0% 但當前 IV ({atm_iv_for_rank*100:.2f}%) 不等於歷史最低 ({iv_min*100:.2f}%)"
+                                                )
+                                            # 檢查歷史數據是否有足夠變化
+                                            if iv_max - iv_min < 0.01:  # 歷史範圍小於 1%
+                                                iv_rank_validation['is_valid'] = False
+                                                iv_rank_validation['warnings'].append(
+                                                    f"歷史 IV 範圍過小 ({iv_min*100:.2f}% - {iv_max*100:.2f}%)，數據可能不準確"
+                                                )
+                                            logger.warning(f"  ! IV Rank 為 0%，進行數據驗證...")
+                                            for warning in iv_rank_validation['warnings']:
+                                                logger.warning(f"    {warning}")
+                                        
+                                        # 獲取交易建議
+                                        iv_recommendation = hv_calc.get_iv_recommendation(iv_rank, iv_percentile)
+                                        
+                                        result_dict['iv_rank'] = iv_rank
+                                        result_dict['iv_percentile'] = iv_percentile
+                                        result_dict['iv_recommendation'] = iv_recommendation
+                                        result_dict['note'] = '基於252個交易日(52週)的歷史IV數據'
+                                        # 修復 (2025-12-07): 保存 historical_iv 供 Module 23 使用
+                                        result_dict['historical_iv'] = historical_iv
+                                        
+                                        # Requirements 7.1, 7.3: 記錄 IV 來源和歷史範圍
+                                        result_dict['iv_rank_details'] = {
+                                            'current_iv': round(atm_iv_for_rank, 6),
+                                            'current_iv_percent': round(atm_iv_for_rank * 100, 2),
+                                            'iv_source': iv_source_for_rank,
+                                            'historical_iv_min': round(iv_min, 6),
+                                            'historical_iv_max': round(iv_max, 6),
+                                            'historical_iv_min_percent': round(iv_min * 100, 2),
+                                            'historical_iv_max_percent': round(iv_max * 100, 2),
+                                            'historical_data_points': len(historical_iv),
+                                            'validation': iv_rank_validation
+                                        }
                                     
                                     logger.info(f"  IV Rank: {iv_rank:.2f}%, IV Percentile: {iv_percentile:.2f}%")
                                     logger.info(f"  IV 來源: {iv_source_for_rank}, 當前 IV: {atm_iv_for_rank*100:.2f}%")
