@@ -437,6 +437,7 @@ class OptimalStrikeCalculator:
         獲取校正後的 IV
         
         策略優先級:
+        0. IBKR IV（如果可用且有效）
         1. Module 17 從市場價格反推（最準確）
         2. Yahoo Finance IV（需驗證）
         3. 默認值 0.30
@@ -452,10 +453,20 @@ class OptimalStrikeCalculator:
         返回:
             tuple: (iv: float, source: str)
                 - iv: 小數形式的 IV（如 0.35 表示 35%）
-                - source: IV 來源 ('module17', 'yahoo', 'default')
+                - source: IV 來源 ('ibkr', 'module17', 'yahoo', 'default')
         
         Requirements: 1.1, 1.2, 1.3, 1.6
         """
+        # 策略 0: 優先使用 IBKR IV（避免不必要的 module17 計算）
+        # Check both 'implied_volatility' (snake_case) and 'impliedVolatility' (camelCase) for compatibility
+        ibkr_iv = option.get('implied_volatility') or option.get('impliedVolatility')
+        if ibkr_iv is not None and ibkr_iv > 0:
+            # IBKR IV is already in percentage format (e.g., 35.0 = 35%)
+            # Convert to decimal format (0.35 = 35%)
+            corrected_iv = self._normalize_iv(ibkr_iv)
+            logger.debug(f"  使用 IBKR IV: {ibkr_iv} -> {corrected_iv:.4f} (跳過 module17 計算)")
+            return (corrected_iv, 'ibkr')
+        
         # 獲取市場價格 (Fix 11: 優先使用 IBKR markPrice)
         market_price = option.get('lastPrice', 0) or 0
         if market_price <= 0:
@@ -921,9 +932,18 @@ class OptimalStrikeCalculator:
             gamma = option.get('gamma')
             theta = option.get('theta')
             vega = option.get('vega')
+            greeks_source = option.get('greeks_source', '')
             
-            # 如果沒有 Greeks 數據，使用 Black-Scholes 計算（帶緩存）
-            if delta is None or delta == 0:
+            # 區分 delta=0.0（有效的深度 OTM）和數據缺失
+            # 如果 delta=0.0 且來源是 IBKR，則視為有效的深度 OTM 數據
+            # 只有當 delta 真正缺失（None）或來自不可靠來源的 0.0 時，才重新計算
+            should_recalculate_greeks = (
+                delta is None or 
+                (delta == 0.0 and greeks_source != 'ibkr_model' and greeks_source != 'ibkr_snapshot')
+            )
+            
+            # 如果沒有 Greeks 數據或數據不可靠，使用 Black-Scholes 計算（帶緩存）
+            if should_recalculate_greeks:
                 try:
                     # 使用校正後的 IV（已經是小數形式）計算 Greeks
                     volatility = corrected_iv

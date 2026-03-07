@@ -2124,6 +2124,37 @@ class DataFetcher:
         logger.info(f"  數據質量: {result['data_quality']} ({available_fields}/{total_fields} 字段, {quality_ratio*100:.1f}%)")
         
         return result
+    def _merge_with_priority(self, target: Dict, source: Dict) -> Dict:
+        """
+        Merge two dictionaries with field-level priority preservation.
+
+        Only copies fields from source to target when the target field is None or missing.
+        This ensures that high-priority data sources are not overwritten by lower-priority sources.
+
+        Args:
+            target: Target dictionary (higher priority data)
+            source: Source dictionary (lower priority data)
+
+        Returns:
+            dict: Merged dictionary with priority preserved
+
+        Requirements: 1.1, 2.1, 3.1
+        """
+        if not target:
+            return source.copy() if source else {}
+
+        if not source:
+            return target.copy()
+
+        result = target.copy()
+
+        for key, value in source.items():
+            # Only copy from source if target doesn't have this field or it's None
+            if key not in result or result[key] is None:
+                result[key] = value
+
+        return result
+
     
     def get_api_status_report(self) -> Dict[str, Any]:
         """
@@ -2453,6 +2484,37 @@ class DataFetcher:
             time.sleep(sleep_time)
         
         self.last_request_time = time.time()
+    def _merge_with_priority(self, target: Dict, source: Dict) -> Dict:
+        """
+        Merge two dictionaries with field-level priority preservation.
+
+        Only copies fields from source to target when the target field is None or missing.
+        This ensures that high-priority data sources are not overwritten by lower-priority sources.
+
+        Args:
+            target: Target dictionary (higher priority data)
+            source: Source dictionary (lower priority data)
+
+        Returns:
+            dict: Merged dictionary with priority preserved
+
+        Requirements: 1.1, 2.1, 3.1
+        """
+        if not target:
+            return source.copy() if source else {}
+
+        if not source:
+            return target.copy()
+
+        result = target.copy()
+
+        for key, value in source.items():
+            # Only copy from source if target doesn't have this field or it's None
+            if key not in result or result[key] is None:
+                result[key] = value
+
+        return result
+
     
     # ==================== 股票基本數據 ====================
     
@@ -3224,16 +3286,13 @@ class DataFetcher:
                 logger.warning(f"! IBKR 獲取股價失敗: {e}")
                 
         # 最終合併 IBKR 的高級數據防護網 (HV, Dividends, MarkPrice)
+        # Task 2.2: Use _merge_with_priority() to preserve high-priority data
         if stock_data and self.use_ibkr and stock_data.get('data_source') != 'IBKR':
             try:
                 ibkr_data = self.ibkr_client.get_stock_full_data(ticker)
                 if ibkr_data:
-                    if 'dividend_rate' not in stock_data or not stock_data['dividend_rate']:
-                        stock_data['dividend_rate'] = ibkr_data.get('dividend_yield', 0)
-                    if 'historical_volatility' not in stock_data or not stock_data['historical_volatility']:
-                        stock_data['historical_volatility'] = ibkr_data.get('historical_volatility', 0) * 100 if ibkr_data.get('historical_volatility') else None
-                    if 'mark_price' not in stock_data or not stock_data['mark_price']:
-                        stock_data['mark_price'] = ibkr_data.get('mark_price', stock_data.get('mark_price'))
+                    # Use field-level priority merge: stock_data (higher priority) + ibkr_data (lower priority)
+                    stock_data = self._merge_with_priority(stock_data, ibkr_data)
             except Exception as e:
                 logger.debug(f"合併 IBKR 進階 Tick 時發生錯誤: {e}")
 
@@ -3362,7 +3421,9 @@ class DataFetcher:
         """
         獲取歷史OHLCV數據（支持多數據源降級）
         
-        降級順序: IBKR → Alpha Vantage → yfinance → Massive API
+        降級順序: Finnhub → IBKR → yfinance → Yahoo Finance V2 → Alpha Vantage → Massive API → RapidAPI
+        
+        Finnhub 作為技術分析主來源，優先使用
         
         參數:
             ticker: 股票代碼
@@ -3374,10 +3435,37 @@ class DataFetcher:
         """
         logger.info(f"開始獲取 {ticker} 歷史數據... (週期: {period}, 間隔: {interval})")
         
-        # 方案0: 最高優先級 - IBKR（如果已連接）
+        # 方案0: 最高優先級 - Finnhub（技術分析主來源）
+        if self.finnhub_client and interval in ['1d', 'D']:  # Finnhub 主要支持日線數據
+            try:
+                logger.info("  使用 Finnhub API (最高優先級 - 技術分析主來源)...")
+                
+                # 將 period 轉換為天數
+                period_days = {
+                    '1d': 1, '5d': 5, '1mo': 30, '3mo': 90, 
+                    '6mo': 180, '1y': 365, '2y': 730, '5y': 1825
+                }
+                days = period_days.get(period, 200)
+                
+                hist = self.get_finnhub_candles(ticker, resolution='D', days=days)
+                
+                if hist is not None and not hist.empty:
+                    logger.info(f"* 成功獲取 {ticker} 的 {len(hist)} 條歷史記錄 (Finnhub)")
+                    self._record_fallback('historical_data', 'Finnhub')
+                    return hist
+                else:
+                    logger.warning("! Finnhub 返回空數據，降級到 IBKR")
+                    self._record_fallback_failure('historical_data', 'Finnhub', '返回空數據')
+            except Exception as e:
+                logger.warning(f"! Finnhub 獲取失敗: {e}，降級到 IBKR")
+                self._record_api_failure('Finnhub', f"get_historical_data: {e}")
+                self._record_fallback_failure('historical_data', 'Finnhub', str(e))
+        
+        # 方案1: IBKR（第二優先級）
+        # 方案1: IBKR（第二優先級）
         if self.ibkr_client and self.ibkr_client.is_connected():
             try:
-                logger.info("  使用 IBKR API (最高優先級)...")
+                logger.info("  使用 IBKR API (第二優先級)...")
                 hist = self.ibkr_client.get_historical_data(ticker, period=period, interval=interval)
                 
                 if hist is not None and not hist.empty:
@@ -3385,14 +3473,14 @@ class DataFetcher:
                     self._record_fallback('historical_data', 'IBKR')
                     return hist
                 else:
-                    logger.warning("! IBKR 返回空數據，降級到 Alpha Vantage")
+                    logger.warning("! IBKR 返回空數據，降級到 yfinance")
                     self._record_fallback_failure('historical_data', 'IBKR', '返回空數據')
             except Exception as e:
-                logger.warning(f"! IBKR 獲取失敗: {e}，降級到 Alpha Vantage")
+                logger.warning(f"! IBKR 獲取失敗: {e}，降級到 yfinance")
                 self._record_api_failure('IBKR', f"get_historical_data: {e}")
                 self._record_fallback_failure('historical_data', 'IBKR', str(e))
         
-        # 方案0.5: yfinance（第二優先級 - 使用 curl_cffi，更不容易被限流）
+        # 方案2: yfinance（第三優先級 - 使用 curl_cffi，更不容易被限流）
         # 2025-12-07: 將 yfinance 提升到 Yahoo Finance V2 之前，因為 yfinance 0.2.66 有更好的 429 處理
         try:
             logger.info(f"  使用 yfinance 獲取歷史數據...")
@@ -3411,7 +3499,7 @@ class DataFetcher:
             self._record_api_failure('yfinance', f"get_historical_data: {e}")
             self._record_fallback_failure('historical_data', 'yfinance', str(e))
         
-        # 方案0.6: Yahoo Finance V2（第三優先級 - 備用）
+        # 方案3: Yahoo Finance V2（第四優先級 - 備用）
         if self.yahoo_v2_client:
             try:
                 logger.info(f"  使用 Yahoo Finance V2 獲取歷史數據...")
@@ -3451,7 +3539,7 @@ class DataFetcher:
                 self._record_api_failure('Yahoo Finance V2', f"get_historical_data: {e}")
                 self._record_fallback_failure('historical_data', 'Yahoo Finance V2', str(e))
         
-        # 方案0.7: Alpha Vantage（第四優先級）
+        # 方案4: Alpha Vantage（第五優先級）
         if hasattr(self, 'alpha_vantage_client') and self.alpha_vantage_client:
             try:
                 logger.info(f"  使用 Alpha Vantage 獲取歷史數據...")
@@ -3474,11 +3562,11 @@ class DataFetcher:
                 self._record_api_failure('Alpha Vantage', f"get_historical_data: {e}")
                 self._record_fallback_failure('historical_data', 'Alpha Vantage', str(e))
         
-        # 方案1: yfinance 已在上面嘗試過，這裡跳過
+        # 方案5: yfinance 已在上面嘗試過，這裡跳過
         # 2025-12-07: yfinance 已提升到第二優先級，不需要在這裡重複嘗試
         logger.info("  yfinance 已在上面嘗試過，降級到 Massive API...")
         
-        # 方案2: 降級到 Massive API
+        # 方案6: 降級到 Massive API
         if hasattr(self, 'massive_api_client') and self.massive_api_client:
             try:
                 logger.info(f"  使用 Massive API 獲取歷史數據...")
@@ -3505,7 +3593,7 @@ class DataFetcher:
                 self._record_api_failure('Massive API', f"get_historical_data: {e}")
                 self._record_fallback_failure('historical_data', 'Massive API', str(e))
         
-        # 方案3: 降級到 RapidAPI（最後備用）
+        # 方案7: 降級到 RapidAPI（最後備用）
         if hasattr(self, 'rapidapi_client') and self.rapidapi_client:
             try:
                 logger.info(f"  使用 RapidAPI 獲取歷史數據...")
@@ -3810,6 +3898,9 @@ class DataFetcher:
         
         logger.info(f"開始獲取 {ticker} {expiration} 期權鏈 (IBKR First, 行使價範圍: ±{strike_range_pct}%)...")
         
+        # Initialize ibkr_available flag to track if IBKR data is actually available
+        ibkr_available = self.use_ibkr and self.ibkr_client and self.ibkr_client.is_connected()
+        
         # 0. 獲取當前股價（用於過濾期權鏈）
         current_price = 0
         stock_info = self.get_stock_info(ticker)
@@ -3867,15 +3958,19 @@ class DataFetcher:
                             'calls': calls_df,
                             'puts': puts_df,
                             'expiration': expiration,
-                            'data_source': 'ibkr_snapshot'
+                            'data_source': 'ibkr_snapshot',
+                            'ibkr_available': True
                         }
                     else:
                         logger.warning("! IBKR 返回了空數據結構")
+                        ibkr_available = False
                 else:
                     logger.warning("! IBKR 獲取期權鏈快照失敗")
+                    ibkr_available = False
                     
             except Exception as e:
                 logger.error(f"x IBKR 獲取期權鏈失敗: {e}")
+                ibkr_available = False
                 
         # 2. RapidAPI
         # ... (保留 RapidAPI 作為備用) ...
@@ -3960,7 +4055,7 @@ class DataFetcher:
                 logger.info(f"  Put期權: {len(puts)} 個")
                 
                 # 整合 IBKR OPRA 實時 bid/ask 數據（如果可用）
-                ibkr_available = self.use_ibkr and self.ibkr_client and self.ibkr_client.is_connected()
+                # Use the ibkr_available flag set earlier (don't recalculate)
                 if ibkr_available:
                     calls = self._merge_ibkr_opra_with_yahoo(calls, ticker, expiration, 'call')
                     puts = self._merge_ibkr_opra_with_yahoo(puts, ticker, expiration, 'put')
@@ -3981,7 +4076,8 @@ class DataFetcher:
                     'calls': calls,
                     'puts': puts,
                     'expiration': expiration,
-                    'data_source': data_source
+                    'data_source': data_source,
+                    'ibkr_available': ibkr_available
                 }
             else:
                 # 數據不完整，嘗試 RapidAPI
@@ -4016,7 +4112,8 @@ class DataFetcher:
             'calls': pd.DataFrame(),
             'puts': pd.DataFrame(),
             'expiration': expiration,
-            'data_source': 'Empty (Yahoo Removed)'
+            'data_source': 'Empty (Yahoo Removed)',
+            'ibkr_available': ibkr_available
         }
     
     def get_option_greeks(self, ticker: str, strike: float, 

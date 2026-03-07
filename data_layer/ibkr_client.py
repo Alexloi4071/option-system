@@ -15,11 +15,111 @@ Interactive Brokers (IBKR) API 客戶端
 import logging
 import time
 import os
-from typing import Dict, Optional, Any, List
+from typing import Dict, Optional, Any, List, TypedDict
 from datetime import datetime, time as dt_time
 import pytz
 
 logger = logging.getLogger(__name__)
+
+# ============================================================================
+# TypedDict Definitions for Option Data Structures
+# ============================================================================
+
+class OptionGreeksData(TypedDict, total=False):
+    """
+    TypedDict for option Greeks data returned by get_option_greeks()
+    
+    This structure ensures consistent return types and provides type hints
+    for downstream modules.
+    """
+    # Contract identification
+    strike: float
+    expiration: str
+    option_type: str
+    
+    # Greeks
+    delta: Optional[float]
+    gamma: Optional[float]
+    theta: Optional[float]
+    vega: Optional[float]
+    rho: Optional[float]
+    
+    # Volatility and prices
+    impliedVol: Optional[float]
+    undPrice: Optional[float]
+    optPrice: Optional[float]
+    
+    # Quote data
+    bid: Optional[float]
+    ask: Optional[float]
+    last: Optional[float]
+    mid: Optional[float]
+    
+    # Volume and open interest
+    volume: Optional[int]
+    openInterest: Optional[int]
+    
+    # Metadata
+    source: str
+    greeks_source: str
+    data_quality: str
+    market_data_type: int
+    outside_rth: bool
+    greeks_converged: bool
+    convergence_time: Optional[float]
+    undPrice_valid: Optional[bool]
+    
+    # Warnings and quality indicators
+    warnings: List[str]
+    iv_spike_warning: Optional[bool]
+    
+    # Additional metadata
+    metadata: Optional[Dict[str, Any]]
+    iv_metadata: Optional[Dict[str, Any]]
+
+
+class OptionQuoteData(TypedDict, total=False):
+    """
+    TypedDict for option quote data returned by get_option_quote()
+    
+    This structure ensures consistent return types for option quotes.
+    """
+    # Contract identification
+    strike: float
+    expiration: str
+    option_type: str
+    
+    # Quote data
+    bid: Optional[float]
+    ask: Optional[float]
+    last: Optional[float]
+    mid: Optional[float]
+    markPrice: Optional[float]
+    
+    # Volume and open interest
+    volume: Optional[int]
+    openInterest: Optional[int]
+    
+    # Greeks (if available)
+    delta: Optional[float]
+    gamma: Optional[float]
+    theta: Optional[float]
+    vega: Optional[float]
+    impliedVolatility: Optional[float]
+    undPrice: Optional[float]
+    optPrice: Optional[float]
+    greeks_source: Optional[str]
+    
+    # Metadata
+    data_source: str
+    data_quality: str
+    market_data_type: int
+    outside_rth: bool
+    tick_tags_used: str
+    
+    # Warnings
+    warnings: List[str]
+    iv_spike_warning: Optional[bool]
 
 # ============================================================================
 # Market Data Type 常量
@@ -1095,7 +1195,7 @@ class IBKRClient:
     
     def get_option_greeks(self, ticker: str, strike: float, 
                           expiration: str, option_type: str = 'C',
-                          known_stock_price: float = None) -> Optional[Dict[str, Any]]:
+                          known_stock_price: float = None) -> Optional[OptionGreeksData]:
         """
         獲取期權 Greeks（優化版）
         
@@ -1114,7 +1214,7 @@ class IBKRClient:
             known_stock_price: 已知股價（用於驗證 undPrice）
         
         返回:
-            dict: 包含 Greeks、數據質量指標、警告等完整信息
+            OptionGreeksData: 包含 Greeks、數據質量指標、警告等完整信息
         """
         if not self.is_connected():
             if not self.connect():
@@ -1406,7 +1506,7 @@ class IBKRClient:
             return False
     
     def get_option_quote(self, ticker: str, strike: float, 
-                         expiration: str, option_type: str = 'C') -> Optional[Dict[str, Any]]:
+                         expiration: str, option_type: str = 'C') -> Optional[OptionQuoteData]:
         """
         獲取期權報價數據（優化版，使用完整 Tick Tags）
         
@@ -1419,7 +1519,7 @@ class IBKRClient:
             option_type: 'C' (Call) 或 'P' (Put)
         
         返回:
-            dict: 包含報價、數據質量、警告等完整信息
+            OptionQuoteData: 包含報價、數據質量、警告等完整信息
         """
         if not self.is_connected():
             if not self.connect():
@@ -1920,17 +2020,17 @@ class IBKRClient:
             'ticker': ticker,
             'strike': float(contract.strike),
             'expiration': expiration,
-            'option_type': contract.right,  # 'C' or 'P'
+            'option_type': 'call' if contract.right == 'C' else 'put',  # Convert 'C'/'P' to 'call'/'put'
             
-            # 價格數據
+            # 價格數據 (使用 snake_case)
             'bid': safe_float(t.bid if self._is_valid_price(t.bid) else None),
             'ask': safe_float(t.ask if self._is_valid_price(t.ask) else None),
-            'lastPrice': safe_float(t.last if self._is_valid_price(t.last) else None),
-            'markPrice': safe_float(getattr(t, 'markPrice', None)),
+            'last_price': safe_float(t.last if self._is_valid_price(t.last) else None),
+            'mark_price': safe_float(getattr(t, 'markPrice', None)),
             
-            # 成交量與持倉
+            # 成交量與持倉 (使用 snake_case)
             'volume': safe_int(t.volume),
-            'openInterest': safe_int(oi),
+            'open_interest': safe_int(oi),
             
             # Greeks
             'delta': safe_float(t.modelGreeks.delta if t.modelGreeks else None),
@@ -1939,8 +2039,8 @@ class IBKRClient:
             'vega': safe_float(t.modelGreeks.vega if t.modelGreeks else None),
             'rho': safe_float(getattr(t.modelGreeks, 'rho', None) if t.modelGreeks else None),
             
-            # 波動率（統一為百分比格式 0-100）
-            'impliedVolatility': normalized_iv,
+            # 波動率（統一為百分比格式 0-100，使用 snake_case）
+            'implied_volatility': normalized_iv,
             
             # Metadata
             'greeks_source': DataSource.IBKR_SNAPSHOT if t.modelGreeks and t.modelGreeks.delta is not None else None,
@@ -1983,22 +2083,23 @@ class IBKRClient:
 
     def get_stock_full_data(self, ticker: str) -> Optional[Dict[str, Any]]:
         """
-        Fix 11: 獲取股票完整數據，直接使用 IBKR Tick 104 和 Tick 456
+        獲取股票 IBKR 獨有的 advanced 欄位
+        
+        此函數只返回 IBKR 特有的高級數據，不返回主要股價欄位（price, bid, ask, volume）
+        主要股價欄位應由 Finnhub 或 yfinance 提供
         
         Tick 104 (Historical Volatility 30-day) → 直接使用，替代 Yahoo Finance 重算
         Tick 456 (IB Dividends / Dividend Yield) → 直接使用，傳入 module16 Greeks
         Tick 232 (Mark Price) → IBKR 計算的理論中間價，比 (bid+ask)/2 更準
+        Tick 106 (Implied Volatility 30-day) → IBKR 計算的 30 天隱含波動率
         
         返回:
             dict: {
-                'price': float,
-                'bid': float,
-                'ask': float,
-                'mark_price': float,          # Tick 232 (修復 mark price 問題)
-                'historical_volatility': float, # Tick 104 (Fix 11: IBKR HV-30)
-                'implied_volatility_30d': float, # Tick 106
-                'dividend_yield': float,       # Tick 456 (Fix 11: IBKR Dividend)
-                'volume': int,
+                'mark_price': float,          # Tick 232 (IBKR 理論中間價)
+                'historical_volatility_30d': float, # Tick 104 (IBKR HV-30)
+                'implied_volatility_30d': float, # Tick 106 (IBKR IV-30)
+                'dividend_yield': float,       # Tick 456 (IBKR Dividend Yield)
+                'annual_dividend': float,      # Tick 456 (年度股息)
                 'hv_source': 'ibkr_tick104',   # 數據來源標識
                 'div_source': 'ibkr_tick456',
             }
@@ -2045,19 +2146,6 @@ class IBKRClient:
             }
 
             import math
-
-            # ── 基本報價 ────────────────────────────────────
-            last = getattr(ticker_data, 'last', None)
-            close = getattr(ticker_data, 'close', None)
-            if self._is_valid_price(last):
-                result['price'] = float(last)
-            elif self._is_valid_price(close):
-                result['price'] = float(close)
-
-            if self._is_valid_price(getattr(ticker_data, 'bid', None)):
-                result['bid'] = float(ticker_data.bid)
-            if self._is_valid_price(getattr(ticker_data, 'ask', None)):
-                result['ask'] = float(ticker_data.ask)
 
             # ── Tick 232: Mark Price（比 mid 更準） ─────────
             # IBKR 的 markPrice 是理論計算的中間價，而非簡單 (bid+ask)/2
@@ -2110,8 +2198,16 @@ class IBKRClient:
                     parts = str(div_info).split(',')
                     if len(parts) >= 1 and parts[0]:
                         annual_div = float(parts[0])  # past 12 months dividends
-                        price = result.get('price', 0)
-                        if price > 0 and annual_div > 0:
+                        # Get current price from ticker_data for dividend yield calculation
+                        last = getattr(ticker_data, 'last', None)
+                        close = getattr(ticker_data, 'close', None)
+                        price = None
+                        if self._is_valid_price(last):
+                            price = float(last)
+                        elif self._is_valid_price(close):
+                            price = float(close)
+                        
+                        if price and price > 0 and annual_div > 0:
                             div_yield = annual_div / price
                             result['dividend_yield'] = div_yield
                             result['annual_dividend'] = annual_div
@@ -2119,11 +2215,6 @@ class IBKRClient:
                                         f"Yield {div_yield*100:.2f}%  ← 直接使用 IBKR 數據")
                 except (ValueError, IndexError):
                     pass
-
-            # ── 成交量 ──────────────────────────────────────
-            vol = getattr(ticker_data, 'volume', None)
-            if vol is not None and vol > 0:
-                result['volume'] = int(vol)
 
             # 取消訂閱
             try:

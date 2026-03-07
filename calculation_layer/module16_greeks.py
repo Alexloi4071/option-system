@@ -1055,7 +1055,7 @@ if __name__ == "__main__":
     print(f"  Gamma:  {result1.gamma:>10.6f}  (股價變化 $1 → Delta 變化 {result1.gamma:.6f})")
     print(f"  Theta:  {result1.theta:>10.6f}  (每日時間衰減 $/天)")
     print(f"  Vega:   {result1.vega:>10.6f}  (IV 變化 1 個百分點 → 期權價格變化 ${result1.vega:.4f})")
-    print(f"  Rho:    {result1.rho:>10.6f}  (利率變化 1 個百分點 → 期權價格變化 ${result1.rho/100:.4f})")
+    print(f"  Rho:    {result1.rho:>10.6f}  (利率變化 1 個百分點 → 期權價格變化 ${result1.rho:.4f})")
     
     # 例子2: ATM Put 期權的 Greeks
     print("\n【例子2】ATM Put 期權的 Greeks")
