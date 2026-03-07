@@ -2456,6 +2456,397 @@ class DataFetcher:
     
     # ==================== 股票基本數據 ====================
     
+    # ========================================================================
+    # Stage 2: 新的欄位級數據獲取函式（漸進式重構）
+    # 這些函式遵循 data_policy.py 定義的欄位權責
+    # ========================================================================
+    
+    def get_stock_quote_primary(self, ticker: str) -> Optional[Dict[str, Any]]:
+        """
+        獲取股票實時報價（Quote 數據）
+        
+        職責：只負責實時價格與技術數據
+        主來源：Finnhub → Alpha Vantage → yfinance
+        
+        返回欄位：
+        - current_price, open, intraday_high, intraday_low
+        - previous_close, volume, change, change_percent
+        - data_source, data_timestamp, is_market_hours
+        
+        Ref: option-data-review.md Section II.2, data_policy.py STOCK_QUOTE_AUTHORITY
+        """
+        from data_layer.data_policy import DataSource, StockQuoteSchema
+        from datetime import datetime as _dt
+        
+        logger.info(f"獲取 {ticker} 實時報價（Quote Primary）...")
+        
+        # 方案1: Finnhub（最高優先級）
+        if self.finnhub_client:
+            try:
+                logger.info("  使用 Finnhub API...")
+                self._rate_limit_delay()
+                
+                quote = self.finnhub_client.quote(ticker)
+                
+                if quote and quote.get('c', 0) > 0:
+                    quote_data: StockQuoteSchema = {
+                        'ticker': ticker,
+                        'current_price': quote.get('c', 0),
+                        'open': quote.get('o', 0),
+                        'intraday_high': quote.get('h', 0),
+                        'intraday_low': quote.get('l', 0),
+                        'previous_close': quote.get('pc', 0),
+                        'change': quote.get('d', 0),
+                        'change_percent': quote.get('dp', 0),
+                        'volume': None,  # Finnhub quote 不提供 volume
+                        'data_source': DataSource.FINNHUB,
+                        'is_market_hours': True,
+                        'data_timestamp': _dt.now().isoformat(),
+                    }
+                    
+                    logger.info(f"* 成功獲取 {ticker} 報價 (Finnhub): ${quote_data['current_price']:.2f}")
+                    self._record_fallback('stock_quote', DataSource.FINNHUB)
+                    return quote_data
+                else:
+                    logger.warning("! Finnhub 返回無效數據")
+                    self._record_fallback_failure('stock_quote', DataSource.FINNHUB, '返回無效數據')
+            except Exception as e:
+                logger.warning(f"! Finnhub 獲取失敗: {e}")
+                self._record_api_failure('Finnhub', f"get_stock_quote_primary: {e}")
+                self._record_fallback_failure('stock_quote', DataSource.FINNHUB, str(e))
+        
+        # 方案2: Alpha Vantage
+        if hasattr(self, 'alpha_vantage_client') and self.alpha_vantage_client:
+            try:
+                logger.info("  使用 Alpha Vantage API...")
+                quote_data_av = self.alpha_vantage_client.get_quote(ticker)
+                
+                if quote_data_av and quote_data_av.get('current_price', 0) > 0:
+                    quote_data: StockQuoteSchema = {
+                        'ticker': ticker,
+                        'current_price': quote_data_av.get('current_price', 0),
+                        'open': quote_data_av.get('open', 0),
+                        'intraday_high': quote_data_av.get('high', 0),
+                        'intraday_low': quote_data_av.get('low', 0),
+                        'previous_close': quote_data_av.get('previous_close', 0),
+                        'volume': quote_data_av.get('volume', 0),
+                        'change': quote_data_av.get('change', 0),
+                        'change_percent': quote_data_av.get('change_percent', 0),
+                        'data_source': DataSource.ALPHA_VANTAGE,
+                        'data_timestamp': _dt.now().isoformat(),
+                    }
+                    
+                    logger.info(f"* 成功獲取 {ticker} 報價 (Alpha Vantage): ${quote_data['current_price']:.2f}")
+                    self._record_fallback('stock_quote', DataSource.ALPHA_VANTAGE)
+                    return quote_data
+                else:
+                    logger.warning("! Alpha Vantage 返回無效數據")
+                    self._record_fallback_failure('stock_quote', DataSource.ALPHA_VANTAGE, '返回無效數據')
+            except Exception as e:
+                logger.warning(f"! Alpha Vantage 獲取失敗: {e}")
+                self._record_api_failure('Alpha Vantage', f"get_stock_quote_primary: {e}")
+                self._record_fallback_failure('stock_quote', DataSource.ALPHA_VANTAGE, str(e))
+        
+        # 方案3: yfinance（最後備用）
+        try:
+            self._rate_limit_delay()
+            logger.info("  使用 yfinance...")
+            stock = yf.Ticker(ticker, session=self.session)
+            info = stock.info
+            
+            if info.get('currentPrice', 0) > 0 or info.get('regularMarketPrice', 0) > 0:
+                current_price = info.get('currentPrice') or info.get('regularMarketPrice', 0)
+                quote_data: StockQuoteSchema = {
+                    'ticker': ticker,
+                    'current_price': current_price,
+                    'open': info.get('open', 0),
+                    'intraday_high': info.get('dayHigh', 0),
+                    'intraday_low': info.get('dayLow', 0),
+                    'previous_close': info.get('previousClose', 0),
+                    'volume': info.get('volume', 0),
+                    'data_source': DataSource.YFINANCE,
+                    'data_timestamp': _dt.now().isoformat(),
+                }
+                
+                logger.info(f"* 成功獲取 {ticker} 報價 (yfinance): ${quote_data['current_price']:.2f}")
+                self._record_fallback('stock_quote', DataSource.YFINANCE)
+                return quote_data
+        except Exception as e:
+            logger.error(f"x yfinance 獲取報價失敗: {e}")
+            self._record_api_failure('yfinance', f"get_stock_quote_primary: {e}")
+        
+        logger.error(f"x 無法獲取 {ticker} 報價（所有來源失敗）")
+        return None
+    
+    def get_stock_fundamentals_primary(self, ticker: str) -> Optional[Dict[str, Any]]:
+        """
+        獲取股票基本面數據
+        
+        職責：只負責公司基本面與財務數據
+        主來源：Finviz → Finnhub → Alpha Vantage
+        
+        返回欄位：
+        - market_cap, pe_ratio, forward_pe, peg_ratio
+        - eps, eps_ttm, eps_next_y, beta
+        - sector, industry, company_name
+        - profit_margin, operating_margin, roe, roa, debt_eq
+        - insider_own, inst_own, short_float
+        - data_source
+        
+        Ref: option-data-review.md Section II.2, data_policy.py STOCK_FUNDAMENTALS_AUTHORITY
+        """
+        from data_layer.data_policy import DataSource, StockFundamentalsSchema
+        
+        logger.info(f"獲取 {ticker} 基本面數據（Fundamentals Primary）...")
+        
+        # 方案1: Finviz（最高優先級，最完整的基本面數據）
+        if hasattr(self, 'finviz_scraper') and self.finviz_scraper:
+            try:
+                logger.info("  使用 Finviz...")
+                finviz_data = self.finviz_scraper.get_stock_fundamentals(ticker)
+                
+                if finviz_data:
+                    validated_data = self._validate_and_supplement_finviz_data(finviz_data, ticker)
+                    
+                    if validated_data:
+                        fundamentals: StockFundamentalsSchema = {
+                            'ticker': ticker,
+                            'market_cap': validated_data.get('market_cap'),
+                            'pe_ratio': validated_data.get('pe'),
+                            'forward_pe': validated_data.get('forward_pe'),
+                            'peg_ratio': validated_data.get('peg'),
+                            'eps': validated_data.get('eps_ttm'),
+                            'eps_ttm': validated_data.get('eps_ttm'),
+                            'eps_next_y': validated_data.get('eps_next_y'),
+                            'beta': validated_data.get('beta'),
+                            'sector': validated_data.get('sector'),
+                            'industry': validated_data.get('industry'),
+                            'company_name': validated_data.get('company_name'),
+                            'profit_margin': validated_data.get('profit_margin'),
+                            'operating_margin': validated_data.get('operating_margin'),
+                            'roe': validated_data.get('roe'),
+                            'roa': validated_data.get('roa'),
+                            'debt_eq': validated_data.get('debt_eq'),
+                            'insider_own': validated_data.get('insider_own'),
+                            'inst_own': validated_data.get('inst_own'),
+                            'short_float': validated_data.get('short_float'),
+                            'data_source': DataSource.FINVIZ,
+                        }
+                        
+                        logger.info(f"* 成功獲取 {ticker} 基本面 (Finviz)")
+                        if fundamentals.get('pe_ratio'):
+                            logger.info(f"  P/E: {fundamentals['pe_ratio']:.2f}")
+                        if fundamentals.get('eps'):
+                            logger.info(f"  EPS: ${fundamentals['eps']:.2f}")
+                        
+                        self._record_fallback('stock_fundamentals', DataSource.FINVIZ)
+                        return fundamentals
+                    else:
+                        logger.warning("! Finviz 數據驗證失敗")
+                        self._record_fallback_failure('stock_fundamentals', DataSource.FINVIZ, '數據驗證失敗')
+                else:
+                    logger.warning("! Finviz 未返回數據")
+                    self._record_fallback_failure('stock_fundamentals', DataSource.FINVIZ, '未返回數據')
+            except Exception as e:
+                logger.warning(f"! Finviz 獲取失敗: {e}")
+                self._record_api_failure('Finviz', f"get_stock_fundamentals_primary: {e}")
+                self._record_fallback_failure('stock_fundamentals', DataSource.FINVIZ, str(e))
+        
+        # 方案2: Finnhub（備用）
+        if self.finnhub_client:
+            try:
+                logger.info("  使用 Finnhub API...")
+                self._rate_limit_delay()
+                
+                profile = self.finnhub_client.company_profile2(symbol=ticker)
+                
+                if profile:
+                    fundamentals: StockFundamentalsSchema = {
+                        'ticker': ticker,
+                        'company_name': profile.get('name', ''),
+                        'market_cap': profile.get('marketCapitalization', 0) * 1000000 if profile.get('marketCapitalization') else 0,
+                        'sector': profile.get('finnhubIndustry', ''),
+                        'industry': profile.get('finnhubIndustry', ''),
+                        'data_source': DataSource.FINNHUB,
+                    }
+                    
+                    logger.info(f"* 成功獲取 {ticker} 基本面 (Finnhub，部分數據)")
+                    self._record_fallback('stock_fundamentals', DataSource.FINNHUB)
+                    return fundamentals
+            except Exception as e:
+                logger.warning(f"! Finnhub 獲取基本面失敗: {e}")
+                self._record_api_failure('Finnhub', f"get_stock_fundamentals_primary: {e}")
+        
+        # 方案3: Alpha Vantage（備用）
+        if hasattr(self, 'alpha_vantage_client') and self.alpha_vantage_client:
+            try:
+                logger.info("  使用 Alpha Vantage API...")
+                overview = self.alpha_vantage_client.get_company_overview(ticker)
+                
+                if overview:
+                    fundamentals: StockFundamentalsSchema = {
+                        'ticker': ticker,
+                        'market_cap': overview.get('market_cap', 0),
+                        'pe_ratio': overview.get('pe_ratio', 0),
+                        'forward_pe': overview.get('forward_pe', 0),
+                        'eps': overview.get('eps', 0),
+                        'beta': overview.get('beta', 0),
+                        'company_name': overview.get('company_name', ''),
+                        'sector': overview.get('sector', ''),
+                        'industry': overview.get('industry', ''),
+                        'data_source': DataSource.ALPHA_VANTAGE,
+                    }
+                    
+                    logger.info(f"* 成功獲取 {ticker} 基本面 (Alpha Vantage)")
+                    self._record_fallback('stock_fundamentals', DataSource.ALPHA_VANTAGE)
+                    return fundamentals
+            except Exception as e:
+                logger.warning(f"! Alpha Vantage 獲取基本面失敗: {e}")
+                self._record_api_failure('Alpha Vantage', f"get_stock_fundamentals_primary: {e}")
+        
+        logger.error(f"x 無法獲取 {ticker} 基本面（所有來源失敗）")
+        return None
+    
+    def get_stock_advanced_from_ibkr(self, ticker: str) -> Optional[Dict[str, Any]]:
+        """
+        獲取股票進階數據（IBKR 專屬）
+        
+        職責：只負責 IBKR Tick 提供的進階指標
+        主來源：IBKR Tick 104/106/232/456
+        
+        返回欄位：
+        - historical_volatility_30d (HV-30, Tick 104)
+        - implied_volatility_30d (IV-30, Tick 106)
+        - dividend_yield (Tick 456)
+        - annual_dividend (Tick 456)
+        - mark_price (Tick 232)
+        - hv_source, div_source, data_source
+        
+        注意：此函式不應被用作主股價來源
+        
+        Ref: option-data-review.md Section III.2, data_policy.py STOCK_ADVANCED_AUTHORITY
+        """
+        from data_layer.data_policy import DataSource, StockAdvancedSchema
+        
+        logger.info(f"獲取 {ticker} 進階數據（IBKR Advanced）...")
+        
+        if not (self.use_ibkr and self.ibkr_client and self.ibkr_client.is_connected()):
+            logger.warning("! IBKR 未連接，無法獲取進階數據")
+            return None
+        
+        try:
+            ibkr_data = self.ibkr_client.get_stock_full_data(ticker)
+            
+            if ibkr_data:
+                # 注意：不包含 price 欄位，避免被誤用為主股價
+                advanced: StockAdvancedSchema = {
+                    'ticker': ticker,
+                    'historical_volatility_30d': ibkr_data.get('historical_volatility', 0) * 100 if ibkr_data.get('historical_volatility') else None,
+                    'implied_volatility_30d': ibkr_data.get('implied_volatility_30d', 0) * 100 if ibkr_data.get('implied_volatility_30d') else None,
+                    'dividend_yield': ibkr_data.get('dividend_yield', 0),
+                    'annual_dividend': ibkr_data.get('annual_dividend', 0),
+                    'mark_price': ibkr_data.get('mark_price'),
+                    'hv_source': ibkr_data.get('hv_source', DataSource.IBKR_TICK),
+                    'div_source': ibkr_data.get('div_source', DataSource.IBKR_TICK),
+                    'data_source': DataSource.IBKR_TICK,
+                }
+                
+                logger.info(f"* 成功獲取 {ticker} 進階數據 (IBKR)")
+                if advanced.get('historical_volatility_30d'):
+                    logger.info(f"  HV-30: {advanced['historical_volatility_30d']:.2f}%")
+                if advanced.get('dividend_yield'):
+                    logger.info(f"  Div Yield: {advanced['dividend_yield']*100:.2f}%")
+                
+                self._record_fallback('stock_advanced', DataSource.IBKR_TICK)
+                return advanced
+            else:
+                logger.warning("! IBKR 返回空數據")
+                return None
+        except Exception as e:
+            logger.error(f"x IBKR 獲取進階數據失敗: {e}")
+            self._record_api_failure('IBKR', f"get_stock_advanced_from_ibkr: {e}")
+            return None
+    
+    def merge_stock_snapshot(
+        self,
+        quote: Optional[Dict[str, Any]] = None,
+        fundamentals: Optional[Dict[str, Any]] = None,
+        advanced: Optional[Dict[str, Any]] = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        合併股票快照數據（欄位級合併）
+        
+        遵循 data_policy.py 定義的欄位權責，禁止錯誤覆蓋。
+        
+        合併規則：
+        1. Quote 欄位優先級：Finnhub > Alpha Vantage > yfinance
+        2. Fundamentals 欄位優先級：Finviz > Finnhub > Alpha Vantage
+        3. Advanced 欄位優先級：IBKR Tick（獨佔）
+        4. 禁止 Finviz/IBKR 覆蓋 Finnhub 的 current_price
+        5. 記錄每個欄位的實際來源
+        
+        參數:
+            quote: Quote 數據（來自 get_stock_quote_primary）
+            fundamentals: Fundamentals 數據（來自 get_stock_fundamentals_primary）
+            advanced: Advanced 數據（來自 get_stock_advanced_from_ibkr）
+        
+        返回:
+            Dict: 完整的股票快照，包含 field_sources metadata
+        
+        Ref: option-data-review.md Section II.2
+        """
+        from data_layer.data_policy import DataSource, StockSnapshotSchema, assess_data_quality, STOCK_QUOTE_REQUIRED_FIELDS
+        
+        if not any([quote, fundamentals, advanced]):
+            logger.error("x merge_stock_snapshot: 所有輸入都為 None")
+            return None
+        
+        snapshot: StockSnapshotSchema = {}
+        field_sources: Dict[str, str] = {}
+        
+        # 合併 Quote 數據
+        if quote:
+            for key, value in quote.items():
+                if key not in ['data_source', 'data_timestamp', 'is_market_hours'] and value is not None:
+                    snapshot[key] = value
+                    field_sources[key] = quote.get('data_source', DataSource.UNKNOWN)
+            
+            # 保留 metadata
+            if 'data_timestamp' in quote:
+                snapshot['data_timestamp'] = quote['data_timestamp']
+            if 'is_market_hours' in quote:
+                snapshot['is_market_hours'] = quote['is_market_hours']
+        
+        # 合併 Fundamentals 數據（不覆蓋 Quote 欄位）
+        if fundamentals:
+            for key, value in fundamentals.items():
+                if key not in ['data_source', 'ticker'] and value is not None:
+                    # 只在欄位不存在時才添加
+                    if key not in snapshot:
+                        snapshot[key] = value
+                        field_sources[key] = fundamentals.get('data_source', DataSource.UNKNOWN)
+        
+        # 合併 Advanced 數據（IBKR 專屬欄位）
+        if advanced:
+            for key, value in advanced.items():
+                if key not in ['data_source', 'ticker', 'hv_source', 'div_source'] and value is not None:
+                    snapshot[key] = value
+                    field_sources[key] = advanced.get('data_source', DataSource.UNKNOWN)
+        
+        # 添加 metadata
+        snapshot['field_sources'] = field_sources
+        snapshot['data_quality'] = assess_data_quality(snapshot, STOCK_QUOTE_REQUIRED_FIELDS)
+        
+        logger.info(f"* 合併股票快照完成，數據質量: {snapshot['data_quality']}")
+        logger.debug(f"  欄位來源: {field_sources}")
+        
+        return snapshot
+    
+    # ========================================================================
+    # 原有的 get_stock_info（保留以保持向後兼容）
+    # 未來將逐步遷移到新的 get_stock_quote_primary + merge_stock_snapshot
+    # ========================================================================
+    
     def get_stock_info(self, ticker):
         """
         獲取股票基本信息（支持多数据源降级）
