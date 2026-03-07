@@ -200,15 +200,31 @@ class HistoricalVolatilityCalculator:
                 price_series = price_series.iloc[-window:]
                 logger.info(f"  使用最近 {window} 天數據")
             
+            # 🔧 BUG-18-03 Fix: 過濾 price_series 中的 NaN 值
+            original_count = len(price_series)
+            clean_prices = price_series.dropna()
+            
+            if len(clean_prices) < original_count:
+                logger.info(f"  過濾 NaN: {original_count} -> {len(clean_prices)} 數據點")
+            
+            if len(clean_prices) < 2:
+                raise ValueError(f"過濾 NaN 後數據點不足，需要至少 2 個數據點，實際: {len(clean_prices)}")
+            
             # 第4步: 計算對數收益率
             # r(i) = ln(P(i) / P(i-1))
-            log_returns = np.log(price_series / price_series.shift(1))
+            log_returns = np.log(clean_prices / clean_prices.shift(1))
             
             # 移除 NaN 值（第一個數據點）
             log_returns = log_returns.dropna()
             
+            # 🔧 BUG-18-03 Fix: 檢查並過濾 inf 值
+            if np.isinf(log_returns).any():
+                inf_count = np.isinf(log_returns).sum()
+                logger.warning(f"  檢測到 {inf_count} 個 inf 值，過濾中...")
+                log_returns = log_returns.replace([np.inf, -np.inf], np.nan).dropna()
+            
             if len(log_returns) < 2:
-                raise ValueError(f"數據點不足，需要至少 2 個數據點，實際: {len(log_returns)}")
+                raise ValueError(f"過濾 NaN/inf 後數據點不足，需要至少 2 個數據點，實際: {len(log_returns)}")
             
             logger.info(f"  有效對數收益率數據點: {len(log_returns)}")
             
