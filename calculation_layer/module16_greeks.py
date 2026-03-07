@@ -717,15 +717,22 @@ class GreeksCalculator:
             dividend_yield: 股息率（年化，小數形式），默認 0
         
         返回:
-            float: Vanna 值
+            float: Vanna 值（單位與 Vega 一致：$/百分點/美元）
         
         公式:
-            Vanna = -N'(d1) × d2 / σ
+            Vanna = -N'(d1) × d2 / σ / 100
             
             其中:
             - N'(d1) = 標準正態概率密度函數
             - d2 = d1 - σ√T
             - σ = 波動率
+            - 除以 100 是為了與 Vega 的單位一致（$/百分點）
+        
+        單位說明:
+            🔧 BUG-16-03 Fix: Vanna 單位必須與 Vega 一致
+            - Vega 單位: $/百分點（已除以 100）
+            - Vanna = ∂Vega/∂S，所以單位應該是: ($/百分點)/美元
+            - 因此 Vanna 也需要除以 100
         
         解釋:
             - Vanna 衡量波動率變化時 Delta 的變化
@@ -750,8 +757,9 @@ class GreeksCalculator:
                 time_to_expiration, volatility, dividend_yield
             )
             
-            # Vanna = -N'(d1) × d2 / σ
-            vanna = -self.bs_calculator.normal_pdf(d1) * d2 / volatility
+            # 🔧 BUG-16-03 Fix: Vanna 需要除以 100 以與 Vega 單位一致
+            # Vanna = -N'(d1) × d2 / σ / 100
+            vanna = -self.bs_calculator.normal_pdf(d1) * d2 / volatility / 100
             
             logger.debug(f"  Vanna: {vanna:.6f}")
             
@@ -866,13 +874,21 @@ class GreeksCalculator:
             float: Charm 值（每日 Delta 變化）
         
         公式:
-            Charm = -N'(d1) × [2rT - d2×σ×√T] / (2T×σ×√T)
+            Charm_annual = -N'(d1) × [2rT - d2×σ×√T] / (2T×σ×√T)
+            Charm_daily = Charm_annual / 252
             
             其中:
             - N'(d1) = 標準正態概率密度函數
             - r = 無風險利率
             - T = 到期時間
             - σ = 波動率
+            - 252 = 一年交易日數
+        
+        單位說明:
+            🔧 BUG-16-04 Fix: 返回每日 Charm（與 Theta 的 daily 慣例一致）
+            - 原公式計算的是年化 Charm
+            - 除以 252 轉換為每日 Charm
+            - 與 calculate_theta() 返回每日 Theta 的慣例一致
         
         解釋:
             - Charm 衡量時間流逝對 Delta 的影響
@@ -890,7 +906,7 @@ class GreeksCalculator:
             ...     volatility=0.20,
             ...     option_type='call'
             ... )
-            >>> print(f"Charm: {charm:.6f}")
+            >>> print(f"Charm (daily): {charm:.6f}")
         """
         try:
             # 計算 d1, d2
@@ -901,18 +917,21 @@ class GreeksCalculator:
             
             sqrt_t = math.sqrt(time_to_expiration)
             
-            # Charm = -N'(d1) × [2rT - d2×σ×√T] / (2T×σ×√T)
+            # Charm_annual = -N'(d1) × [2rT - d2×σ×√T] / (2T×σ×√T)
             numerator = 2 * risk_free_rate * time_to_expiration - d2 * volatility * sqrt_t
             denominator = 2 * time_to_expiration * volatility * sqrt_t
             
-            charm = -self.bs_calculator.normal_pdf(d1) * numerator / denominator
+            charm_annual = -self.bs_calculator.normal_pdf(d1) * numerator / denominator
+            
+            # 🔧 BUG-16-04 Fix: 轉換為每日 Charm（與 Theta 慣例一致）
+            charm_daily = charm_annual / 252.0
             
             # Call 和 Put 的 Charm 公式相同（在 Black-Scholes 框架下）
             # 但符號可能不同
             
-            logger.debug(f"  Charm ({option_type}): {charm:.6f}")
+            logger.debug(f"  Charm ({option_type}, daily): {charm_daily:.6f}")
             
-            return charm
+            return charm_daily
             
         except Exception as e:
             logger.error(f"✗ 計算 Charm 失敗: {e}")
