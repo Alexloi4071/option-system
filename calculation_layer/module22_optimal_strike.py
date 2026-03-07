@@ -395,24 +395,21 @@ class OptimalStrikeCalculator:
             return self.DEFAULT_IV
         
         # 檢測格式並轉換
-        if 5.0 <= raw_iv <= 300.0:
+        # 🔧 BUG-22-04 Fix: 修改條件順序，正確處理 3.0-5.0 範圍
+        if 0.05 <= raw_iv <= 5.0:
+            # 小數形式 (5%-500%)
+            normalized_iv = raw_iv
+            logger.debug(f"  IV 已是小數形式: {normalized_iv:.4f}")
+        elif 5.0 < raw_iv <= 300.0:
             # 百分比形式 (5-300) -> 轉換為小數
             normalized_iv = raw_iv / 100.0
             logger.debug(f"  IV 格式轉換: {original_iv}% -> {normalized_iv:.4f} (百分比->小數)")
-        elif 0.05 <= raw_iv <= 3.0:
-            # 已經是小數形式
-            normalized_iv = raw_iv
-            logger.debug(f"  IV 已是小數形式: {normalized_iv:.4f}")
         elif raw_iv > 300.0:
             # 異常高的百分比值
             normalized_iv = raw_iv / 100.0
             logger.warning(f"  IV 異常高 ({raw_iv})，轉換為 {normalized_iv:.4f}")
-        elif raw_iv < 0.05 and raw_iv > 0:
-            # 非常低的小數值
-            normalized_iv = raw_iv
-            logger.debug(f"  IV 非常低: {normalized_iv:.4f}")
         else:
-            # 其他情況使用默認值
+            # raw_iv < 0.05: 非常低的值或無法識別
             logger.warning(f"  IV 格式無法識別 ({raw_iv})，使用默認值 {self.DEFAULT_IV}")
             return self.DEFAULT_IV
         
