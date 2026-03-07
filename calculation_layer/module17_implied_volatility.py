@@ -129,6 +129,7 @@ class ImpliedVolatilityCalculator:
         self,
         max_iterations: int = 100,
         tolerance: float = 0.0001,
+        relative_tolerance: float = 0.001,  # 🔧 BUG-17-03 Fix: 新增相對誤差容忍度 (0.1%)
         min_volatility: float = 0.001,
         max_volatility: float = 5.0
     ):
@@ -138,6 +139,7 @@ class ImpliedVolatilityCalculator:
         參數:
             max_iterations: 最大迭代次數（默認 100）
             tolerance: 收斂容差（默認 0.0001）
+            relative_tolerance: 相對誤差容忍度（默認 0.001 = 0.1%）
             min_volatility: 最小波動率（默認 0.1%）
             max_volatility: 最大波動率（默認 500%）
         """
@@ -145,12 +147,14 @@ class ImpliedVolatilityCalculator:
         self.greeks_calculator = GreeksCalculator()
         self.max_iterations = max_iterations
         self.tolerance = tolerance
+        self.relative_tolerance = relative_tolerance  # 🔧 BUG-17-03 Fix
         self.min_volatility = min_volatility
         self.max_volatility = max_volatility
         
         logger.info("* 隱含波動率計算器已初始化")
         logger.info(f"  最大迭代次數: {max_iterations}")
         logger.info(f"  收斂容差: {tolerance}")
+        logger.info(f"  相對誤差容忍度: {relative_tolerance*100:.2f}%")  # 🔧 BUG-17-03 Fix
         logger.info(f"  波動率範圍: {min_volatility*100:.1f}% - {max_volatility*100:.1f}%")
     
     def _get_initial_guess(
@@ -295,12 +299,16 @@ class ImpliedVolatilityCalculator:
                 bs_price = bs_result.option_price
                 price_diff = bs_price - market_price
                 
+                # 🔧 BUG-17-03 Fix: 使用相對誤差 + 絕對誤差混合條件
+                # adaptive_tolerance = max(tolerance, market_price * relative_tolerance)
+                adaptive_tolerance = max(self.tolerance, market_price * self.relative_tolerance)
+                
                 # 檢查收斂
-                if abs(price_diff) < self.tolerance:
+                if abs(price_diff) < adaptive_tolerance:
                     converged = True
                     logger.info(f"  * 收斂於第 {iteration + 1} 次迭代")
                     logger.info(f"    隱含波動率: {volatility*100:.2f}%")
-                    logger.info(f"    價格差異: ${abs(price_diff):.6f}")
+                    logger.info(f"    價格差異: ${abs(price_diff):.6f} (容忍度: ${adaptive_tolerance:.6f})")
                     break
                 
                 # 計算 Vega
