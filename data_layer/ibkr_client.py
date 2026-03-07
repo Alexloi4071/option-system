@@ -57,6 +57,14 @@ BACKOFF_BASE = 2.0
 BACKOFF_MAX = 60.0
 
 # ============================================================================
+# Dark Pool 數據常量
+# ============================================================================
+DARK_POOL_TICK_TAGS   = '233,375'       # Tick 48 (rtVolume) + Tick 77 (rtTradeVolume)
+DARK_POOL_VWAP_TAG    = '258'           # Tick 74 (VWAP) - 備用
+DARK_POOL_EXCHANGE    = 'D'             # FINRA ADF / Dark Pool
+DARK_POOL_BLOCK_SIZE  = 10_000          # 大單門檻（股數）
+
+# ============================================================================
 # Generic Tick Tags 完整配置
 # 參考: https://interactivebrokers.github.io/tws-api/tick_types.html
 # ============================================================================
@@ -2122,6 +2130,280 @@ class IBKRClient:
         except Exception as e:
             self._record_error(0, str(e), f'get_stock_full_data({ticker})')
             logger.error(f"x Fix 11 獲取完整股票數據失敗: {e}")
+            return None
+
+    def get_dark_pool_ticks(
+        self,
+        ticker: str,
+        duration_seconds: int    = 60,
+        min_block_size: int      = DARK_POOL_BLOCK_SIZE,
+        include_vwap: bool       = True,
+        method: str              = 'both',   # 'diff' | 'exchange' | 'both'
+    ) -> Optional[Dict[str, Any]]:
+        """
+        獲取 Dark Pool 訊號數據（雙方法交叉驗證）
+
+        方法 A（差值法）── reqMktData + genericTickList='233,375'
+          rtVolume   (Tick 48, tag 233) = 全部成交量（含 Dark Pool）
+          rtTradeVolume (Tick 77, tag 375) = 只含可回報交易所成交量
+          DP Volume = rtVolume_total - rtTradeVolume_total
+
+        方法 B（Exchange 過濾法）── reqTickByTickData(AllLast) + exchange=='D'
+          exchange=='D' 代表 FINRA ADF，即 Dark Pool 成交回報
+
+        VWAP 來源（優先序）：
+          1. Tick 48 rtVolume 字串第 5 欄（方法 A 附帶，最即時）
+          2. Tick 74（tag 258），若方法 A 訂閱失敗時啟用
+
+        參數:
+            ticker:           股票代碼
+            duration_seconds: 採樣時長（秒），建議生產環境用 300（5 分鐘）
+            min_block_size:   大單門檻（股數），預設 10,000
+            include_vwap:     是否解析 VWAP（略增 CPU）
+            method:           'diff'（僅差值法）| 'exchange'（僅交易所過濾）| 'both'（雙重驗證）
+
+        返回:
+            {
+              # ── 差值法結果（method A） ──────────────────────
+              'rt_volume_total':      int,    # Tick 48 累計（全部成交）
+              'rt_trade_volume_total': int,   # Tick 77 累計（可回報成交）
+              'dp_volume_diff':       int,    # 差值法推算 DP 量 = Tick48 - Tick77
+              'dp_ratio_diff':        float,  # DP 比例（差值法）0-100%
+
+              # ── 交易所過濾法結果（method B） ──────────────────
+              'dp_volume_exchange':   int,    # exchange=='D' 成交量合計
+              'dp_ratio_exchange':    float,  # DP 比例（交易所過濾法）0-100%
+              'dp_block_count':       int,    # 大單筆數（size >= min_block_size）
+              'dp_block_volume':      int,    # 大單總量
+              'dp_ticks':             List[TickByTickData],  # 原始 DP tick list
+
+              # ── VWAP ─────────────────────────────────────────
+              'vwap':                 float,  # 當前 VWAP（Tick 48 解析）
+
+              # ── 交叉驗證 ─────────────────────────────────────
+              'methods_agree':        bool,   # 兩方法 DP ratio 差距 < 5%
+              'dp_ratio_consensus':   float,  # 兩方法平均（若 both）
+
+              # ── Metadata ─────────────────────────────────────
+              'ticker':               str,
+              'duration_seconds':     int,
+              'min_block_size':       int,
+              'timestamp_start':      str,   # ISO 8601
+              'timestamp_end':        str,
+              'data_source':          'ibkr_dp',
+              'warnings':             List[str],
+            }
+            None  ← 連線失敗或無法獲取數據
+        """
+        if not self.is_connected():
+            if not self.connect():
+                logger.warning(f"! {ticker}: IBKR 未連接，無法獲取 Dark Pool 數據")
+                return None
+
+        from datetime import datetime, timezone
+        import math
+
+        warnings: list = []
+        result: Dict[str, Any] = {
+            'ticker':           ticker,
+            'duration_seconds': duration_seconds,
+            'min_block_size':   min_block_size,
+            'timestamp_start':  datetime.now(timezone.utc).isoformat(),
+            'data_source':      'ibkr_dp',
+            'warnings':         warnings,
+            # 差值法預設
+            'rt_volume_total':       0,
+            'rt_trade_volume_total':  0,
+            'dp_volume_diff':         0,
+            'dp_ratio_diff':          0.0,
+            # 交易所法預設
+            'dp_volume_exchange':    0,
+            'dp_ratio_exchange':     0.0,
+            'dp_block_count':        0,
+            'dp_block_volume':       0,
+            'dp_ticks':              [],
+            # VWAP
+            'vwap':                  None,
+            # 交叉驗證
+            'methods_agree':         None,
+            'dp_ratio_consensus':    None,
+        }
+
+        try:
+            stock = Stock(ticker, 'SMART', 'USD')
+            self.ib.qualifyContracts(stock)
+
+            # ════════════════════════════════════════════════════
+            # 方法 A：reqMktData + Tick 48 (233) + Tick 77 (375)
+            # ════════════════════════════════════════════════════
+            run_diff = method in ('diff', 'both')
+
+            rt_volume_accum      = 0.0  # Tick 48 累計
+            rt_trade_vol_accum   = 0.0  # Tick 77 累計
+            last_vwap            = None
+
+            if run_diff:
+                # 構建 tick tag 字串
+                tags_to_use = DARK_POOL_TICK_TAGS
+                if include_vwap:
+                    tags_to_use = DARK_POOL_TICK_TAGS + ',' + DARK_POOL_VWAP_TAG  # '233,258,375'
+
+                logger.info(f"  方法 A：reqMktData with genericTickList='{tags_to_use}'")
+                mkt_ticker = self.ib.reqMktData(stock, tags_to_use, False, False)
+
+                # 等待 Tick 48 / 77 資料填入
+                start_a = time.time()
+                prev_rt_vol   = 0.0
+                prev_rt_trade = 0.0
+
+                while time.time() - start_a < duration_seconds:
+                    self.ib.sleep(0.5)
+
+                    # ── Tick 48: rtVolume 字串解析 ──────────────
+                    # 格式: "price;size;unixTimeMs;totalVolume;vwap;singleTrade"
+                    rt_vol_str = getattr(mkt_ticker, 'rtVolume', None)
+                    if rt_vol_str:
+                        try:
+                            parts = str(rt_vol_str).split(';')
+                            if len(parts) >= 4:
+                                total_vol = float(parts[3])  # 累計總量（IBKR 原生）
+                                if total_vol > prev_rt_vol:
+                                    rt_volume_accum += (total_vol - prev_rt_vol)
+                                    prev_rt_vol = total_vol
+
+                                # VWAP 解析（第 5 欄）
+                                if include_vwap and len(parts) >= 5:
+                                    vwap_val = float(parts[4]) if parts[4] else None
+                                    if vwap_val and not math.isnan(vwap_val) and vwap_val > 0:
+                                        last_vwap = vwap_val
+                        except (ValueError, IndexError):
+                            pass
+
+                    # ── Tick 77: rtTradeVolume（可回報成交） ────
+                    rt_trade_vol = getattr(mkt_ticker, 'rtTradeVolume', None)
+                    if rt_trade_vol is not None:
+                        try:
+                            tv = float(rt_trade_vol)
+                            if not math.isnan(tv) and tv > prev_rt_trade:
+                                rt_trade_vol_accum += (tv - prev_rt_trade)
+                                prev_rt_trade = tv
+                        except (TypeError, ValueError):
+                            pass
+
+                    # ── Tick 74: 備用 VWAP（若 Tick 48 沒有） ──
+                    if include_vwap and last_vwap is None:
+                        tick74_vwap = getattr(mkt_ticker, 'vwap', None)
+                        if tick74_vwap is not None:
+                            try:
+                                v = float(tick74_vwap)
+                                if not math.isnan(v) and v > 0:
+                                    last_vwap = v
+                            except (TypeError, ValueError):
+                                pass
+
+                # 取消訂閱
+                try:
+                    self.ib.cancelMktData(stock)
+                except Exception:
+                    pass
+
+                # 填入差值法結果
+                dp_diff = max(0, int(rt_volume_accum - rt_trade_vol_accum))
+                total_a = int(rt_volume_accum)
+
+                result['rt_volume_total']      = total_a
+                result['rt_trade_volume_total'] = int(rt_trade_vol_accum)
+                result['dp_volume_diff']        = dp_diff
+                result['dp_ratio_diff']         = round(dp_diff / total_a * 100, 2) if total_a > 0 else 0.0
+                result['vwap']                  = last_vwap
+
+                if total_a == 0:
+                    warnings.append("方法 A：duration 期間無 rtVolume 更新（可能非交易時段）")
+
+                logger.info(
+                    f"  方法 A 完成：rtVol={total_a}, rtTradeVol={int(rt_trade_vol_accum)}, "
+                    f"DP={dp_diff} ({result['dp_ratio_diff']:.1f}%), VWAP={last_vwap}"
+                )
+
+            # ════════════════════════════════════════════════════
+            # 方法 B：reqTickByTickData + exchange=='D' 過濾
+            # ════════════════════════════════════════════════════
+            run_exchange = method in ('exchange', 'both')
+
+            dp_ticks_b:  list = []
+            dp_vol_b:    int  = 0
+            total_vol_b: int  = 0
+            block_count  = 0
+            block_vol    = 0
+
+            if run_exchange:
+                logger.info(f"  方法 B：reqTickByTickData AllLast, exchange_filter='D'")
+
+                all_ticks_b:  list = []
+
+                # 使用修正後的 req_tick_by_tick_data（注意：不傳 exchange_filter，自己篩）
+                for tick in self.req_tick_by_tick_data(
+                    contract=stock,
+                    tick_type='AllLast',
+                    exchange_filter=None,      # 先不過濾，讓所有 tick 流入以計算分母
+                    timeout=float(duration_seconds),
+                    max_ticks=None
+                ):
+                    all_ticks_b.append(tick)
+                    total_vol_b += tick.size
+
+                    if tick.exchange == DARK_POOL_EXCHANGE:
+                        dp_ticks_b.append(tick)
+                        dp_vol_b += tick.size
+
+                        if tick.size >= min_block_size:
+                            block_count += 1
+                            block_vol   += tick.size
+
+                result['dp_volume_exchange'] = dp_vol_b
+                result['dp_ratio_exchange']  = round(dp_vol_b / total_vol_b * 100, 2) if total_vol_b > 0 else 0.0
+                result['dp_block_count']     = block_count
+                result['dp_block_volume']    = block_vol
+                result['dp_ticks']           = dp_ticks_b   # 原始 DP tick list
+
+                if total_vol_b == 0:
+                    warnings.append("方法 B：duration 期間無 AllLast tick（可能非交易時段或 TWS 未授權）")
+
+                logger.info(
+                    f"  方法 B 完成：allTicks={len(all_ticks_b)}, DP ticks={len(dp_ticks_b)}, "
+                    f"DP vol={dp_vol_b} ({result['dp_ratio_exchange']:.1f}%), "
+                    f"block trades={block_count}"
+                )
+
+            # ════════════════════════════════════════════════════
+            # 交叉驗證（method=='both' 時）
+            # ════════════════════════════════════════════════════
+            if run_diff and run_exchange:
+                ratio_a = result['dp_ratio_diff']
+                ratio_b = result['dp_ratio_exchange']
+                diff_pct = abs(ratio_a - ratio_b)
+
+                result['methods_agree']      = diff_pct < 5.0  # 差距 < 5% 視為一致
+                result['dp_ratio_consensus'] = round((ratio_a + ratio_b) / 2, 2)
+
+                if not result['methods_agree']:
+                    warnings.append(
+                        f"方法 A ({ratio_a:.1f}%) 與方法 B ({ratio_b:.1f}%) "
+                        f"差距 {diff_pct:.1f}%，超過 5% 門檻，建議人工確認"
+                    )
+                logger.info(
+                    f"  交叉驗證：agree={result['methods_agree']}, "
+                    f"consensus DP ratio={result['dp_ratio_consensus']}%"
+                )
+
+            result['timestamp_end'] = datetime.now(timezone.utc).isoformat()
+            return result
+
+        except Exception as e:
+            self._record_error(0, str(e), f'get_dark_pool_ticks({ticker})')
+            logger.error(f"x get_dark_pool_ticks 失敗: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return None
 
     def __enter__(self):

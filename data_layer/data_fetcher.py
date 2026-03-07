@@ -2843,11 +2843,138 @@ class DataFetcher:
         return snapshot
     
     # ========================================================================
+    # Dark Pool 數據獲取（Layer 2）
+    # ========================================================================
+    
+    def get_dark_pool_data(
+        self,
+        ticker: str,
+        duration_seconds: int = 60,
+        min_block_size: int   = 10_000,
+        method: str           = 'both',
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Layer 2：Dark Pool 數據聚合函式
+
+        職責邊界：
+          - 只負責呼叫 IBKR Layer 1 並做「資料清洗 + 欄位標準化」
+          - 不做交易訊號決策（那是 Layer 3 DarkPoolAnalyzer 的職責）
+          - 如果 IBKR 不可用，返回 None + 記錄 warning（不 fallback 其他來源）
+            原因：Dark Pool 數據只有 IBKR 能提供，沒有等效替代源
+
+        Field Authority Map（遵循 data_policy.py）：
+          dp_volume    → IBKR ONLY（不可被其他來源覆蓋）
+          dp_ratio     → IBKR ONLY
+          vwap         → 優先 Tick 48 解析，備用 Tick 74
+          block_trades → IBKR ONLY
+
+        返回（標準化後的 DarkPoolSnapshot schema）：
+            {
+              'ticker':             str,
+              'dp_volume':          int,        # 最佳 DP 量估計（consensus 優先）
+              'dp_ratio':           float,      # 最佳 DP 比例 0-100%
+              'dp_ratio_diff':      float,      # 差值法（方法 A）
+              'dp_ratio_exchange':  float,      # 交易所過濾法（方法 B）
+              'methods_agree':      bool,
+              'vwap':               Optional[float],
+              'block_count':        int,
+              'block_volume':       int,
+              'raw_ticks':          List[TickByTickData],  # 原始 DP tick
+              'duration_seconds':   int,
+              'data_source':        'ibkr_dp',
+              'data_quality':       str,        # 'complete' | 'partial' | 'unavailable'
+              'timestamp':          str,
+              'warnings':           List[str],
+            }
+        """
+        logger.info(f"DataFetcher: 獲取 {ticker} Dark Pool 數據 (duration={duration_seconds}s)...")
+
+        # ── IBKR 可用性檢查 ──────────────────────────────────────
+        if not self.ibkr_client or not self.ibkr_client.is_connected():
+            logger.warning(f"! {ticker}: IBKR 不可用，Dark Pool 數據無法獲取")
+            return None  # 無替代來源，直接 None
+
+        # ── 呼叫 Layer 1 ─────────────────────────────────────────
+        raw = self.ibkr_client.get_dark_pool_ticks(
+            ticker=ticker,
+            duration_seconds=duration_seconds,
+            min_block_size=min_block_size,
+            method=method,
+        )
+
+        if raw is None:
+            logger.warning(f"! {ticker}: Layer 1 get_dark_pool_ticks() 返回 None")
+            return None
+
+        warnings = raw.get('warnings', [])
+
+        # ── 選取最佳 DP 量估計 ────────────────────────────────────
+        dp_volume_best = 0
+        dp_ratio_best  = 0.0
+
+        ratio_diff     = raw.get('dp_ratio_diff', 0.0)
+        ratio_exchange = raw.get('dp_ratio_exchange', 0.0)
+        consensus      = raw.get('dp_ratio_consensus')
+
+        if consensus is not None:
+            dp_ratio_best  = consensus
+            # 量估計：取兩方法平均
+            vol_diff = raw.get('dp_volume_diff', 0)
+            vol_exch = raw.get('dp_volume_exchange', 0)
+            dp_volume_best = (vol_diff + vol_exch) // 2
+        elif ratio_diff > 0:
+            dp_ratio_best  = ratio_diff
+            dp_volume_best = raw.get('dp_volume_diff', 0)
+        elif ratio_exchange > 0:
+            dp_ratio_best  = ratio_exchange
+            dp_volume_best = raw.get('dp_volume_exchange', 0)
+        else:
+            warnings.append("無法計算有效 DP ratio，兩方法均為 0")
+
+        # ── 數據質量評估 ──────────────────────────────────────────
+        has_diff     = raw.get('rt_volume_total', 0) > 0
+        has_exchange = raw.get('dp_volume_exchange', 0) >= 0 and raw.get('dp_ticks') is not None
+
+        if has_diff and has_exchange:
+            data_quality = 'complete'
+        elif has_diff or has_exchange:
+            data_quality = 'partial'
+        else:
+            data_quality = 'unavailable'
+
+        snapshot = {
+            'ticker':            ticker,
+            'dp_volume':         dp_volume_best,
+            'dp_ratio':          round(dp_ratio_best, 2),
+            'dp_ratio_diff':     round(ratio_diff, 2),
+            'dp_ratio_exchange': round(ratio_exchange, 2),
+            'methods_agree':     raw.get('methods_agree'),
+            'vwap':              raw.get('vwap'),
+            'block_count':       raw.get('dp_block_count', 0),
+            'block_volume':      raw.get('dp_block_volume', 0),
+            'raw_ticks':         raw.get('dp_ticks', []),
+            'duration_seconds':  duration_seconds,
+            'data_source':       'ibkr_dp',
+            'data_quality':      data_quality,
+            'timestamp':         raw.get('timestamp_end', ''),
+            'warnings':          warnings,
+        }
+
+        logger.info(
+            f"* DataFetcher DP: {ticker} "
+            f"dp_ratio={snapshot['dp_ratio']}%, "
+            f"volume={snapshot['dp_volume']}, "
+            f"blocks={snapshot['block_count']}, "
+            f"quality={data_quality}"
+        )
+        return snapshot
+    
+    # ========================================================================
     # 原有的 get_stock_info（保留以保持向後兼容）
     # 未來將逐步遷移到新的 get_stock_quote_primary + merge_stock_snapshot
     # ========================================================================
     
-    def get_stock_info(self, ticker):
+    def get_stock_info(self, ticker, **kwargs):
         """
         獲取股票基本信息（支持多数据源降级）
         
@@ -3109,6 +3236,27 @@ class DataFetcher:
                         stock_data['mark_price'] = ibkr_data.get('mark_price', stock_data.get('mark_price'))
             except Exception as e:
                 logger.debug(f"合併 IBKR 進階 Tick 時發生錯誤: {e}")
+
+        # ── Dark Pool 數據（可選，需 IBKR + 明確要求） ──────────────
+        # 預設不自動獲取（duration=60s 會阻塞主流程）
+        # 呼叫方透過 include_dark_pool=True 顯式請求
+        # 使用方式: get_stock_info(ticker, include_dark_pool=True, dp_duration=30)
+        if stock_data and kwargs.get('include_dark_pool', False):
+            try:
+                dp_data = self.get_dark_pool_data(
+                    ticker=ticker,
+                    duration_seconds=kwargs.get('dp_duration', 30),
+                    min_block_size=kwargs.get('dp_min_block', 10_000),
+                )
+                if dp_data:
+                    stock_data['dark_pool'] = dp_data
+                    # 欄位級提升（下游可直接用）
+                    stock_data['dp_ratio']      = dp_data['dp_ratio']
+                    stock_data['vwap']          = dp_data['vwap']
+                    stock_data['dp_block_count'] = dp_data['block_count']
+                    logger.info(f"  + Dark Pool 數據已整合: DP ratio={dp_data['dp_ratio']}%")
+            except Exception as e:
+                logger.warning(f"! Dark Pool 數據獲取失敗: {e}")
 
         # 如果前面的主要來源都成功了，返回結果
         if stock_data:
