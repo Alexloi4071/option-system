@@ -284,12 +284,17 @@ class HistoricalVolatilityCalculator:
         """
         try:
             logger.info(f"開始計算 IV/HV 比率...")
-            logger.info(f"  隱含波動率 (IV): {implied_volatility*100:.2f}%")
-            logger.info(f"  歷史波動率 (HV): {historical_volatility*100:.2f}%")
             
             # 第1步: 輸入驗證
-            if implied_volatility <= 0 or historical_volatility <= 0:
-                raise ValueError("波動率必須大於 0")
+            # 🔧 P-6 Fix: 處理 None 和 0 的情況
+            if implied_volatility is None or implied_volatility <= 0:
+                raise ValueError(f"隱含波動率 (IV) 必須大於 0，當前值: {implied_volatility}")
+            
+            if historical_volatility is None or historical_volatility <= 0:
+                raise ValueError(f"歷史波動率 (HV) 必須大於 0，當前值: {historical_volatility}")
+            
+            logger.info(f"  隱含波動率 (IV): {implied_volatility*100:.2f}%")
+            logger.info(f"  歷史波動率 (HV): {historical_volatility*100:.2f}%")
             
             # 第2步: 獲取計算日期
             if calculation_date is None:
