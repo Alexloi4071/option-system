@@ -1625,7 +1625,8 @@ class IBKRClient:
             raw_iv = ticker_data.impliedVolatility if ticker_data.impliedVolatility else None
             normalized_iv = None
             
-            if raw_iv is not None:
+            # 🔧 P-5 Fix: 過濾 IV = 0（無效數據）
+            if raw_iv is not None and raw_iv > 0:
                 try:
                     from data_layer.data_fetcher import IVNormalizer
                     # Extract ticker from contract symbol
@@ -1635,6 +1636,14 @@ class IBKRClient:
                     # Fallback: manual conversion
                     normalized_iv = raw_iv * 100 if 0 < raw_iv < 1.0 else raw_iv
                     logger.warning("IVNormalizer not available, using manual conversion")
+            elif raw_iv == 0:
+                logger.debug(f"IV = 0 (無效數據)，設為 None")
+                normalized_iv = None
+            
+            # 🔧 P-5 Fix: 過濾 openInterest = 0 的情況（設為 None 而非 0，避免下游除零）
+            open_interest = ticker_data.openInterest if ticker_data.openInterest else None
+            if open_interest == 0:
+                open_interest = None
             
             return {
                 'strike': contract.strike,
@@ -1644,7 +1653,7 @@ class IBKRClient:
                 'ask': float(ticker_data.ask) if ticker_data.ask else 0.0,
                 'last': float(ticker_data.last) if ticker_data.last else 0.0,
                 'volume': int(ticker_data.volume) if ticker_data.volume else 0,
-                'openInterest': int(ticker_data.openInterest) if ticker_data.openInterest else 0,
+                'openInterest': int(open_interest) if open_interest else None,
                 'impliedVolatility': normalized_iv,
                 'delta': float(ticker_data.modelGreeks.delta) if ticker_data.modelGreeks and ticker_data.modelGreeks.delta else None,
                 'gamma': float(ticker_data.modelGreeks.gamma) if ticker_data.modelGreeks and ticker_data.modelGreeks.gamma else None,

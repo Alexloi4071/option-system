@@ -589,9 +589,13 @@ class BlackScholesCalculator:
             logger.warning(f"⚠ 到期時間超過10年: {time_to_expiration:.2f}年")
         
         # 驗證波動率
-        if volatility < 0:
-            logger.error(f"✗ 波動率不能為負: {volatility}")
+        # 🔧 P-5 Fix: volatility = 0 會導致 d1/d2 計算中除零錯誤
+        if volatility <= 0:
+            logger.error(f"✗ 波動率必須大於 0: {volatility}")
             return False
+        
+        if volatility < 0.01:
+            logger.warning(f"⚠ 波動率異常低 (<1%): {volatility*100:.4f}%，可能導致數值不穩定")
         
         if volatility > 5:
             logger.error(f"✗ 波動率超出合理範圍 [0%, 500%]: {volatility*100:.2f}%")
