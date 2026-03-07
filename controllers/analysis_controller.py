@@ -148,13 +148,13 @@ class AnalysisController:
             try:
                 ibkr_stock_data = self.ibkr.get_stock_full_data(ticker) or {}
                 dividend_yield = ibkr_stock_data.get('dividend_yield', 0.0)
-                historical_volatility = ibkr_stock_data.get('historical_volatility')
+                historical_volatility_30d = ibkr_stock_data.get('historical_volatility_30d')  # Fix OPRA Review 1.4
                 mark_price = ibkr_stock_data.get('mark_price')
 
                 if dividend_yield > 0:
                     logger.info(f"  Fix 11 ✅ Dividend Yield: {dividend_yield*100:.2f}% (Tick 456)")
-                if historical_volatility:
-                    logger.info(f"  Fix 11 ✅ HV-30: {historical_volatility*100:.2f}% (Tick 104)")
+                if historical_volatility_30d:
+                    logger.info(f"  Fix 11 ✅ HV-30: {historical_volatility_30d:.2f}% (Tick 104)")  # 已是 percentage
                 if mark_price:
                     logger.info(f"  Fix 11 ✅ Mark Price: ${mark_price:.4f} (Tick 232)")
 

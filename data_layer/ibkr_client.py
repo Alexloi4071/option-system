@@ -2056,6 +2056,7 @@ class IBKRClient:
 
             # ── Tick 104: Historical Volatility 30d ─────────
             # Fix 11: 直接從 IBKR 獲取 HV，替代 Yahoo Finance 重算
+            # Fix OPRA Review 1.3 & 1.4: 保持 percentage 格式，修正欄位名
             hv = getattr(ticker_data, 'histVolatility', None)
             if hv is None:
                 # ib_insync 可能用不同屬性名
@@ -2064,18 +2065,19 @@ class IBKRClient:
                 try:
                     hv_val = float(hv)
                     if not math.isnan(hv_val) and hv_val > 0:
-                        result['historical_volatility'] = hv_val / 100  # 轉為小數
+                        result['historical_volatility_30d'] = hv_val  # 保持 percentage 格式 (25.0 = 25%)
                         logger.info(f"  Tick 104 HV-30: {hv_val:.2f}%  ← 直接使用 IBKR 數據")
                 except (TypeError, ValueError):
                     pass
 
             # ── Tick 106: Implied Volatility 30d ────────────
+            # Fix OPRA Review 1.3: 保持 percentage 格式
             iv_30 = getattr(ticker_data, 'impliedVolatility', None)
             if iv_30 is not None:
                 try:
                     iv_val = float(iv_30)
                     if not math.isnan(iv_val) and iv_val > 0:
-                        result['implied_volatility_30d'] = iv_val / 100
+                        result['implied_volatility_30d'] = iv_val  # 保持 percentage 格式 (25.0 = 25%)
                         logger.info(f"  Tick 106 IV-30:  {iv_val:.2f}%")
                 except (TypeError, ValueError):
                     pass

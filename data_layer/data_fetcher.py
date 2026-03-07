@@ -2738,11 +2738,11 @@ class DataFetcher:
             ibkr_data = self.ibkr_client.get_stock_full_data(ticker)
             
             if ibkr_data:
-                # 注意：不包含 price 欄位，避免被誤用為主股價
+                # Fix OPRA Review 1.3 & 1.4: IBKR 已返回 percentage 格式，不需要再 *100
                 advanced: StockAdvancedSchema = {
                     'ticker': ticker,
-                    'historical_volatility_30d': ibkr_data.get('historical_volatility', 0) * 100 if ibkr_data.get('historical_volatility') else None,
-                    'implied_volatility_30d': ibkr_data.get('implied_volatility_30d', 0) * 100 if ibkr_data.get('implied_volatility_30d') else None,
+                    'historical_volatility_30d': ibkr_data.get('historical_volatility_30d'),  # 已是 percentage
+                    'implied_volatility_30d': ibkr_data.get('implied_volatility_30d'),  # 已是 percentage
                     'dividend_yield': ibkr_data.get('dividend_yield', 0),
                     'annual_dividend': ibkr_data.get('annual_dividend', 0),
                     'mark_price': ibkr_data.get('mark_price'),
