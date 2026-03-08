@@ -81,7 +81,7 @@ class VolatilitySmileResult:
     """波動率微笑分析結果"""
     # ATM 信息
     atm_strike: float
-    atm_iv: float
+    atm_iv: Optional[float]
     current_price: float
     
     # IV Skew 指標
@@ -119,13 +119,18 @@ class VolatilitySmileResult:
     trading_recommendations: List[str] = field(default_factory=list)
     recommendation_confidence: float = 0.0  # 0-1
     
+    # 數據質量標記
+    data_quality: str = "sufficient"  # "sufficient", "insufficient"
+    data_quality_reason: str = ""
+    valid_data_points: int = 0
+    
     # 計算時間戳
     calculation_date: str = ""
     
     def to_dict(self) -> Dict:
         return {
             'atm_strike': round(self.atm_strike, 2),
-            'atm_iv': round(self.atm_iv * 100, 2),
+            'atm_iv': round(self.atm_iv * 100, 2) if self.atm_iv is not None else None,
             'current_price': round(self.current_price, 2),
             'skew': round(self.skew * 100, 2),
             'skew_type': self.skew_type,
@@ -146,6 +151,9 @@ class VolatilitySmileResult:
             'anomaly_count': self.anomaly_count,
             'trading_recommendations': self.trading_recommendations,
             'recommendation_confidence': round(self.recommendation_confidence, 2),
+            'data_quality': self.data_quality,
+            'data_quality_reason': self.data_quality_reason,
+            'valid_data_points': self.valid_data_points,
             'calculation_date': self.calculation_date
         }
 
@@ -219,6 +227,18 @@ class VolatilitySmileAnalyzer:
             # 3. 提取並標準化 IV
             call_ivs = self._extract_iv_data(calls_data, 'call')
             put_ivs = self._extract_iv_data(puts_data, 'put')
+            
+            # 檢查有效數據點數量
+            total_valid_points = len(call_ivs) + len(put_ivs)
+            
+            if total_valid_points < 3:
+                logger.warning(f"! 有效 IV 點不足 ({total_valid_points} < 3)，無法生成完整分析")
+                return self._create_insufficient_data_result(
+                    current_price=current_price,
+                    atm_strike=atm_strike,
+                    valid_points=total_valid_points,
+                    reason="數據點不足，無法生成完整波動率微笑曲線"
+                )
             
             atm_iv = self._get_atm_iv(call_ivs, atm_strike)
             
@@ -783,3 +803,39 @@ class VolatilitySmileAnalyzer:
             current_price=current_price,
             calculation_date=datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         )
+    
+    def _create_insufficient_data_result(
+        self,
+        current_price: float,
+        atm_strike: Optional[float],
+        valid_points: int,
+        reason: str
+    ) -> VolatilitySmileResult:
+        """
+        創建數據不足的結果
+        
+        參數:
+            current_price: 當前股價
+            atm_strike: ATM 行使價（如果可用）
+            valid_points: 有效數據點數量
+            reason: 數據不足的原因
+        
+        返回:
+            VolatilitySmileResult: 標註數據不足的結果
+        """
+        result = VolatilitySmileResult(
+            atm_strike=atm_strike or current_price,
+            atm_iv=None,
+            current_price=current_price,
+            calculation_date=datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        )
+        result.iv_environment = '⚪ 數據不足'
+        result.trading_recommendations = [f"⚠️ {reason}"]
+        result.recommendation_confidence = 0.0
+        
+        # 添加數據質量標記
+        result.data_quality = 'insufficient'
+        result.data_quality_reason = reason
+        result.valid_data_points = valid_points
+        
+        return result

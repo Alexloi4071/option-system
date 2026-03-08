@@ -31,8 +31,8 @@ class LongOptionAnalyzer:
         premium: float,
         days_to_expiration: int,
         delta: float = 0.5,
-        theta: float = 0.0,
-        iv: float = 0.0,
+        theta: Optional[float] = None,
+        iv: Optional[float] = None,
         contract_size: int = 100
     ) -> Dict[str, Any]:
         """
@@ -129,8 +129,8 @@ class LongOptionAnalyzer:
         premium: float,
         days_to_expiration: int,
         delta: float = -0.5,
-        theta: float = 0.0,
-        iv: float = 0.0,
+        theta: Optional[float] = None,
+        iv: Optional[float] = None,
         contract_size: int = 100
     ) -> Dict[str, Any]:
         """
@@ -319,12 +319,26 @@ class LongOptionAnalyzer:
     
     def _analyze_theta(
         self,
-        theta: float,
+        theta: Optional[float],
         premium: float,
         days_to_expiration: int,
         contract_size: int
     ) -> Dict[str, Any]:
         """分析 Theta 時間衰減"""
+        
+        # 添加 None 檢查
+        if theta is None:
+            return {
+                'theta_per_share': None,
+                'daily_decay_dollar': None,
+                'weekly_decay_dollar': None,
+                'daily_decay_pct': None,
+                'days_to_expiration': days_to_expiration,
+                'estimated_decay_to_expiry': None,
+                'risk_level': '⚪ 數據不足',
+                'warning': '無 Theta 數據，無法評估時間衰減風險',
+                'suggestion': '建議獲取完整的期權 Greeks 數據'
+            }
         
         daily_decay = abs(theta) * contract_size
         weekly_decay = daily_decay * 5  # 交易日
@@ -373,19 +387,32 @@ class LongOptionAnalyzer:
         else:
             return "✅ 到期日較遠，Theta 影響較小"
     
-    def _analyze_iv_for_long(self, iv: float, option_type: str) -> Dict[str, Any]:
+    def _analyze_iv_for_long(self, iv: Optional[float], option_type: str) -> Dict[str, Any]:
         """分析 IV 對 Long 期權的影響"""
         
+        # 添加 None 檢查
+        if iv is None:
+            return {
+                'current_iv': None,
+                'iv_level': '⚪ 數據不足',
+                'assessment': '無 IV 數據，無法評估期權價格水平',
+                'buy_timing': '⚪ 無法判斷',
+                'vega_risk': '無法評估 Vega 風險'
+            }
+        
+        # 標準化 IV 格式（統一為百分比）
+        iv_pct = iv * 100 if iv <= 1.0 else iv
+        
         # IV 水平評估（對於買方）
-        if iv < 20:
+        if iv_pct < 20:
             iv_level = "🟢 低 IV"
             iv_assessment = "期權便宜，適合買入"
             buy_timing = "✅ 好時機"
-        elif iv < 35:
+        elif iv_pct < 35:
             iv_level = "🟡 中等 IV"
             iv_assessment = "期權價格合理"
             buy_timing = "🟡 可以買入"
-        elif iv < 50:
+        elif iv_pct < 50:
             iv_level = "🟠 較高 IV"
             iv_assessment = "期權較貴，注意 IV 回落風險"
             buy_timing = "⚠️ 謹慎買入"
@@ -395,11 +422,11 @@ class LongOptionAnalyzer:
             buy_timing = "🔴 不建議買入"
         
         return {
-            'current_iv': iv,
+            'current_iv': iv_pct,
             'iv_level': iv_level,
             'assessment': iv_assessment,
             'buy_timing': buy_timing,
-            'vega_risk': "IV 下降會導致期權價值下跌" if iv > 30 else "IV 上升會增加期權價值"
+            'vega_risk': "IV 下降會導致期權價值下跌" if iv_pct > 30 else "IV 上升會增加期權價值"
         }
 
     
@@ -441,7 +468,10 @@ class LongOptionAnalyzer:
         
         # 3. Theta 風險評分 (最高 15 分)
         theta_decay_pct = result['theta_analysis']['daily_decay_pct']
-        if theta_decay_pct < 1:
+        if theta_decay_pct is None:
+            # Theta 數據缺失，不調整分數
+            factors.append(('Theta 風險', '+0', '數據不足'))
+        elif theta_decay_pct < 1:
             score += 15
             factors.append(('Theta 風險', '+15', '極低衰減'))
         elif theta_decay_pct < 2:
@@ -456,7 +486,10 @@ class LongOptionAnalyzer:
         
         # 4. IV 評分 (最高 15 分)
         iv = result['iv_analysis']['current_iv']
-        if iv < 20:
+        if iv is None:
+            # IV 數據缺失，不調整分數
+            factors.append(('IV 水平', '+0', '數據不足'))
+        elif iv < 20:
             score += 15
             factors.append(('IV 水平', '+15', '低 IV，期權便宜'))
         elif iv < 35:
@@ -541,10 +574,13 @@ class LongOptionAnalyzer:
             warnings.append(f"⚠️ 盈虧平衡點需股價變動 {breakeven_pct:.1f}%")
         
         # IV 建議
-        if iv > 40:
-            warnings.append(f"⚠️ IV {iv:.1f}% 偏高，注意 IV 回落風險")
-        elif iv < 25:
-            recommendations.append(f"✅ IV {iv:.1f}% 偏低，期權相對便宜")
+        if iv is not None:
+            if iv > 40:
+                warnings.append(f"⚠️ IV {iv:.1f}% 偏高，注意 IV 回落風險")
+            elif iv < 25:
+                recommendations.append(f"✅ IV {iv:.1f}% 偏低，期權相對便宜")
+        else:
+            warnings.append("⚠️ IV 數據缺失，無法評估期權價格水平")
         
         # 時間建議
         if days <= 7:

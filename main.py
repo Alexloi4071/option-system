@@ -2694,6 +2694,7 @@ class OptionsAnalysisSystem:
                     for strategy in strategies:
                         # Task 14.1: 傳入 support_resistance_data 和啟用 enable_max_profit_analysis
                         result = optimal_strike_calc.analyze_strikes(
+                            ticker=ticker,
                             current_price=current_price,
                             option_chain=option_chain_converted,
                             strategy_type=strategy,

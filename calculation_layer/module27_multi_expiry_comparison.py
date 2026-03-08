@@ -158,9 +158,16 @@ class MultiExpiryAnalyzer:
             premium = option_data.get('lastPrice') or option_data.get('last') or \
                       ((option_data.get('bid', 0) + option_data.get('ask', 0)) / 2)
             strike = option_data.get('strike', current_price)
-            iv = option_data.get('impliedVolatility', 0)
-            if iv and iv < 1:  # 如果是小數形式，轉換為百分比
+            iv = option_data.get('impliedVolatility', None)  # Use None instead of 0
+            
+            # Check IV validity and standardize format
+            if iv is None or iv == 0:
+                logger.warning(f"到期日 {expiration} 的 IV 數據缺失或為零")
+                # Continue processing but mark IV as unavailable
+                iv = None
+            elif iv < 1:  # Only check if iv is not None - decimal format, convert to percentage
                 iv = iv * 100
+            
             theta = option_data.get('theta', 0)
             delta = option_data.get('delta', 0.5)
             
@@ -189,7 +196,8 @@ class MultiExpiryAnalyzer:
                 'days': days,
                 'strike': strike,
                 'premium': round(premium, 2),
-                'iv': round(iv, 2),
+                'iv': round(iv, 2) if iv is not None else None,
+                'iv_available': iv is not None,  # Add flag to track IV availability
                 'delta': round(abs(delta), 4),
                 'theta': round(theta, 4),
                 'theta_daily': round(theta_daily, 4),
@@ -224,7 +232,7 @@ class MultiExpiryAnalyzer:
         self,
         days: int,
         premium: float,
-        iv: float,
+        iv: Optional[float],
         theta_pct: float,
         annualized_return: float,
         strategy_type: str
@@ -256,13 +264,17 @@ class MultiExpiryAnalyzer:
             elif theta_pct > 5:
                 score -= 10
             
-            # 3. IV 水平 (Long 策略偏好低 IV)
-            if iv < 25:
-                score += 10
-            elif iv < 35:
-                score += 5
-            elif iv > 50:
-                score -= 10
+            # 3. IV 水平 (Long 策略偏好低 IV) - Add None check
+            if iv is not None:
+                if iv < 25:
+                    score += 10
+                elif iv < 35:
+                    score += 5
+                elif iv > 50:
+                    score -= 10
+            else:
+                # IV 數據缺失，不調整分數但記錄警告
+                logger.warning("IV 數據缺失，評分可能不準確")
             
         else:
             # Short 策略評分邏輯
@@ -286,13 +298,17 @@ class MultiExpiryAnalyzer:
             elif annualized_return > 20:
                 score += 5
             
-            # 3. IV 水平 (Short 策略偏好高 IV)
-            if iv > 50:
-                score += 10
-            elif iv > 35:
-                score += 5
-            elif iv < 20:
-                score -= 10
+            # 3. IV 水平 (Short 策略偏好高 IV) - Add None check
+            if iv is not None:
+                if iv > 50:
+                    score += 10
+                elif iv > 35:
+                    score += 5
+                elif iv < 20:
+                    score -= 10
+            else:
+                # IV 數據缺失，不調整分數但記錄警告
+                logger.warning("IV 數據缺失，評分可能不準確")
         
         # 確保分數在 0-100 範圍內
         score = max(0, min(100, score))
@@ -320,6 +336,12 @@ class MultiExpiryAnalyzer:
         """找出最佳到期日"""
         if not comparison_table:
             return {'best': None, 'reason': '無可用數據'}
+        
+        # Check data completeness - count missing IV data
+        missing_iv_count = sum(1 for exp in comparison_table if exp.get('iv') is None)
+        
+        if missing_iv_count > 0:
+            logger.warning(f"{missing_iv_count}/{len(comparison_table)} 個到期日缺少 IV 數據")
         
         # 按評分排序
         sorted_exps = sorted(comparison_table, key=lambda x: x.get('score', 0), reverse=True)
@@ -356,7 +378,7 @@ class MultiExpiryAnalyzer:
                     'grade': exp.get('grade')
                 })
         
-        return {
+        result = {
             'best_expiration': best.get('expiration'),
             'best_days': best.get('days'),
             'best_score': best.get('score'),
@@ -367,6 +389,12 @@ class MultiExpiryAnalyzer:
             'alternatives': alternatives,
             'strategy_type': strategy_type
         }
+        
+        # Add data quality warning if IV data is missing
+        if missing_iv_count > 0:
+            result['data_quality_warning'] = f"{missing_iv_count} 個到期日缺少 IV 數據"
+        
+        return result
     
     def _analyze_theta_curve(self, comparison_table: List[Dict]) -> Dict[str, Any]:
         """分析 Theta 衰減曲線"""

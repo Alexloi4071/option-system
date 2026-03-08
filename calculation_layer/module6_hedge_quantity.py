@@ -174,6 +174,15 @@ class HedgeQuantityCalculator:
             # 驗證 Delta
             if not isinstance(option_delta, (int, float)):
                 raise ValueError(f"Delta 必須是數字: {option_delta}")
+            
+            # 檢查 Delta 是否過小或為零（深度 OTM 期權）
+            # 使用 0.01 (1%) 作為閾值，低於此值的 delta 被視為過小
+            if abs(option_delta) < 0.01:
+                raise ValueError(
+                    f"Delta 值過小或為零 ({option_delta:.6f})，無法計算對沖量。"
+                    f"深度 OTM 期權不適合用於對沖計算。"
+                )
+            
             if option_delta <= 0 or option_delta > 1:
                 raise ValueError(f"Delta 必須在 0-1 之間: {option_delta}")
             

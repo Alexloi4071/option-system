@@ -56,6 +56,7 @@ logger = logging.getLogger(__name__)
 # 模塊級 LRU 緩存函數（支持 @lru_cache 裝飾器）
 @lru_cache(maxsize=1000)
 def _calculate_greeks_cached(
+    ticker: str,
     stock_price: float,
     strike: float,
     rate: float,
@@ -65,27 +66,29 @@ def _calculate_greeks_cached(
 ) -> tuple:
     """
     緩存的 Greeks 計算（模塊級函數，支持 LRU cache）
-    
+
     使用 @lru_cache 裝飾器實現高效緩存，自動管理緩存大小和淘汰策略。
-    
+
     參數:
+        ticker: 股票代碼（用於區分不同股票的緩存）
         stock_price: 當前股價（保留2位小數）
         strike: 行使價（保留2位小數）
         rate: 無風險利率（保留4位小數）
         time: 到期時間/年（保留4位小數）
         vol: 波動率/小數形式（保留4位小數）
         option_type: 期權類型 ('call' 或 'put')
-    
+
     返回:
         tuple: (delta, gamma, theta, vega, rho)
-    
+
     注意:
         - 此函數使用 @lru_cache，參數必須是 hashable 類型
+        - ticker 參數確保不同股票的 Greeks 不會發生緩存碰撞
         - 輸入參數會被四捨五入以提高緩存命中率
         - 緩存大小限制為 1000 個條目
     """
     from calculation_layer.module16_greeks import GreeksCalculator
-    
+
     try:
         greeks_calc = GreeksCalculator()
         result = greeks_calc.calculate_all_greeks(
@@ -96,7 +99,7 @@ def _calculate_greeks_cached(
             volatility=vol,
             option_type=option_type
         )
-        
+
         # 返回 tuple（hashable）
         return (
             result.delta,
@@ -105,10 +108,11 @@ def _calculate_greeks_cached(
             result.vega,
             result.rho
         )
-        
+
     except Exception as e:
-        logger.error(f"計算 Greeks 失敗: {e}")
+        logger.error(f"計算 Greeks 失敗 (ticker={ticker}): {e}")
         return (0.5, 0.0, 0.0, 0.0, 0.0)  # 返回默認值
+
 
 
 @dataclass
@@ -286,6 +290,7 @@ class OptimalStrikeCalculator:
     
     def _cached_greeks(
         self,
+        ticker: str,
         stock_price: float,
         strike: float,
         rate: float,
@@ -299,6 +304,7 @@ class OptimalStrikeCalculator:
         此方法是模塊級 LRU 緩存函數的包裝器，同時維護緩存統計。
         
         參數:
+            ticker: 股票代碼
             stock_price: 當前股價
             strike: 行使價
             rate: 無風險利率
@@ -319,8 +325,9 @@ class OptimalStrikeCalculator:
         # 檢查緩存（通過 LRU cache 的 cache_info）
         cache_info_before = _calculate_greeks_cached.cache_info()
         
-        # 調用 LRU 緩存函數
+        # 調用 LRU 緩存函數（包含 ticker 參數以避免跨股票緩存碰撞）
         result = _calculate_greeks_cached(
+            ticker,
             stock_price_rounded,
             strike_rounded,
             rate_rounded,
@@ -555,6 +562,7 @@ class OptimalStrikeCalculator:
     
     def analyze_strikes(
         self,
+        ticker: str,
         current_price: float,
         option_chain: Dict[str, Any],
         strategy_type: str,
@@ -568,6 +576,7 @@ class OptimalStrikeCalculator:
         分析多個行使價並計算綜合評分
         
         參數:
+            ticker: 股票代碼
             current_price: 當前股價
             option_chain: 期權鏈數據 {'calls': [...], 'puts': [...]}
             strategy_type: 策略類型 ('long_call', 'long_put', 'short_call', 'short_put')
@@ -702,7 +711,7 @@ class OptimalStrikeCalculator:
                     
                     # 創建分析對象
                     analysis = self._analyze_single_strike(
-                        option, option_type, current_price, strategy_type,
+                        ticker, option, option_type, current_price, strategy_type,
                         days_to_expiration, iv_rank, target_price,
                         uoa_signals.get((strike, option_type), [])  # 傳入對應的異動信號
                     )
@@ -909,6 +918,7 @@ class OptimalStrikeCalculator:
     
     def _analyze_single_strike(
         self,
+        ticker: str,
         option: Dict,
         option_type: str,
         current_price: float,
@@ -990,6 +1000,7 @@ class OptimalStrikeCalculator:
                     
                     # 使用緩存的 Greeks 計算
                     delta_cached, gamma_cached, theta_cached, vega_cached, rho_cached = self._cached_greeks(
+                        ticker=ticker,
                         stock_price=current_price,
                         strike=strike,
                         rate=risk_free_rate,

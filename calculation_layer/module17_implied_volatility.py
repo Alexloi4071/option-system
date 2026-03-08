@@ -284,6 +284,10 @@ class ImpliedVolatilityCalculator:
             # 第4步: Newton-Raphson 迭代
             volatility = initial_guess
             converged = False
+            # 🔧 BUG-17-03 Fix: 二分法搜索範圍（用於 vega 極小情況）
+            bisection_low = self.min_volatility
+            bisection_high = self.max_volatility
+            using_bisection = False  # 標記是否正在使用二分法
             
             for iteration in range(self.max_iterations):
                 # 計算當前波動率下的 BS 價格
@@ -324,10 +328,75 @@ class ImpliedVolatilityCalculator:
                 )
                 vega = vega_per_percent * 100.0
                 
-                # 檢查 Vega 是否太小（避免除以零）
+                # 🔧 BUG-17-03 Fix: 更優雅地處理 vega=0 情況
+                # 對於低價深度 OTM 期權，vega 可能非常小但仍應嘗試收斂
                 if abs(vega) < 1e-10:
-                    logger.warning(f"! Vega 太小 ({vega:.10f})，停止迭代")
-                    break
+                    if not using_bisection:
+                        logger.warning(f"! Vega 太小 ({vega:.10f})，切換到二分法")
+                        using_bisection = True
+                        # 初始化二分法範圍：使用全局範圍
+                        bisection_low = self.min_volatility
+                        bisection_high = self.max_volatility
+                        logger.info(f"  二分法初始範圍: [{bisection_low*100:.2f}%, {bisection_high*100:.2f}%]")
+                    
+                    # 檢查是否已經足夠接近
+                    if abs(price_diff) <= adaptive_tolerance:
+                        # 已經足夠接近，可以停止
+                        converged = True
+                        logger.info(f"  * 在 vega 極小情況下收斂於第 {iteration + 1} 次迭代")
+                        break
+                    
+                    # Vega 太小且未收斂，使用二分法嘗試繼續
+                    # 根據 price_diff 的符號調整搜索範圍
+                    if price_diff > 0:
+                        # BS 價格太高，需要降低波動率
+                        bisection_high = volatility
+                    else:
+                        # BS 價格太低，需要提高波動率
+                        bisection_low = volatility
+                    
+                    # 使用二分法的中點
+                    volatility = (bisection_low + bisection_high) / 2.0
+                    logger.debug(f"  使用二分法: 範圍 [{bisection_low*100:.2f}%, {bisection_high*100:.2f}%], 新值 {volatility*100:.2f}%")
+                    
+                    # 檢查二分法範圍是否已經足夠小
+                    if (bisection_high - bisection_low) < 0.0001:  # 範圍小於 0.01%
+                        logger.warning(f"! 二分法範圍已極小，停止迭代")
+                        # 對於極端情況，如果價格差異相對於市場價格足夠小，接受結果
+                        relative_error = abs(price_diff) / market_price if market_price > 0 else float('inf')
+                        if relative_error < 0.1:  # 相對誤差 < 10%
+                            converged = True
+                            logger.info(f"  * 相對誤差可接受 ({relative_error*100:.2f}%)，標記為收斂")
+                            break
+                        else:
+                            logger.warning(f"  相對誤差過大 ({relative_error*100:.2f}%)，無法收斂")
+                            break
+                    continue
+                
+                # 如果正在使用二分法且 vega 足夠大，繼續使用二分法（更穩定）
+                if using_bisection:
+                    logger.debug(f"  繼續使用二分法 (vega={vega:.6f})")
+                    # 根據 price_diff 的符號調整搜索範圍
+                    if price_diff > 0:
+                        bisection_high = volatility
+                    else:
+                        bisection_low = volatility
+                    
+                    volatility = (bisection_low + bisection_high) / 2.0
+                    logger.debug(f"  使用二分法: 範圍 [{bisection_low*100:.2f}%, {bisection_high*100:.2f}%], 新值 {volatility*100:.2f}%")
+                    
+                    # 檢查二分法範圍是否已經足夠小
+                    if (bisection_high - bisection_low) < 0.0001:
+                        logger.warning(f"! 二分法範圍已極小，停止迭代")
+                        relative_error = abs(price_diff) / market_price if market_price > 0 else float('inf')
+                        if relative_error < 0.1:
+                            converged = True
+                            logger.info(f"  * 相對誤差可接受 ({relative_error*100:.2f}%)，標記為收斂")
+                            break
+                        else:
+                            logger.warning(f"  相對誤差過大 ({relative_error*100:.2f}%)，無法收斂")
+                            break
+                    continue
                 
                 # Newton-Raphson 更新
                 # Vega = S × N'(d1) × √T 是 dC/dσ（對絕對波動率的導數）
