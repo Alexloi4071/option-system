@@ -143,9 +143,6 @@ class OptionsAnalysisSystem:
         self.fetcher = DataFetcher(use_ibkr=use_ibkr, ibkr_client=ibkr_client)
         self.validator = DataValidator()
         
-        # 初始化 OutputPathManager 用於按股票代號分類存儲
-        self.output_manager = OutputPathManager(base_output_dir="output")
-        self.report_generator = ReportGenerator(output_manager=self.output_manager)
         # 初始化輸出管理器
         self.output_manager = OutputPathManager(settings.OUTPUT_DIR)
         
@@ -2020,7 +2017,8 @@ class OptionsAnalysisSystem:
                                                 
                                                 # 1. 更新全局數據
                                                 analysis_data['implied_volatility'] = current_iv_pct
-                                                volatility_estimate = current_iv_pct
+                                                volatility_estimate = current_iv_pct / 100.0  # 轉換: 28.0% → 0.28
+                                                logger.info(f"  ★ volatility_estimate 已更新為 ATM IV: {volatility_estimate*100:.2f}% (小數格式: {volatility_estimate:.4f})")
                                                 
                                                 # 2. 重跑 Module 1
                                                 try:
@@ -2916,6 +2914,7 @@ class OptionsAnalysisSystem:
                     
                     # 找到指定行使價的期權（用戶指定或 ATM）
                     if hasattr(calls_df, 'iloc') and len(calls_df) > 0:
+                        calls_df = calls_df.copy()  # 創建副本避免污染原始數據
                         calls_df['distance'] = abs(calls_df['strike'] - target_strike)
                         atm_idx = calls_df['distance'].idxmin()
                         target_call = calls_df.loc[atm_idx].to_dict()
@@ -2923,6 +2922,7 @@ class OptionsAnalysisSystem:
                                   (" (用戶指定)" if strike and strike > 0 else " (ATM)"))
                     
                     if hasattr(puts_df, 'iloc') and len(puts_df) > 0:
+                        puts_df = puts_df.copy()  # 創建副本避免污染原始數據
                         puts_df['distance'] = abs(puts_df['strike'] - target_strike)
                         atm_idx = puts_df['distance'].idxmin()
                         target_put = puts_df.loc[atm_idx].to_dict()
@@ -2942,8 +2942,9 @@ class OptionsAnalysisSystem:
                     call_theta = target_call.get('theta', 0)
                     put_theta = target_put.get('theta', 0)
                     
-                    # 獲取 IV
+                    # 獲取 IV (轉換為小數格式)
                     iv = analysis_data.get('implied_volatility', 30)
+                    iv_decimal = iv / 100.0  # 轉換: 28.0% → 0.28
                     
                     # 分析 Long Call 和 Long Put
                     module26_result = long_analyzer.analyze_both(
@@ -2957,7 +2958,7 @@ class OptionsAnalysisSystem:
                         put_delta=put_delta if put_delta else -0.5,
                         call_theta=call_theta if call_theta else 0,
                         put_theta=put_theta if put_theta else 0,
-                        iv=iv
+                        iv=iv_decimal  # 使用小數格式
                     )
                     
                     self.analysis_results['module26_long_option_analysis'] = module26_result
