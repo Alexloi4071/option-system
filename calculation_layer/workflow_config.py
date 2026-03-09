@@ -13,7 +13,7 @@ ensuring consistency across all modules.
 # Authoritative progress contract for main analysis workflow
 # This constant defines the total number of steps in the complete analysis
 # All report_progress() calls MUST use this value for the 'total' parameter
-TOTAL_ANALYSIS_STEPS = 28
+TOTAL_ANALYSIS_STEPS = 30
 
 # Future: If conditional modules are added, this could become a function:
 # def get_total_analysis_steps(enable_advanced=False):
