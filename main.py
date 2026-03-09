@@ -104,6 +104,8 @@ from calculation_layer.module31_advanced_metrics import AdvancedMetricsAnalyzer
 from calculation_layer.module32_complex_strategies import ComplexStrategyAnalyzer
 # 新增: 策略推薦
 from calculation_layer.strategy_recommendation import StrategyRecommender
+# Workflow configuration (BR-01 fix: unified progress total)
+from calculation_layer.workflow_config import TOTAL_ANALYSIS_STEPS
 # Phase 8: 日內交易模組
 from calculation_layer.module_vwap_intraday import VWAPIntradayAnalyzer
 from calculation_layer.module_orb import ORBAnalyzer
@@ -229,7 +231,7 @@ class OptionsAnalysisSystem:
             self.selected_expirations = selected_expirations
             
             # 報告初始進度
-            report_progress(0, 28, "初始化分析系統...", "初始化")
+            report_progress(0, TOTAL_ANALYSIS_STEPS, "初始化分析系統...", "初始化")
             
             # 檢查是否需要重新初始化 DataFetcher
             # 只有當 use_ibkr 設置與現有 fetcher 不同時才重新初始化
@@ -272,7 +274,7 @@ class OptionsAnalysisSystem:
                     logger.warning(f"搜尋月度到期日失敗: {e}")
 
             # 第1步: 獲取數據
-            report_progress(1, 28, "獲取市場數據...", "數據獲取")
+            report_progress(1, TOTAL_ANALYSIS_STEPS, "獲取市場數據...", "數據獲取")
             logger.info("→ 第1步: 獲取市場數據...")
             analysis_data = self.fetcher.get_complete_analysis_data(ticker, expiration)
             
@@ -428,7 +430,7 @@ class OptionsAnalysisSystem:
             }
             
             # 第2步: 驗證數據
-            report_progress(2, 28, "驗證數據完整性...", "數據驗證")
+            report_progress(2, TOTAL_ANALYSIS_STEPS, "驗證數據完整性...", "數據驗證")
             logger.info("\n→ 第2步: 驗證數據完整性...")
             if not self.validator.validate_stock_data(analysis_data):
                 raise ValueError("數據驗證失敗")
@@ -458,7 +460,7 @@ class OptionsAnalysisSystem:
                     analysis_data['dividend_yield'] = 0.0
             
             # 第3步: 運行計算模塊
-            report_progress(3, 28, "開始運行計算模塊...", "Module 1: 支持/阻力位")
+            report_progress(3, TOTAL_ANALYSIS_STEPS, "開始運行計算模塊...", "Module 1: 支持/阻力位")
             logger.info("\n→ 第3步: 運行計算模塊...")
             
             # 模塊1: 支持/阻力位 (IV法) - 多信心度計算
@@ -659,7 +661,7 @@ class OptionsAnalysisSystem:
             # 原位置的 Module 3 調用已註釋，請參見 Module 19 之後的新實現
             
             # 模塊4: PE估值（使用真實 PE，優先 Forward PE）
-            report_progress(4, 28, "計算 PE 估值...", "Module 4: PE估值")
+            report_progress(4, TOTAL_ANALYSIS_STEPS, "計算 PE 估值...", "Module 4: PE估值")
             try:
                 eps = analysis_data.get('eps')
                 # ✅ 優先使用 Forward PE（更準確），否則使用 TTM PE
@@ -1076,7 +1078,7 @@ class OptionsAnalysisSystem:
                     logger.warning("! 模塊10執行失敗: %s", exc)
             
             # 模塊11: 合成正股（支持股息調整）
-            report_progress(11, 28, "計算合成正股...", "Module 11: 合成正股")
+            report_progress(11, TOTAL_ANALYSIS_STEPS, "計算合成正股...", "Module 11: 合成正股")
             try:
                 if strike_price and call_last_price >= 0 and put_last_price >= 0:
                     # 獲取無風險利率和到期時間
@@ -1264,7 +1266,7 @@ class OptionsAnalysisSystem:
                 logger.warning("⚠ 模塊13執行失敗: %s", exc)
             
             # 模塊14: 12監察崗位（增強版 - 使用 Finviz ATR/RSI）
-            report_progress(14, 28, "計算監察崗位...", "Module 14: 監察崗位")
+            report_progress(14, TOTAL_ANALYSIS_STEPS, "計算監察崗位...", "Module 14: 監察崗位")
             try:
                 # ✅ 確保 Delta 有值 (默認 0.5 ATM)
                 delta_value = call_delta if call_delta is not None else 0.5
@@ -1319,7 +1321,7 @@ class OptionsAnalysisSystem:
                 logger.warning("! 模塊14執行失敗: %s", exc)
             
             # ========== 新增模塊 (Module 15-19) ==========
-            report_progress(15, 28, "計算期權定價與 Greeks...", "Module 15-19: 期權定價")
+            report_progress(15, TOTAL_ANALYSIS_STEPS, "計算期權定價與 Greeks...", "Module 15-19: 期權定價")
             logger.info("\n→ 運行新增模塊 (Module 15-19)...")
             
             # 準備新模塊所需的共同參數
@@ -1405,7 +1407,7 @@ class OptionsAnalysisSystem:
                             logger.info(f"  使用自主計算 (BAW 美式定價模型 - 美股期權)")
                             data_source = "Self-Calculated (American/BAW)"
                             try:
-                                from calculation_layer.module32_american_pricing import AmericanOptionPricer
+                                from calculation_layer.american_option_pricer import AmericanOptionPricer
                                 am_calc = AmericanOptionPricer()
                                 am_call_result = am_calc.calculate_american_price(
                                     stock_price=current_price, strike_price=strike_price,
@@ -1768,7 +1770,7 @@ class OptionsAnalysisSystem:
                                 iv_source_c = bs_call_atm.iv_source
                                 iv_source_p = bs_put_atm.iv_source
                             else:
-                                from calculation_layer.module32_american_pricing import AmericanOptionPricer
+                                from calculation_layer.american_option_pricer import AmericanOptionPricer
                                 am_calc = AmericanOptionPricer()
                                 am_call_atm = am_calc.calculate_american_price(
                                     stock_price=current_price, strike_price=strike_price,
@@ -2273,8 +2275,8 @@ class OptionsAnalysisSystem:
                 logger.warning(f"! US-3: Module 11 & 19 綁定失敗: {exc}")
             
             # ========== 模塊21: 動量過濾器 (新增) ==========
-            report_progress(20, 28, "計算基本面健康...", "Module 20: 基本面健康")
-            report_progress(21, 28, "計算動量過濾器...", "Module 21: 動量過濾器")
+            report_progress(20, TOTAL_ANALYSIS_STEPS, "計算基本面健康...", "Module 20: 基本面健康")
+            report_progress(21, TOTAL_ANALYSIS_STEPS, "計算動量過濾器...", "Module 21: 動量過濾器")
             logger.info("\n→ 運行 Module 21: 動量過濾器...")
             momentum_score = 0.5  # 默認中性動量
             try:
@@ -2565,7 +2567,7 @@ class OptionsAnalysisSystem:
             
             # ========== 模塊23: 動態IV閾值 (移到 Module 22 之前) ==========
             # 原因: Module 22 需要 Module 23 的 IV 環境信息來調整推薦策略
-            report_progress(23, 28, "計算動態 IV 閾值...", "Module 23: 動態IV閾值")
+            report_progress(22, TOTAL_ANALYSIS_STEPS, "計算動態 IV 閾值...", "Module 23: 動態IV閾值")
             logger.info("\n→ 運行 Module 23: 動態IV閾值計算...")
             iv_environment = 'neutral'  # 默認中性
             iv_trading_suggestion = None
@@ -2634,7 +2636,7 @@ class OptionsAnalysisSystem:
                 }
             
             # ========== 模塊22: 最佳行使價分析 (整合 Module 23 IV 環境) ==========
-            report_progress(22, 28, "分析最佳行使價...", "Module 22: 最佳行使價")
+            report_progress(23, TOTAL_ANALYSIS_STEPS, "分析最佳行使價...", "Module 22: 最佳行使價")
             logger.info("\n→ 運行 Module 22: 最佳行使價分析...")
             try:
                 # 獲取期權鏈數據
@@ -2752,7 +2754,7 @@ class OptionsAnalysisSystem:
             
             # ========== Module 32: 高級組合策略 (Complex Strategies) ==========
             # Phase 3 Item: 位於 Module 22 之後，利用 IV 和預處理過的數據
-            report_progress(30, 40, "分析高級組合策略...", "Module 32: 組合策略")
+            report_progress(24, TOTAL_ANALYSIS_STEPS, "分析高級組合策略...", "Module 32: 組合策略")
             logger.info("\n→ 運行 Module 32: 高級組合策略分析...")
             try:
                 import pandas as pd
@@ -2813,7 +2815,7 @@ class OptionsAnalysisSystem:
                 self.analysis_results['module32_complex_strategies'] = {'status': 'error', 'reason': str(exc)}
 
             # ========== 模塊24: 技術方向分析 ==========
-            report_progress(24, 28, "分析技術方向...", "Module 24: 技術方向")
+            report_progress(25, TOTAL_ANALYSIS_STEPS, "分析技術方向...", "Module 24: 技術方向")
             logger.info("\n→ 運行 Module 24: 技術方向分析...")
             technical_direction = None
             try:
@@ -2856,7 +2858,7 @@ class OptionsAnalysisSystem:
                 }
             
             # Module 25: 波動率微笑分析
-            report_progress(25, 28, "分析波動率微笑...", "Module 25: 波動率微笑")
+            report_progress(26, TOTAL_ANALYSIS_STEPS, "分析波動率微笑...", "Module 25: 波動率微笑")
             logger.info("\n→ 運行 Module 25: 波動率微笑分析...")
             try:
                 if option_chain and 'calls' in option_chain and 'puts' in option_chain:
@@ -2897,7 +2899,7 @@ class OptionsAnalysisSystem:
                 }
             
             # Module 26: Long 期權成本效益分析
-            report_progress(26, 28, "分析 Long 期權成本效益...", "Module 26: Long期權分析")
+            report_progress(27, TOTAL_ANALYSIS_STEPS, "分析 Long 期權成本效益...", "Module 26: Long期權分析")
             logger.info("\n→ 運行 Module 26: Long 期權成本效益分析...")
             try:
                 long_analyzer = LongOptionAnalyzer()
@@ -2914,7 +2916,7 @@ class OptionsAnalysisSystem:
                     
                     # 找到指定行使價的期權（用戶指定或 ATM）
                     if hasattr(calls_df, 'iloc') and len(calls_df) > 0:
-                        calls_df = calls_df.copy()  # 創建副本避免污染原始數據
+                        calls_df = calls_df.copy()  # BR-02 Fix: 創建副本避免污染原始數據
                         calls_df['distance'] = abs(calls_df['strike'] - target_strike)
                         atm_idx = calls_df['distance'].idxmin()
                         target_call = calls_df.loc[atm_idx].to_dict()
@@ -2922,7 +2924,7 @@ class OptionsAnalysisSystem:
                                   (" (用戶指定)" if strike and strike > 0 else " (ATM)"))
                     
                     if hasattr(puts_df, 'iloc') and len(puts_df) > 0:
-                        puts_df = puts_df.copy()  # 創建副本避免污染原始數據
+                        puts_df = puts_df.copy()  # BR-02 Fix: 創建副本避免污染原始數據
                         puts_df['distance'] = abs(puts_df['strike'] - target_strike)
                         atm_idx = puts_df['distance'].idxmin()
                         target_put = puts_df.loc[atm_idx].to_dict()
@@ -2988,7 +2990,7 @@ class OptionsAnalysisSystem:
                 }
             
             # Module 27: 多到期日比較分析（增強版 - 所有到期日 + 四種策略）
-            report_progress(27, 28, "比較多個到期日...", "Module 27: 多到期日比較")
+            report_progress(28, TOTAL_ANALYSIS_STEPS, "比較多個到期日...", "Module 27: 多到期日比較")
             logger.info("\n→ 運行 Module 27: 多到期日比較分析（增強版）...")
             try:
                 multi_expiry_analyzer = MultiExpiryAnalyzer()
@@ -3090,11 +3092,15 @@ class OptionsAnalysisSystem:
                                 continue
                             
                             # 找到 ATM 期權（最接近當前股價的行使價）
-                            calls_df['strike_diff'] = abs(calls_df['strike'] - current_price)
-                            puts_df['strike_diff'] = abs(puts_df['strike'] - current_price)
+                            # BR-02 Fix: Create isolated working copies to avoid mutating shared DataFrames
+                            calls_work = calls_df.copy()
+                            puts_work = puts_df.copy()
                             
-                            atm_call_row = calls_df.loc[calls_df['strike_diff'].idxmin()]
-                            atm_put_row = puts_df.loc[puts_df['strike_diff'].idxmin()]
+                            calls_work['strike_diff'] = abs(calls_work['strike'] - current_price)
+                            puts_work['strike_diff'] = abs(puts_work['strike'] - current_price)
+                            
+                            atm_call_row = calls_work.loc[calls_work['strike_diff'].idxmin()]
+                            atm_put_row = puts_work.loc[puts_work['strike_diff'].idxmin()]
                             
                             exp_data = {
                                 'expiration': exp_str,
@@ -3176,7 +3182,7 @@ class OptionsAnalysisSystem:
                 }
             
             # Module 28: 資金倉位計算器（使用用戶資金 13萬 HKD）
-            report_progress(28, 28, "計算資金倉位...", "Module 28: 資金倉位")
+            report_progress(28, TOTAL_ANALYSIS_STEPS, "計算資金倉位...", "Module 28: 資金倉位")
             logger.info("\n→ 運行 Module 28: 資金倉位計算器...")
             try:
                 # 默認資金設定（可通過參數覆蓋）
@@ -3905,7 +3911,7 @@ class OptionsAnalysisSystem:
                 logger.info("* 模塊15完成: Black-Scholes 理論價")
             else:
                 try:
-                    from calculation_layer.module32_american_pricing import AmericanOptionPricer
+                    from calculation_layer.american_option_pricer import AmericanOptionPricer
                     am_calc = AmericanOptionPricer()
                     am_result = am_calc.calculate_american_price(
                         stock_price=stock_price,
@@ -4296,7 +4302,7 @@ class OptionsAnalysisSystem:
                 logger.info("* 模塊15完成: Black-Scholes 理論價")
             else:
                 try:
-                    from calculation_layer.module32_american_pricing import AmericanOptionPricer
+                    from calculation_layer.american_option_pricer import AmericanOptionPricer
                     am_calc = AmericanOptionPricer()
                     am_result = am_calc.calculate_american_price(
                         stock_price=stock_price,

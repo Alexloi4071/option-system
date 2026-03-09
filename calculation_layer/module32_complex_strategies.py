@@ -144,12 +144,15 @@ class ComplexStrategyAnalyzer:
         if 'delta' not in df.columns:
             return strategies
             
+        # Create working copy to avoid mutating shared DataFrame
+        df_work = df.copy()
+            
         # 1. 尋找 Short Leg 候選者 (Delta 接近 target)
         # 對於 Put, delta 是負數，取絕對值比較
-        df['abs_delta'] = df['delta'].abs()
-        short_candidates = df[
-            (df['abs_delta'] >= short_delta_target - 0.05) & 
-            (df['abs_delta'] <= short_delta_target + 0.05)
+        df_work['abs_delta'] = df_work['delta'].abs()
+        short_candidates = df_work[
+            (df_work['abs_delta'] >= short_delta_target - 0.05) & 
+            (df_work['abs_delta'] <= short_delta_target + 0.05)
         ]
         
         for _, short_leg in short_candidates.iterrows():
@@ -164,7 +167,7 @@ class ComplexStrategyAnalyzer:
             
             # 在 DataFrame 中找最接近的 strike
             # 簡單起見，這裡只找一個
-            long_candidates = df.iloc[(df['strike'] - target_long_strike).abs().argsort()[:1]]
+            long_candidates = df_work.iloc[(df_work['strike'] - target_long_strike).abs().argsort()[:1]]
             
             if not long_candidates.empty:
                 long_leg = long_candidates.iloc[0]

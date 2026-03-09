@@ -1,6 +1,10 @@
-# calculation_layer/module32_american_pricing.py
+# calculation_layer/american_option_pricer.py
 """
-模塊32: 美式期權定價模型 (American Option Pricing)
+美式期權定價模型 (American Option Pricing)
+
+**BR-03 Fix**: Renamed from module32_american_pricing.py to semantic internal naming.
+This is an internal pricing engine, not a user-facing numbered analysis module.
+Module 32 now unambiguously refers to module32_complex_strategies.py (Complex Strategies Analysis).
 
 功能:
 - 計算美式 Call 和 Put 期權的理論價值
