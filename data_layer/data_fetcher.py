@@ -4906,7 +4906,96 @@ class DataFetcher:
             logger.error(f"x 獲取 {ticker} 股息率失敗: {e}")
             logger.error(traceback.format_exc())
             return 0.0
-    
+
+    def get_discrete_dividends(self, ticker: str) -> list:
+        """
+        獲取未來離散股息時間表 (Discrete Dividends Schedule)
+        
+        數據來源優先級:
+        1. IBKR (Tick 59)
+        2. Yahoo Finance (根據 info 或歷史派息推測)
+        
+        返回:
+            list: 包含 (time_to_ex_date_years, dividend_amount) 的列表
+        """
+        discrete_divs = []
+        try:
+            # 優先使用 IBKR 獲取
+            if self.ibkr_client and self.ibkr_client.is_connected():
+                logger.info(f"嘗試從 IBKR 獲取 {ticker} 離散股息時間表...")
+                discrete_divs = self.ibkr_client.get_discrete_dividends(ticker)
+                if discrete_divs:
+                    self._record_fallback('discrete_dividends', 'IBKR', success=True)
+                    return discrete_divs
+                else:
+                    self._record_fallback('discrete_dividends', 'IBKR', success=False, error_reason='No data returned')
+                    
+            # 降級方案: Yahoo Finance 推測
+            logger.info(f"嘗試從 Yahoo Finance 推斷 {ticker} 離散股息時間表...")
+            stock = yf.Ticker(ticker, session=self.session)
+            info = stock.info
+            now = datetime.now()
+            
+            # 使用 info 中的下一次派息日
+            ex_date_ts = info.get('exDividendDate')
+            div_rate = info.get('dividendRate', 0.0)
+            
+            if ex_date_ts and div_rate > 0:
+                ex_date = datetime.fromtimestamp(ex_date_ts)
+                if ex_date > now:
+                    # 股息率通常是 annual，單次派息可能需要除以 4 (假設季息為多數美股)
+                    freq_div = div_rate / 4.0  
+                    
+                    years_to_ex = (ex_date - now).days / 365.25
+                    discrete_divs.append((years_to_ex, freq_div))
+                    
+                    # 預測接下來的 3 個季度
+                    for i in range(1, 4):
+                        proj_date = ex_date + timedelta(days=91.25 * i)
+                        d_years = (proj_date - now).days / 365.25
+                        if d_years > 0:
+                            discrete_divs.append((d_years, freq_div))
+                            
+                    logger.info(f"* {ticker} 離散股息預測: {discrete_divs} (來源: Yahoo Info)")
+                    self._record_fallback('discrete_dividends', 'Yahoo Info', success=True)
+                    return discrete_divs
+
+            # 再降級方案: 根據歷史股息紀錄推測
+            hist_divs = stock.dividends
+            if not hist_divs.empty:
+                last_div_date = hist_divs.index[-1]
+                if hasattr(last_div_date, 'tz') and last_div_date.tz is not None:
+                    import pytz
+                    now_tz = now.replace(tzinfo=pytz.UTC).astimezone(last_div_date.tz)
+                else:
+                    now_tz = now
+                    
+                last_amt = float(hist_divs.iloc[-1])
+                
+                # 推測下一次派息日 (大概是 3 個月後)
+                next_div_date = last_div_date + timedelta(days=91.25)
+                
+                # 如果下一次派息日已經過了，就無限加 3 個月直到未來
+                while next_div_date <= now_tz:
+                    next_div_date += timedelta(days=91.25)
+                
+                for i in range(4):
+                    proj_date = next_div_date + timedelta(days=91.25 * i)
+                    d_years = (proj_date - now_tz).days / 365.25
+                    if d_years > 0:
+                        discrete_divs.append((d_years, last_amt))
+                        
+                logger.info(f"* {ticker} 離散股息推斷: {discrete_divs} (來源: Yahoo History)")
+                self._record_fallback('discrete_dividends', 'Yahoo History', success=True)
+                return discrete_divs
+                
+        except Exception as e:
+            logger.error(f"x 獲取 {ticker} 離散股息失敗: {e}")
+            self._record_fallback('discrete_dividends', 'Yahoo Finance', success=False, error_reason=str(e))
+            
+        logger.info(f"* {ticker} 無法獲取離散股息，返回空列表")
+        return []
+        
     # ==================== 宏觀數據 ====================
     
     def get_risk_free_rate(self):
@@ -5531,13 +5620,14 @@ class DataFetcher:
     
     # ==================== 完整數據包 ====================
     
-    def get_complete_analysis_data(self, ticker, expiration=None):
+    def get_complete_analysis_data(self, ticker, expiration=None, include_dark_pool=False):
         """
         獲取完整的分析所需數據包
         
         參數:
             ticker: 股票代碼
             expiration: 期權到期日期 (可選)
+            include_dark_pool: 是否攔截暗池大單 (Phase 5)
         
         返回: dict (包含所有必需數據)
         """
@@ -5548,7 +5638,7 @@ class DataFetcher:
             
             # 1. 股票基本信息
             logger.info("\n[步驟1/6] 獲取股票基本信息...")
-            stock_info = self.get_stock_info(ticker)
+            stock_info = self.get_stock_info(ticker, include_dark_pool=include_dark_pool)
             if not stock_info:
                 logger.warning(f"! 無法從 API 獲取 {ticker} 基本信息，使用降級方案...")
                 # 降級方案：使用最小化的默認數據結構
@@ -5643,7 +5733,9 @@ class DataFetcher:
             atm_strike = atm_data['atm_strike']
             
             # 獲取 IV 值（已在 get_option_chain 中通過 IVNormalizer 標準化）
-            raw_iv = call_atm['impliedVolatility']
+            raw_iv = call_atm.get('impliedVolatility', 0.0)
+            if raw_iv is None:
+                raw_iv = 0.0
             
             # 使用 IVNormalizer 驗證 IV 值（不再重複轉換）
             iv_result = IVNormalizer.normalize_iv(raw_iv, source='atm_option')

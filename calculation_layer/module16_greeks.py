@@ -54,11 +54,13 @@ from dataclasses import dataclass
 from typing import Dict
 from datetime import datetime
 
-# 導入 Module 15 的 Black-Scholes 計算器
+# 導入 Module 15 的 Black-Scholes 計算器 和 AmericanOptionPricer
 try:
     from calculation_layer.module15_black_scholes import BlackScholesCalculator
+    from calculation_layer.american_option_pricer import AmericanOptionPricer
 except ImportError:
     from module15_black_scholes import BlackScholesCalculator
+    from american_option_pricer import AmericanOptionPricer
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +129,7 @@ class GreeksCalculator:
     def __init__(self):
         """初始化 Greeks 計算器"""
         self.bs_calculator = BlackScholesCalculator()
+        self.am_pricer = AmericanOptionPricer()
         logger.info("* Greeks 計算器已初始化")
     
     def calculate_delta(
@@ -556,7 +559,9 @@ class GreeksCalculator:
         volatility: float,
         option_type: str = 'call',
         dividend_yield: float = 0.0,  # 🆕 Fix 6: 股息率（對高股息股如 VZ 影響顯著）
-        calculation_date: str = None
+        discrete_dividends: list = None,
+        calculation_date: str = None,
+        is_american: bool = True  # 預設為美股期權（支援提早履約）
     ) -> GreeksResult:
         """
         計算所有 Greeks
@@ -611,53 +616,110 @@ class GreeksCalculator:
             if calculation_date is None:
                 calculation_date = datetime.now().strftime('%Y-%m-%d')
             
-            # 🔧 REDUP-01 Fix: 只計算一次 d1, d2，避免重複計算
-            # 原本每個 Greek 函數都會重新計算 d1, d2，現在只計算一次
-            d1, d2 = self.bs_calculator.calculate_d1_d2(
-                stock_price, strike_price, risk_free_rate,
-                time_to_expiration, volatility, dividend_yield
-            )
-            
-            sqrt_t = math.sqrt(time_to_expiration)
-            discount_factor = math.exp(-risk_free_rate * time_to_expiration)
-            option_type_lower = option_type.lower()
-            
-            # 計算所有 Greeks（使用已計算的 d1, d2）
-            # Delta
-            if option_type_lower == 'call':
-                delta = self.bs_calculator.normal_cdf(d1)
-            else:  # put
-                delta = self.bs_calculator.normal_cdf(d1) - 1
-            
-            # Gamma (T=0 保護)
-            if time_to_expiration < 1e-10:
-                gamma = 0.0
+            if is_american:
+                logger.info("  使用美式二叉樹模型計算 Greeks...")
+                am_result = self.am_pricer.calculate_american_price(
+                    stock_price=stock_price,
+                    strike_price=strike_price,
+                    risk_free_rate=risk_free_rate,
+                    time_to_expiration=time_to_expiration,
+                    volatility=volatility,
+                    option_type=option_type,
+                    dividend_yield=dividend_yield,
+                    discrete_dividends=discrete_dividends,
+                    steps=500
+                )
+                delta = am_result.delta
+                gamma = am_result.gamma
+                theta = am_result.theta
+                
+                # 計算 Vega (Bump 1%)
+                vega_bump_res = self.am_pricer.calculate_american_price(
+                    stock_price=stock_price,
+                    strike_price=strike_price,
+                    risk_free_rate=risk_free_rate,
+                    time_to_expiration=time_to_expiration,
+                    volatility=volatility + 0.01,
+                    option_type=option_type,
+                    dividend_yield=dividend_yield,
+                    discrete_dividends=discrete_dividends,
+                    steps=500
+                )
+                vega = max(0.0, vega_bump_res.american_price - am_result.american_price)
+                
+                # 計算 Rho (Bump 1%)
+                rho_bump_res = self.am_pricer.calculate_american_price(
+                    stock_price=stock_price,
+                    strike_price=strike_price,
+                    risk_free_rate=risk_free_rate + 0.01,
+                    time_to_expiration=time_to_expiration,
+                    volatility=volatility,
+                    option_type=option_type,
+                    dividend_yield=dividend_yield,
+                    discrete_dividends=discrete_dividends,
+                    steps=500
+                )
+                rho = rho_bump_res.american_price - am_result.american_price
+                
             else:
-                gamma = (self.bs_calculator.normal_pdf(d1) / 
-                        (stock_price * volatility * sqrt_t))
-            
-            # Theta (T=0 保護)
-            if time_to_expiration < 1e-10:
-                theta = 0.0
-            else:
-                # 年化 Theta
-                term1 = -(stock_price * self.bs_calculator.normal_pdf(d1) * volatility) / (2 * sqrt_t)
+                # 歐式期權離散股息處理 (John Hull Ch. 15)
+                # S_adj = S - PV(D); q_adj = 0  
+                calc_stock_price = stock_price
+                calc_dividend_yield = dividend_yield
+                
+                if discrete_dividends and time_to_expiration > 0:
+                    valid_divs = [(t_div, amt) for t_div, amt in discrete_dividends if 0 < t_div <= time_to_expiration]
+                    if valid_divs:
+                        pv_divs = sum(amt * math.exp(-risk_free_rate * t_div) for t_div, amt in valid_divs)
+                        calc_stock_price = max(0.01, stock_price - pv_divs)
+                        calc_dividend_yield = 0.0
+                        
+                # 🔧 REDUP-01 Fix: 只計算一次 d1, d2，避免重複計算
+                d1, d2 = self.bs_calculator.calculate_d1_d2(
+                    calc_stock_price, strike_price, risk_free_rate,
+                    time_to_expiration, volatility, calc_dividend_yield
+                )
+                
+                sqrt_t = math.sqrt(time_to_expiration)
+                discount_factor = math.exp(-risk_free_rate * time_to_expiration)
+                option_type_lower = option_type.lower()
+                
+                # 計算所有歐式 Greeks
+                # Delta
                 if option_type_lower == 'call':
-                    term2 = -risk_free_rate * strike_price * discount_factor * self.bs_calculator.normal_cdf(d2)
+                    delta = self.bs_calculator.normal_cdf(d1)
                 else:  # put
-                    term2 = risk_free_rate * strike_price * discount_factor * self.bs_calculator.normal_cdf(-d2)
-                theta_annual = term1 + term2
-                # 轉換為每日 Theta
-                theta = theta_annual / 252.0
-            
-            # Vega
-            vega = stock_price * self.bs_calculator.normal_pdf(d1) * sqrt_t / 100
-            
-            # Rho
-            if option_type_lower == 'call':
-                rho = strike_price * time_to_expiration * discount_factor * self.bs_calculator.normal_cdf(d2) / 100
-            else:  # put
-                rho = -strike_price * time_to_expiration * discount_factor * self.bs_calculator.normal_cdf(-d2) / 100
+                    delta = self.bs_calculator.normal_cdf(d1) - 1
+                
+                # Gamma (T=0 保護)
+                if time_to_expiration < 1e-10:
+                    gamma = 0.0
+                else:
+                    gamma = (self.bs_calculator.normal_pdf(d1) / 
+                            (calc_stock_price * volatility * sqrt_t))
+                
+                # Theta (T=0 保護)
+                if time_to_expiration < 1e-10:
+                    theta = 0.0
+                else:
+                    # 年化 Theta
+                    term1 = -(calc_stock_price * self.bs_calculator.normal_pdf(d1) * volatility) / (2 * sqrt_t)
+                    if option_type_lower == 'call':
+                        term2 = -risk_free_rate * strike_price * discount_factor * self.bs_calculator.normal_cdf(d2)
+                    else:  # put
+                        term2 = risk_free_rate * strike_price * discount_factor * self.bs_calculator.normal_cdf(-d2)
+                    theta_annual = term1 + term2
+                    # 轉換為每日 Theta
+                    theta = theta_annual / 252.0
+                
+                # Vega
+                vega = stock_price * self.bs_calculator.normal_pdf(d1) * sqrt_t / 100
+                
+                # Rho
+                if option_type_lower == 'call':
+                    rho = strike_price * time_to_expiration * discount_factor * self.bs_calculator.normal_cdf(d2) / 100
+                else:  # put
+                    rho = -strike_price * time_to_expiration * discount_factor * self.bs_calculator.normal_cdf(-d2) / 100
             
             logger.info(f"  計算結果:")
             logger.info(f"    Delta = {delta:.6f}")

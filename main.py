@@ -192,7 +192,8 @@ class OptionsAnalysisSystem:
                              iv: float = None, delta: float = None, gamma: float = None,
                              theta: float = None, vega: float = None, rho: float = None,
                              risk_free_rate: float = None,
-                             progress_callback=None, monthly_only: bool = False):
+                             progress_callback=None, monthly_only: bool = False,
+                             include_dark_pool: bool = False, is_existing_position: bool = False):
         """
         運行完整分析
         
@@ -469,6 +470,18 @@ class OptionsAnalysisSystem:
                     logger.warning(f"  ! 獲取股息數據失敗: {e}，使用默認值 0.0")
                     dividend_yield = 0.0
                     analysis_data['dividend_yield'] = 0.0
+                    
+            # Phase 3: 獲取離散股息時間表 (Discrete Dividends)
+            try:
+                discrete_dividends = self.fetcher.get_discrete_dividends(ticker)
+                if discrete_dividends:
+                    logger.info(f"  * 離散股息時間表: {len(discrete_dividends)} 筆預期派息")
+                    analysis_data['discrete_dividends'] = discrete_dividends
+                else:
+                    analysis_data['discrete_dividends'] = None
+            except Exception as e:
+                logger.warning(f"  ! 獲取離散股息數據失敗: {e}")
+                analysis_data['discrete_dividends'] = None
             
             # 第3步: 運行計算模塊
             report_progress(3, "開始運行計算模塊...", "Module 1: 支持/阻力位")
@@ -3543,6 +3556,43 @@ class OptionsAnalysisSystem:
             except Exception as e:
                 logger.warning(f"歷史對比失敗: {e}")
 
+            # Phase 5: Position Tracker (VZ Long Put 追蹤)
+            if is_existing_position:
+                logger.info("\n→ 執行 Phase 5: Position Tracker 分析 (已持有部位評估)...")
+                try:
+                    from calculation_layer.module39_position_tracker import PositionTracker
+                    tracker = PositionTracker()
+                    
+                    # 獲取所需的期權金, Greeks, 與 暗池數據
+                    opt_type = option_type if option_type else ('C' if 'call' in str(strike).lower() else ('P' if 'put' in str(strike).lower() else 'C'))
+                    greeks_info = self.analysis_results.get('module16_greeks', {})
+                    dp_info = self.analysis_results.get('module38_dark_pool')
+                    
+                    if not dp_info and include_dark_pool:
+                        # 嘗試手動獲取
+                        logger.info("  正在臨時同步獲取 Dark Pool 數據供 Position Tracker 參考 (需時~30秒)...")
+                        dp_info = self.fetcher.get_dark_pool_data(ticker=ticker, duration_seconds=30)
+                        if dp_info:
+                            self.analysis_results['module38_dark_pool'] = dp_info
+                    
+                    tracker_result = tracker.evaluate_position(
+                        ticker=ticker,
+                        current_price=analysis_data.get('current_price', 0),
+                        strike=strike,
+                        option_type=opt_type,
+                        days_to_expiry=analysis_data.get('days_to_expiration', 0),
+                        premium=premium if premium else (analysis_data.get('atm_option', {}).get('call' if opt_type == 'C' else 'put', {}).get('lastPrice', 0)),
+                        greeks=greeks_info,
+                        dark_pool_data=dp_info
+                    )
+                    
+                    self.analysis_results['module39_position_tracker'] = tracker_result
+                    logger.info(f"  * 策略建議: {tracker_result['recommendation']}")
+                    logger.info(f"  * 理據: {' '.join(tracker_result['reasoning'])}")
+
+                except Exception as e:
+                    logger.error(f"  x Position Tracker 執行失敗: {e}")
+
             # 生成報告
             report = self.report_generator.generate(
                 ticker=ticker,
@@ -4461,6 +4511,12 @@ def main():
     parser.add_argument('--monthly-only', action='store_true', default=False,
                        help='只顯示標準月度期權到期日（每月第三個星期五）')
     
+    # Phase 5: Dark Pool & Position Tracking
+    parser.add_argument('--dark-pool', action='store_true', default=False,
+                       help='[Phase 5] 自動攔截 IBKR Dark Pool Ticks (約需60秒) 以獲取機構建倉數據')
+    parser.add_argument('--position', type=str, default=None,
+                       help='[Phase 5] 輸入特定持倉 (例: "VZ 2026-06-18 49.5 P") 以獲取 Hold/Roll/Close 建議')
+    
     # 手動輸入模式參數（繞過 API）
     parser.add_argument('--manual', action='store_true', default=False,
                        help='完全手動模式，繞過所有 API')
@@ -4507,6 +4563,25 @@ def main():
     if args.live and args.paper:
         print("錯誤: 不能同時指定 --live 和 --paper，請只選擇其中一個")
         return
+        
+    # 解析現有持倉 --position ("VZ 2026-06-18 49.5 P")
+    is_existing_position = False
+    if args.position:
+        try:
+            parts = args.position.split()
+            if len(parts) >= 4:
+                args.ticker = parts[0].upper()
+                args.expiration = parts[1]
+                args.strike = float(parts[2])
+                args.type = parts[3].upper()
+                is_existing_position = True
+                print(f"[Phase 5] 追蹤現有部位: {args.ticker} {args.strike} {args.type} 到期日: {args.expiration}")
+            else:
+                print("⚠️ --position 格式錯誤。正確範例: --position 'VZ 2026-06-18 49.5 P'")
+                return
+        except Exception as e:
+            print(f"⚠️ --position 解析失敗: {e}")
+            return
     
     if args.live:
         # 使用 Live 賬戶
@@ -4630,7 +4705,9 @@ def main():
             strike=args.strike,
             premium=args.premium,
             option_type=args.type,
-            monthly_only=args.monthly_only
+            monthly_only=args.monthly_only,
+            include_dark_pool=args.dark_pool,
+            is_existing_position=is_existing_position
         )
     
     # 輸出結果

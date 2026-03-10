@@ -261,6 +261,7 @@ class BlackScholesCalculator:
         volatility: float,
         option_type: str = 'call',
         dividend_yield: float = 0.0,
+        discrete_dividends: list = None,
         calculation_date: str = None
     ) -> BSPricingResult:
         """
@@ -339,10 +340,21 @@ class BlackScholesCalculator:
             ):
                 raise ValueError("輸入參數無效")
             
+            # 第2步: 離散股息調整 (John Hull Ch. 15)
+            # 如果提供了離散股息，將其折現並從股價中扣除，然後將連續股息率設為 0
+            if discrete_dividends and time_to_expiration > 0:
+                valid_divs = [(t_div, amt) for t_div, amt in discrete_dividends if 0 < t_div <= time_to_expiration]
+                if valid_divs:
+                    pv_divs = sum(amt * math.exp(-risk_free_rate * t_div) for t_div, amt in valid_divs)
+                    logger.info(f"  檢測到離散股息，扣除現值: ${pv_divs:.4f}")
+                    stock_price = max(0.01, stock_price - pv_divs)
+                    dividend_yield = 0.0
+
             # 驗證股息率
             if dividend_yield < 0:
                 raise ValueError(f"dividend_yield 不能為負: {dividend_yield}")
             if dividend_yield > 0.5:
+                # 只在沒有離散股息干預下發錯，因為如果discrete_dividends處理後 q=0，此處必能過
                 logger.error(f"dividend_yield 超過 50%，可能是傳入了百分比而非小數: {dividend_yield}")
                 raise ValueError(f"dividend_yield 超出合理範圍 (0-50%): {dividend_yield}")
             if dividend_yield > 0.2:

@@ -56,6 +56,75 @@ class ScannerService:
         self.status_message = "Ready"
         self.analysis_system = None # Lazy init to avoid circular import/config issues
 
+    async def _fetch_dark_pool_top_candidates(self, opportunities: List[Dict]) -> List[Dict]:
+        """
+        [Phase 5] Auto-trigger Dark Pool scanning for the top 3 candidates.
+        Executes in an isolated thread to avoid blocking the main scanner loop limit.
+        """
+        if not opportunities:
+            return opportunities
+            
+        # 1. Sort by score and get Top 3 tickers
+        target_opps = sorted(opportunities, key=lambda x: x.get('score', 0), reverse=True)[:3]
+        target_tickers = list(set([opp['ticker'] for opp in target_opps]))
+        
+        if not target_tickers:
+            return opportunities
+            
+        logger.info(f"========== 啟動 Phase 5 暗池深度掃描 (Top {len(target_tickers)} 候選: {target_tickers}) ==========")
+        
+        def fetch_in_thread(tickers):
+            import asyncio
+            import random
+            from data_layer.data_fetcher import DataFetcher
+            from data_layer.ibkr_client import IBKRClient
+            from config.settings import settings as SETTINGS
+            
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            client = None
+            fetcher = None
+            dp_results = {}
+            try:
+                client = IBKRClient(
+                    client_id=random.randint(1100, 1999), 
+                    mode='paper' if SETTINGS.IBKR_USE_PAPER else 'live', 
+                    port=SETTINGS.IBKR_PORT_PAPER if SETTINGS.IBKR_USE_PAPER else SETTINGS.IBKR_PORT_LIVE
+                )
+                if client.connect(timeout=5):
+                    fetcher = DataFetcher(use_ibkr=True, ibkr_client=client)
+                    for t in tickers:
+                        logger.info(f"  [Dark Pool] 正在獲取 {t} 機構暗池大單 (需時 ~30 秒)...")
+                        dp_data = fetcher.get_dark_pool_data(ticker=t, duration_seconds=30)
+                        if dp_data:
+                            dp_results[t] = dp_data
+            except Exception as e:
+                logger.error(f"Background Dark Pool Error: {e}")
+            finally:
+                if client:
+                    client.disconnect()
+                loop.close()
+                
+            return dp_results
+            
+        try:
+            # 2. Run strictly in background thread to unblock the main async loop
+            dp_results = await asyncio.to_thread(fetch_in_thread, target_tickers)
+            
+            # 3. Attach results back to the opportunities
+            if dp_results:
+                for opp in opportunities:
+                    ticker = opp.get('ticker')
+                    if ticker in dp_results:
+                        opp['dark_pool'] = dp_results[ticker]
+                        opp['dp_ratio'] = dp_results[ticker].get('dp_ratio', 0)
+                        logger.info(f"  ✅ 成功附加 {ticker} 暗池數據 (DP Ratio: {opp['dp_ratio']}%)")
+        except Exception as e:
+            logger.warning(f"Dark Pool 背景掃描失敗: {e}")
+            
+        return opportunities
+
     def clear_opportunities(self):
         self.latest_opportunities = []
         logger.info("Cleared previous opportunities.")
@@ -834,6 +903,9 @@ class ScannerService:
                             
                 # Output Results
                 if all_opportunities:
+                    # [Phase 5] Auto Fetch Dark Pool for top 3 before saving
+                    all_opportunities = await self._fetch_dark_pool_top_candidates(all_opportunities)
+                    
                     # Sanitize data to remove NaNs before usage
                     clean_opps = self.sanitize_data(all_opportunities)
                     self.latest_opportunities = clean_opps # Update in-memory for Web UI
@@ -996,6 +1068,9 @@ class ScannerService:
                         
                 # output
                 if all_opportunities:
+                    # [Phase 5] Auto Fetch Dark Pool for top 3 before saving
+                    all_opportunities = await self._fetch_dark_pool_top_candidates(all_opportunities)
+                
                     clean_opps = self.sanitize_data(all_opportunities)
                     self.latest_opportunities = clean_opps
                     self.last_scan_time = datetime.now()

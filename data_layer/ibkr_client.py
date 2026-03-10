@@ -2515,6 +2515,59 @@ class IBKRClient:
         """上下文管理器出口"""
         self.disconnect()
 
+    def get_discrete_dividends(self, ticker: str) -> list:
+        """
+        獲取未來離散股息時間表 (Discrete Dividends Schedule)
+        使用 IBKR reqMktData 的 TickType 59 (IB Dividends).
+        
+        返回:
+            list: 包含 (time_to_ex_date_years, dividend_amount) 的列表
+        """
+        if not self.is_connected():
+            return []
+            
+        try:
+            from ib_insync import Stock
+            contract = Stock(ticker, 'SMART', 'USD')
+            self.ib.qualifyContracts(contract)
+            
+            # 請求 tick type 59 包含 IB Dividends
+            ticker_data = self.ib.reqMktData(contract, '59', snapshot=True, subscribe=False)
+            self.ib.sleep(2)
+            
+            discrete_divs = []
+            now = datetime.now()
+            
+            if ticker_data and ticker_data.dividends:
+                div = ticker_data.dividends
+                if getattr(div, 'nextDate', None) and getattr(div, 'nextAmount', None):
+                    try:
+                        ex_date = datetime.strptime(str(div.nextDate), "%Y%m%d")
+                        if ex_date > now:
+                            days_to_ex = (ex_date - now).days
+                            years_to_ex = days_to_ex / 365.25
+                            amount = float(div.nextAmount)
+                            discrete_divs.append((years_to_ex, amount))
+                            
+                            # 簡單預測未來一年的股息 (假設每季度一次)
+                            from datetime import timedelta
+                            for i in range(1, 4):
+                                projected_date = ex_date + timedelta(days=91.25 * i)
+                                d_years = (projected_date - now).days / 365.25
+                                if d_years > 0:
+                                    discrete_divs.append((d_years, amount))
+                            
+                            logger.info(f"成功從 IBKR 獲取 {ticker} 離散股息: {discrete_divs}")
+                    except Exception as e:
+                        logger.warning(f"解析 IB 股息日期失敗 {ticker}: {e}")
+            
+            self.ib.cancelMktData(contract)
+            return discrete_divs
+            
+        except Exception as e:
+            logger.error(f"獲取 IBKR 離散股息失敗 {ticker}: {e}")
+            return []
+            
     def req_tick_by_tick_data(
         self,
         contract: Contract,

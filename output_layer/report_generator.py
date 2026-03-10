@@ -4496,12 +4496,12 @@ class ReportGenerator:
                 
                 for exp in comparison[:5]:  # 最多顯示5個
                     expiry = str(exp.get('expiration', 'N/A'))[:10]
-                    days = exp.get('days', 0)
-                    premium = exp.get('premium', 0)
-                    iv = exp.get('iv', 0)
-                    theta_pct = exp.get('theta_pct', 0)
-                    score = exp.get('score', 0)
-                    grade = exp.get('grade', '-')
+                    days = exp.get('days', 0) or 0
+                    premium = exp.get('premium', 0) or 0.0
+                    iv = exp.get('iv', 0) or 0.0
+                    theta_pct = exp.get('theta_pct', 0) or 0.0
+                    score = exp.get('score', 0) or 0
+                    grade = exp.get('grade', '-') or '-'
                     
                     report += f"│ │ {expiry:12} │ {days:4} │ ${premium:5.2f} │ {iv:5.1f} │ {theta_pct:5.2f} │ {score:3}({grade}) │\n"
                 

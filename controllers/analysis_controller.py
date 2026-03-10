@@ -182,6 +182,35 @@ class AnalysisController:
             except Exception as e:
                 logger.warning(f"  Fix 4 ⚠️ IBKR modelGreeks 獲取失敗: {e}")
 
+        # ── Step 2.5: Volatility Surface (Phase 4) ────────────
+        vol_surface = None
+        if calculation_data and 'option_chain' in calculation_data:
+            try:
+                from calculation_layer.module24_volatility_surface import VolatilitySurface
+                import pandas as pd
+                option_chain = calculation_data['option_chain']
+                calls_df = option_chain.get('calls')
+                if calls_df is not None and not calls_df.empty:
+                    df = calls_df.copy()
+                    # Ensure column names match what VolatilitySurface expects
+                    if 'impliedVolatility' in df.columns and 'implied_volatility' not in df.columns:
+                        df = df.rename(columns={'impliedVolatility': 'implied_volatility'})
+                    
+                    # Ensure 'dte' exists (Days To Expiration)
+                    if 'dte' not in df.columns:
+                        from datetime import datetime
+                        exp_dt = datetime.strptime(expiry, '%Y-%m-%d')
+                        dte = max((exp_dt - datetime.now()).days, 1)
+                        df['dte'] = dte
+                        
+                    vs = VolatilitySurface()
+                    if vs.fit_surface(df, current_price):
+                        vol_surface = vs
+                        logger.info("  Phase 4 ✅ Volatility Surface 構建成功")
+                        results['volatility_surface_available'] = True
+            except Exception as e:
+                logger.warning(f"  Phase 4 ⚠️ Volatility Surface 構建失敗: {e}")
+
         # ── Step 3: 輕量模塊並行計算 ─────────────────────────────
         # 準備計算數據（傳入 dividend_yield 以啟用 Fix 6）
         calc_data = calculation_data or {}
@@ -189,6 +218,7 @@ class AnalysisController:
         calc_data['hv_from_ibkr'] = historical_volatility  # Fix 11
         calc_data['iv_from_ibkr'] = ibkr_iv               # Fix 4
         calc_data['mark_price'] = mark_price               # Fix 11
+        calc_data['vol_surface'] = vol_surface             # Phase 4
 
         lightweight_results = self._run_lightweight_modules_parallel(
             ticker, current_price, expiry, strike, option_type, calc_data
@@ -279,8 +309,21 @@ class AnalysisController:
             t = max(dte / 365.0, 0.001)
 
             iv = calc_data.get('iv_from_ibkr') or calc_data.get('iv', 0.20)
+            
+            # Phase 4: Volatility Surface Fallback
+            vol_surface = calc_data.get('vol_surface')
+            if vol_surface and not calc_data.get('iv_from_ibkr'):
+                try:
+                    surface_iv = vol_surface.get_iv(strike, dte, price)
+                    if surface_iv and surface_iv > 0:
+                        iv = surface_iv
+                        logger.debug(f"  Phase 4 ✅ Used Volatility Surface IV: {iv:.2%} for Strike {strike}")
+                except Exception as e:
+                    logger.debug(f"  ⚠️ Volatility Surface lookup failed: {e}")
+                    
             r = calc_data.get('risk_free_rate', 0.043)
             div_yield = calc_data.get('dividend_yield', 0.0)  # Fix 6
+            discrete_divs = calc_data.get('discrete_dividends', None)
 
             result = calc.calculate_all_greeks(
                 stock_price=price,
@@ -290,6 +333,7 @@ class AnalysisController:
                 volatility=iv,
                 option_type=option_type,
                 dividend_yield=div_yield,  # Fix 6: 傳入股息率
+                discrete_dividends=discrete_divs,
             )
             return result.to_dict() if hasattr(result, 'to_dict') else vars(result)
         except Exception as e:
