@@ -83,6 +83,25 @@ except ImportError:
     logger_init = logging.getLogger(__name__)
     logger_init.warning("IBKR 客户端不可用，将使用其他数据源")
 
+# Session 工具（盤前/盤後/夜盤保護）
+try:
+    from data_layer.session_utils import (
+        get_session_type,
+        is_non_primary_session,
+        is_overnight_session,
+        quote_passes_liquidity_check,
+        label_data_with_session,
+    )
+    SESSION_UTILS_AVAILABLE = True
+except ImportError:
+    SESSION_UTILS_AVAILABLE = False
+    # Fallback stubs so the rest of the code runs without error
+    def get_session_type(*args, **kwargs): return "primary"
+    def is_non_primary_session(*args, **kwargs): return False
+    def is_overnight_session(*args, **kwargs): return False
+    def quote_passes_liquidity_check(bid, ask, *args, **kwargs): return True, ""
+    def label_data_with_session(data, *args, **kwargs): return {**data, "session_type": "primary", "is_overnight": False}
+
 # 配置日誌
 logger = logging.getLogger(__name__)
 logging.basicConfig(
@@ -3022,14 +3041,30 @@ class DataFetcher:
             'warnings':          warnings,
         }
 
+        # ── 注入 Session 標籤 ─────────────────────────────────────
+        # 標記數據採集時的交易時段，讓報告可以顯示「此數據屬於夜盤/盤前時段」
+        session = get_session_type()
+        snapshot['session_type'] = session
+        snapshot['is_overnight'] = session in ('overnight', 'premarket')
+
+        if snapshot['is_overnight']:
+            night_warning = (
+                f"⚠️  Dark Pool 數據採集於非交易時段 ({session})，"
+                f"可能缺乏成交數據。建議在正常交易時段 (09:30-16:15 ET) 重新獲取。"
+            )
+            snapshot['warnings'].append(night_warning)
+            logger.warning(f"  ! {ticker} DP 數據採集於 {session} 時段，可靠性較低")
+
         logger.info(
             f"* DataFetcher DP: {ticker} "
             f"dp_ratio={snapshot['dp_ratio']}%, "
             f"volume={snapshot['dp_volume']}, "
             f"blocks={snapshot['block_count']}, "
-            f"quality={data_quality}"
+            f"quality={data_quality}, "
+            f"session={session}"
         )
         return snapshot
+
     
     # ========================================================================
     # 原有的 get_stock_info（保留以保持向後兼容）
@@ -3950,7 +3985,42 @@ class DataFetcher:
                         logger.info(f"* 成功獲取 {ticker} {expiration} 期權鏈 (IBKR Snapshot)")
                         logger.info(f"  Call期權: {len(calls_df)} 個")
                         logger.info(f"  Put期權: {len(puts_df)} 個")
-                        
+
+                        # ── Session-aware Spread Quality Filter ──────────────────
+                        # 夜盤/盤前時段對期權報價品質要求更嚴格
+                        session = get_session_type()
+                        liquidity_warnings: list[str] = []
+
+                        if session in ('overnight', 'premarket'):
+                            logger.warning(
+                                f"  ⚠️  非交易時段 ({session}): 對 {ticker} 期權鏈啟動嚴格流動性過濾"
+                            )
+                            for df_ref, opt_type in [(calls_df, 'Call'), (puts_df, 'Put')]:
+                                if df_ref.empty:
+                                    continue
+                                has_bid = 'bid' in df_ref.columns
+                                has_ask = 'ask' in df_ref.columns
+                                if has_bid and has_ask:
+                                    total = len(df_ref)
+                                    low_liq_mask = pd.Series([False] * total, index=df_ref.index)
+                                    for idx in df_ref.index:
+                                        bid_v = df_ref.at[idx, 'bid'] or 0.0
+                                        ask_v = df_ref.at[idx, 'ask'] or 0.0
+                                        passed, reason = quote_passes_liquidity_check(
+                                            bid=float(bid_v), ask=float(ask_v)
+                                        )
+                                        if not passed:
+                                            low_liq_mask.at[idx] = True
+                                    low_count = low_liq_mask.sum()
+                                    if low_count > 0:
+                                        df_ref.loc[low_liq_mask, 'data_quality'] = 'low_liquidity'
+                                        msg = (
+                                            f"{opt_type}: {low_count}/{total} 個行使價在 {session} 時段"
+                                            f"報價質量不足 (Spread>1%)，已標記 low_liquidity"
+                                        )
+                                        liquidity_warnings.append(msg)
+                                        logger.warning(f"    ! {msg}")
+
                         # 清理內存
                         gc.collect()
                         
@@ -3959,7 +4029,9 @@ class DataFetcher:
                             'puts': puts_df,
                             'expiration': expiration,
                             'data_source': 'ibkr_snapshot',
-                            'ibkr_available': True
+                            'ibkr_available': True,
+                            'session_type': session if SESSION_UTILS_AVAILABLE else 'primary',
+                            'liquidity_warnings': liquidity_warnings,
                         }
                     else:
                         logger.warning("! IBKR 返回了空數據結構")

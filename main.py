@@ -2662,114 +2662,135 @@ class OptionsAnalysisSystem:
             # ========== 模塊22: 最佳行使價分析 (整合 Module 23 IV 環境) ==========
             report_progress(23, "分析最佳行使價...", "Module 22: 最佳行使價")
             logger.info("\n→ 運行 Module 22: 最佳行使價分析...")
+
+            # ── 非交易時段自動降級 ─────────────────────────────────────────────
+            # Module 22 依賴成交量 (Volume) 和未平倉量 (OI) 進行流動性評分
+            # 夜盤/盤前時段這些數據不可用，會產生誤導性信號，自動跳過
             try:
-                # 獲取期權鏈數據
-                option_chain_raw = analysis_data.get('option_chain', {})
-                iv_rank_value = self.analysis_results.get('module18_historical_volatility', {}).get('iv_rank', 50.0)
-                
-                # 轉換 DataFrame 為 list of dicts（Module 22 期望的格式）
-                option_chain_converted = {}
-                calls_data = option_chain_raw.get('calls')
-                puts_data = option_chain_raw.get('puts')
-                
-                # 檢查並轉換 calls
-                if calls_data is not None:
-                    import pandas as pd
-                    if isinstance(calls_data, pd.DataFrame) and not calls_data.empty:
-                        option_chain_converted['calls'] = calls_data.to_dict('records')
-                        logger.info(f"  轉換 calls DataFrame: {len(option_chain_converted['calls'])} 個行使價")
-                    elif isinstance(calls_data, list):
-                        option_chain_converted['calls'] = calls_data
+                from data_layer.session_utils import is_non_primary_session, get_session_type as _get_session_type
+                _current_session = _get_session_type()
+            except ImportError:
+                _current_session = 'primary'
+
+            if _current_session in ('overnight', 'premarket'):
+                logger.warning(
+                    f"⚠️  Module 22 已跳過 (非交易時段: {_current_session})。"
+                    f"Volume/OI 數據在 {_current_session} 時段不可靠，待正常交易時段重新運行。"
+                )
+                self.analysis_results['module22_optimal_strike'] = {
+                    'status': 'skipped',
+                    'reason': f'非交易時段 ({_current_session}): Volume/OI 數據不可靠，請在交易時段運行',
+                    'session_type': _current_session,
+                }
+            else:
+                try:
+                    # 獲取期權鏈數據
+                    option_chain_raw = analysis_data.get('option_chain', {})
+                    iv_rank_value = self.analysis_results.get('module18_historical_volatility', {}).get('iv_rank', 50.0)
+                    
+                    # 轉換 DataFrame 為 list of dicts（Module 22 期望的格式）
+                    option_chain_converted = {}
+                    calls_data = option_chain_raw.get('calls')
+                    puts_data = option_chain_raw.get('puts')
+                    
+                    # 檢查並轉換 calls
+                    if calls_data is not None:
+                        import pandas as pd
+                        if isinstance(calls_data, pd.DataFrame) and not calls_data.empty:
+                            option_chain_converted['calls'] = calls_data.to_dict('records')
+                            logger.info(f"  轉換 calls DataFrame: {len(option_chain_converted['calls'])} 個行使價")
+                        elif isinstance(calls_data, list):
+                            option_chain_converted['calls'] = calls_data
+                        else:
+                            option_chain_converted['calls'] = []
                     else:
                         option_chain_converted['calls'] = []
-                else:
-                    option_chain_converted['calls'] = []
-                
-                # 檢查並轉換 puts
-                if puts_data is not None:
-                    import pandas as pd
-                    if isinstance(puts_data, pd.DataFrame) and not puts_data.empty:
-                        option_chain_converted['puts'] = puts_data.to_dict('records')
-                        logger.info(f"  轉換 puts DataFrame: {len(option_chain_converted['puts'])} 個行使價")
-                    elif isinstance(puts_data, list):
-                        option_chain_converted['puts'] = puts_data
+                    
+                    # 檢查並轉換 puts
+                    if puts_data is not None:
+                        import pandas as pd
+                        if isinstance(puts_data, pd.DataFrame) and not puts_data.empty:
+                            option_chain_converted['puts'] = puts_data.to_dict('records')
+                            logger.info(f"  轉換 puts DataFrame: {len(option_chain_converted['puts'])} 個行使價")
+                        elif isinstance(puts_data, list):
+                            option_chain_converted['puts'] = puts_data
+                        else:
+                            option_chain_converted['puts'] = []
                     else:
                         option_chain_converted['puts'] = []
-                else:
-                    option_chain_converted['puts'] = []
-                
-                if option_chain_converted['calls'] or option_chain_converted['puts']:
-                    optimal_strike_calc = OptimalStrikeCalculator()
                     
-                    # 分析四種策略的最佳行使價
-                    strategies = ['long_call', 'long_put', 'short_call', 'short_put']
-                    optimal_results = {}
-                    
-                    # Task 14.1: 獲取 Module 1 支持阻力位數據用於 Long/Short 策略增強
-                    sr_data = self.analysis_results.get('module1_support_resistance', {})
-                    support_resistance_data = None
-                    if sr_data:
-                        support_resistance_data = {
-                            'support_level': sr_data.get('support_level'),
-                            'resistance_level': sr_data.get('resistance_level')
-                        }
-                        logger.info(f"  使用 Module 1 支持阻力位: 支持 ${support_resistance_data.get('support_level', 0):.2f}, 阻力 ${support_resistance_data.get('resistance_level', 0):.2f}")
-                    
-                    for strategy in strategies:
-                        # Task 14.1: 傳入 support_resistance_data 和啟用 enable_max_profit_analysis
-                        result = optimal_strike_calc.analyze_strikes(
-                            ticker=ticker,
-                            current_price=current_price,
-                            option_chain=option_chain_converted,
-                            strategy_type=strategy,
-                            days_to_expiration=int(days_to_expiration) if days_to_expiration else 30,
-                            iv_rank=iv_rank_value,
-                            support_resistance_data=support_resistance_data,  # 新增: 支持阻力位數據
-                            enable_max_profit_analysis=True  # 新增: 啟用 Long/Short 策略增強
-                        )
+                    if option_chain_converted['calls'] or option_chain_converted['puts']:
+                        optimal_strike_calc = OptimalStrikeCalculator()
                         
-                        # 整合 Module 23 IV 環境信息
-                        result['iv_environment'] = iv_environment
-                        result['iv_trading_suggestion'] = iv_trading_suggestion
+                        # 分析四種策略的最佳行使價
+                        strategies = ['long_call', 'long_put', 'short_call', 'short_put']
+                        optimal_results = {}
                         
-                        optimal_results[strategy] = result
+                        # Task 14.1: 獲取 Module 1 支持阻力位數據用於 Long/Short 策略增強
+                        sr_data = self.analysis_results.get('module1_support_resistance', {})
+                        support_resistance_data = None
+                        if sr_data:
+                            support_resistance_data = {
+                                'support_level': sr_data.get('support_level'),
+                                'resistance_level': sr_data.get('resistance_level')
+                            }
+                            logger.info(f"  使用 Module 1 支持阻力位: 支持 ${support_resistance_data.get('support_level', 0):.2f}, 阻力 ${support_resistance_data.get('resistance_level', 0):.2f}")
                         
-                        # Task 14.2: 更新日誌輸出，包含新的分析結果
-                        if result.get('best_strike'):
-                            best_rec = result['top_recommendations'][0] if result['top_recommendations'] else {}
-                            composite_score = best_rec.get('composite_score', 0)
-                            max_profit_score = best_rec.get('max_profit_score', 0)
+                        for strategy in strategies:
+                            # Task 14.1: 傳入 support_resistance_data 和啟用 enable_max_profit_analysis
+                            result = optimal_strike_calc.analyze_strikes(
+                                ticker=ticker,
+                                current_price=current_price,
+                                option_chain=option_chain_converted,
+                                strategy_type=strategy,
+                                days_to_expiration=int(days_to_expiration) if days_to_expiration else 30,
+                                iv_rank=iv_rank_value,
+                                support_resistance_data=support_resistance_data,  # 新增: 支持阻力位數據
+                                enable_max_profit_analysis=True  # 新增: 啟用 Long/Short 策略增強
+                            )
                             
-                            # 根據策略類型顯示不同信息
-                            if strategy in ['long_call', 'long_put']:
-                                # Long 策略: 顯示期望收益和建議持倉天數
-                                multi_scenario = best_rec.get('multi_scenario_profit', {})
-                                optimal_exit = best_rec.get('optimal_exit_timing', {})
-                                expected_pct = multi_scenario.get('expected_profit_pct', 0) if multi_scenario else 0
-                                exit_day = optimal_exit.get('recommended_exit_day', 0) if optimal_exit else 0
-                                logger.info(f"  {strategy}: 最佳行使價 ${result['best_strike']:.2f}, 評分 {composite_score:.1f}, 期望收益 {expected_pct:.0f}%, 建議持倉 {exit_day} 天")
-                            else:
-                                # Short 策略: 顯示安全概率和年化收益
-                                premium_analysis = best_rec.get('premium_analysis', {})
-                                safe_prob = premium_analysis.get('safe_probability', 0) if premium_analysis else 0
-                                annualized = premium_analysis.get('annualized_yield_pct', 0) if premium_analysis else 0
-                                logger.info(f"  {strategy}: 最佳行使價 ${result['best_strike']:.2f}, 評分 {composite_score:.1f}, 安全概率 {safe_prob*100:.0f}%, 年化 {annualized:.0f}%")
-                    
-                    self.analysis_results['module22_optimal_strike'] = optimal_results
-                    logger.info("* 模塊22完成: 最佳行使價分析")
-                    logger.info(f"  IV環境整合: {iv_environment}")
-                else:
-                    logger.info("! 模塊22跳過: 期權鏈數據不足")
+                            # 整合 Module 23 IV 環境信息
+                            result['iv_environment'] = iv_environment
+                            result['iv_trading_suggestion'] = iv_trading_suggestion
+                            
+                            optimal_results[strategy] = result
+                            
+                            # Task 14.2: 更新日誌輸出，包含新的分析結果
+                            if result.get('best_strike'):
+                                best_rec = result['top_recommendations'][0] if result['top_recommendations'] else {}
+                                composite_score = best_rec.get('composite_score', 0)
+                                max_profit_score = best_rec.get('max_profit_score', 0)
+                                
+                                # 根據策略類型顯示不同信息
+                                if strategy in ['long_call', 'long_put']:
+                                    # Long 策略: 顯示期望收益和建議持倉天數
+                                    multi_scenario = best_rec.get('multi_scenario_profit', {})
+                                    optimal_exit = best_rec.get('optimal_exit_timing', {})
+                                    expected_pct = multi_scenario.get('expected_profit_pct', 0) if multi_scenario else 0
+                                    exit_day = optimal_exit.get('recommended_exit_day', 0) if optimal_exit else 0
+                                    logger.info(f"  {strategy}: 最佳行使價 ${result['best_strike']:.2f}, 評分 {composite_score:.1f}, 期望收益 {expected_pct:.0f}%, 建議持倉 {exit_day} 天")
+                                else:
+                                    # Short 策略: 顯示安全概率和年化收益
+                                    premium_analysis = best_rec.get('premium_analysis', {})
+                                    safe_prob = premium_analysis.get('safe_probability', 0) if premium_analysis else 0
+                                    annualized = premium_analysis.get('annualized_yield_pct', 0) if premium_analysis else 0
+                                    logger.info(f"  {strategy}: 最佳行使價 ${result['best_strike']:.2f}, 評分 {composite_score:.1f}, 安全概率 {safe_prob*100:.0f}%, 年化 {annualized:.0f}%")
+                        
+                        self.analysis_results['module22_optimal_strike'] = optimal_results
+                        logger.info("* 模塊22完成: 最佳行使價分析")
+                        logger.info(f"  IV環境整合: {iv_environment}")
+                    else:
+                        logger.info("! 模塊22跳過: 期權鏈數據不足")
+                        self.analysis_results['module22_optimal_strike'] = {
+                            'status': 'skipped',
+                            'reason': '期權鏈數據不足'
+                        }
+                except Exception as exc:
+                    logger.warning(f"! 模塊22執行失敗: {exc}")
                     self.analysis_results['module22_optimal_strike'] = {
-                        'status': 'skipped',
-                        'reason': '期權鏈數據不足'
+                        'status': 'error',
+                        'reason': str(exc)
                     }
-            except Exception as exc:
-                logger.warning(f"! 模塊22執行失敗: {exc}")
-                self.analysis_results['module22_optimal_strike'] = {
-                    'status': 'error',
-                    'reason': str(exc)
-                }
             
             # ========== Module 32: 高級組合策略 (Complex Strategies) ==========
             # Phase 3 Item: 位於 Module 22 之後，利用 IV 和預處理過的數據
@@ -3253,32 +3274,53 @@ class OptionsAnalysisSystem:
             
             # ========== Module 30: 異動期權分析 ==========
             logger.info("\n→ 運行 Module 30: 異動期權分析...")
+
+            # ── 非交易時段自動降級 ─────────────────────────────────────────────
+            # Module 30 依賴 Volume 異動偵測（成交量突破平均值），盤前/夜盤無參考基線
             try:
-                if calls_df is not None and puts_df is not None:
-                    import pandas as pd
-                    calls_df_pd = pd.DataFrame(calls_df) if not isinstance(calls_df, pd.DataFrame) else calls_df
-                    puts_df_pd = pd.DataFrame(puts_df) if not isinstance(puts_df, pd.DataFrame) else puts_df
-                    
-                    if not calls_df_pd.empty and not puts_df_pd.empty:
-                        uoa_analyzer = UnusualActivityAnalyzer()
-                        uoa_result = uoa_analyzer.analyze_chain(calls_df_pd, puts_df_pd)
-                        
-                        self.analysis_results['module30_unusual_activity'] = {
-                            'status': 'success',
-                            'calls': [s.to_dict() if hasattr(s, 'to_dict') else s for s in uoa_result.get('calls', [])],
-                            'puts': [s.to_dict() if hasattr(s, 'to_dict') else s for s in uoa_result.get('puts', [])],
-                            'total_signals': len(uoa_result.get('calls', [])) + len(uoa_result.get('puts', []))
-                        }
-                        logger.info(f"* 模塊30完成: 發現 {len(uoa_result.get('calls', []))} 個 Call 異動, {len(uoa_result.get('puts', []))} 個 Put 異動")
+                from data_layer.session_utils import get_session_type as _get_session_m30
+                _session_m30 = _get_session_m30()
+            except ImportError:
+                _session_m30 = 'primary'
+
+            if _session_m30 in ('overnight', 'premarket'):
+                logger.warning(
+                    f"⚠️  Module 30 已跳過 (非交易時段: {_session_m30})。"
+                    f"Volume 異動偵測在 {_session_m30} 時段的基線不可靠，待正常交易時段重新運行。"
+                )
+                self.analysis_results['module30_unusual_activity'] = {
+                    'status': 'skipped',
+                    'reason': f'非交易時段 ({_session_m30}): Volume 異動基線不可靠，請在交易時段運行',
+                    'session_type': _session_m30,
+                }
+            else:
+                try:
+                    if calls_df is not None and puts_df is not None:
+                        import pandas as pd
+                        calls_df_pd = pd.DataFrame(calls_df) if not isinstance(calls_df, pd.DataFrame) else calls_df
+                        puts_df_pd = pd.DataFrame(puts_df) if not isinstance(puts_df, pd.DataFrame) else puts_df
+
+                        if not calls_df_pd.empty and not puts_df_pd.empty:
+                            uoa_analyzer = UnusualActivityAnalyzer()
+                            uoa_result = uoa_analyzer.analyze_chain(calls_df_pd, puts_df_pd)
+
+                            self.analysis_results['module30_unusual_activity'] = {
+                                'status': 'success',
+                                'calls': [s.to_dict() if hasattr(s, 'to_dict') else s for s in uoa_result.get('calls', [])],
+                                'puts': [s.to_dict() if hasattr(s, 'to_dict') else s for s in uoa_result.get('puts', [])],
+                                'total_signals': len(uoa_result.get('calls', [])) + len(uoa_result.get('puts', []))
+                            }
+                            logger.info(f"* 模塊30完成: 發現 {len(uoa_result.get('calls', []))} 個 Call 異動, {len(uoa_result.get('puts', []))} 個 Put 異動")
+                        else:
+                            logger.warning("! 模塊30跳過: 期權鏈數據為空")
+                            self.analysis_results['module30_unusual_activity'] = {'status': 'skipped', 'reason': '期權鏈數據為空'}
                     else:
-                        logger.warning("! 模塊30跳過: 期權鏈數據為空")
-                        self.analysis_results['module30_unusual_activity'] = {'status': 'skipped', 'reason': '期權鏈數據為空'}
-                else:
-                    logger.warning("! 模塊30跳過: 無期權鏈數據")
-                    self.analysis_results['module30_unusual_activity'] = {'status': 'skipped', 'reason': '無期權鏈數據'}
-            except Exception as exc:
-                logger.warning(f"! 模塊30執行失敗: {exc}")
-                self.analysis_results['module30_unusual_activity'] = {'status': 'error', 'reason': str(exc)}
+                        logger.warning("! 模塊30跳過: 無期權鏈數據")
+                        self.analysis_results['module30_unusual_activity'] = {'status': 'skipped', 'reason': '無期權鏈數據'}
+                except Exception as exc:
+                    logger.warning(f"! 模塊30執行失敗: {exc}")
+                    self.analysis_results['module30_unusual_activity'] = {'status': 'error', 'reason': str(exc)}
+
             
             # ========== Module 31: 高級市場指標 ==========
             logger.info("\n→ 運行 Module 31: 高級市場指標...")
