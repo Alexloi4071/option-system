@@ -13,6 +13,14 @@ from datetime import datetime, timedelta
 import sys
 import os
 
+# Windows encoding fix to prevent UnicodeEncodeError on emojis
+if hasattr(sys.stdout, 'reconfigure'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
+
 # 獲取項目根目錄
 current_dir = os.path.dirname(os.path.abspath(__file__))
 root_dir = current_dir  # main.py 在根目錄

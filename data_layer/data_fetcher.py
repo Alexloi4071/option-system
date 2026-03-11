@@ -2091,7 +2091,7 @@ class DataFetcher:
             # 嘗試從 yfinance 補充關鍵字段
             try:
                 logger.info(f"  嘗試從 yfinance 補充關鍵字段...")
-                yf_ticker = yf.Ticker(ticker, session=self.session)
+                yf_ticker = yf.Ticker(ticker)
                 yf_info = yf_ticker.info
                 
                 # 映射 yfinance 字段到 Finviz 字段
@@ -2632,7 +2632,7 @@ class DataFetcher:
         try:
             self._rate_limit_delay()
             logger.info("  使用 yfinance...")
-            stock = yf.Ticker(ticker, session=self.session)
+            stock = yf.Ticker(ticker)
             info = stock.info
             
             if info.get('currentPrice', 0) > 0 or info.get('regularMarketPrice', 0) > 0:
@@ -3410,7 +3410,7 @@ class DataFetcher:
         try:
             self._rate_limit_delay()
             logger.info("  使用 yfinance (最後備用)...")
-            stock = yf.Ticker(ticker, session=self.session)
+            stock = yf.Ticker(ticker)
             info = stock.info
             
             stock_data = {
@@ -3519,7 +3519,7 @@ class DataFetcher:
         # 2025-12-07: 將 yfinance 提升到 Yahoo Finance V2 之前，因為 yfinance 0.2.66 有更好的 429 處理
         try:
             logger.info(f"  使用 yfinance 獲取歷史數據...")
-            stock = yf.Ticker(ticker, session=self.session)
+            stock = yf.Ticker(ticker)
             hist = stock.history(period=period, interval=interval)
             
             if hist is not None and not hist.empty:
@@ -3747,7 +3747,7 @@ class DataFetcher:
             # 方案 3: yfinance (最後備用)
             try:
                 logger.info("  備用: 嘗試使用 yfinance (已打補丁)...")
-                stock = yf.Ticker(ticker_normalized, session=self.session)
+                stock = yf.Ticker(ticker_normalized)
                 expirations = stock.options
                 
                 if expirations:
@@ -4054,7 +4054,7 @@ class DataFetcher:
         try:
             self._rate_limit_delay()
             logger.info("  使用 yfinance...")
-            stock = yf.Ticker(ticker, session=self.session)
+            stock = yf.Ticker(ticker)
             option_chain = stock.option_chain(expiration)
             
             calls = option_chain.calls.copy()
@@ -4353,7 +4353,7 @@ class DataFetcher:
             
             # 如果沒有提供當前股價，則獲取
             if current_price is None:
-                stock = yf.Ticker(ticker, session=self.session)
+                stock = yf.Ticker(ticker)
                 current_price = stock.info['currentPrice']
             
             # 找最接近的行使價
@@ -4794,7 +4794,7 @@ class DataFetcher:
         """
         try:
             logger.info(f"開始獲取 {ticker} EPS...")
-            stock = yf.Ticker(ticker, session=self.session)
+            stock = yf.Ticker(ticker)
             eps = stock.info.get('trailingEps', None)
             
             if eps:
@@ -4825,7 +4825,7 @@ class DataFetcher:
         """
         try:
             logger.info(f"開始獲取 {ticker} 派息信息...")
-            stock = yf.Ticker(ticker, session=self.session)
+            stock = yf.Ticker(ticker)
             
             # 獲取派息歷史
             div_hist = stock.dividends
@@ -4899,7 +4899,7 @@ class DataFetcher:
             
             # 方法1: Yahoo Finance info['dividendYield']（最優先）
             try:
-                stock = yf.Ticker(ticker, session=self.session)
+                stock = yf.Ticker(ticker)
                 info = stock.info
                 
                 if 'dividendYield' in info and info['dividendYield'] is not None:
@@ -5004,7 +5004,7 @@ class DataFetcher:
                     
             # 降級方案: Yahoo Finance 推測
             logger.info(f"嘗試從 Yahoo Finance 推斷 {ticker} 離散股息時間表...")
-            stock = yf.Ticker(ticker, session=self.session)
+            stock = yf.Ticker(ticker)
             info = stock.info
             now = datetime.now()
             
@@ -5189,7 +5189,7 @@ class DataFetcher:
             
             # 使用 yfinance 獲取歷史數據
             try:
-                stock = yf.Ticker(ticker, session=self.session)
+                stock = yf.Ticker(ticker)
                 # 計算需要的期間（考慮週末和假期，大約需要 1.5 倍的日曆天數）
                 calendar_days = int(extended_days * 1.5)
                 hist = stock.history(period=f"{calendar_days}d")
@@ -5309,7 +5309,7 @@ class DataFetcher:
         # 方案2: 降級到 yfinance calendar
         try:
             logger.info("  使用 yfinance calendar...")
-            stock = yf.Ticker(ticker, session=self.session)
+            stock = yf.Ticker(ticker)
             calendar = stock.calendar
             
             if calendar is not None and not calendar.empty:
@@ -5434,7 +5434,7 @@ class DataFetcher:
                 logger.info(f"  嘗試從 yfinance 補充關鍵字段: {', '.join(missing_critical)}")
                 
                 try:
-                    stock = yf.Ticker(ticker, session=self.session)
+                    stock = yf.Ticker(ticker)
                     info = stock.info
                     
                     # 補充 price
@@ -5511,7 +5511,7 @@ class DataFetcher:
             推測的業績日期字典，失敗返回 None
         """
         try:
-            stock = yf.Ticker(ticker, session=self.session)
+            stock = yf.Ticker(ticker)
             
             # 嘗試獲取歷史業績日期
             # yfinance 的 earnings_dates 屬性包含歷史業績日期
@@ -5597,7 +5597,7 @@ class DataFetcher:
             logger.info(f"開始獲取 {ticker} 派息信息...")
             
             # 方法1: 使用yfinance (主要)
-            stock = yf.Ticker(ticker, session=self.session)
+            stock = yf.Ticker(ticker)
             info = stock.info
             
             result = {

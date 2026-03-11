@@ -28,7 +28,7 @@ class Settings:
     IBKR_PORT_PAPER = int(os.getenv("IBKR_PORT_PAPER", "4002"))
     IBKR_PORT_LIVE = int(os.getenv("IBKR_PORT_LIVE", "4001"))
     IBKR_CLIENT_ID = int(os.getenv("IBKR_CLIENT_ID", "100"))
-    IBKR_USE_PAPER = os.getenv("IBKR_USE_PAPER", "True").lower() == "true"  # 使用 Paper Trading
+    IBKR_USE_PAPER = os.getenv("IBKR_USE_PAPER", "False").lower() == "true"  # 使用 Paper Trading
     IBKR_ACCOUNT_ID = os.getenv("IBKR_ACCOUNT_ID", "")
     
     # IBKR API 優化配置

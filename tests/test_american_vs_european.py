@@ -41,7 +41,6 @@ def run_compare():
     res_euro2 = calc.calculate_all_greeks(100, 100, r, T, sigma, 'call', q2, is_american=False)
     
     print(f"American Delta: {res_amer2.delta:.4f} | European Delta: {res_euro2.delta:.4f}")
-    print(f"American Delta: {res_amer2.delta:.4f} | European Delta: {res_euro2.delta:.4f}")
     
     # 測試 3: Discrete Dividends (S=100, K=100, Div=$2 at T=0.25)
     print("\n=== Test 3: Discrete Dividend at T=0.25 (S=100, K=100, Div=$2.0) ===")

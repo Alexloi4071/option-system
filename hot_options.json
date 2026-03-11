@@ -1,1027 +1,30 @@
 [
     {
-        "ticker": "AXP",
-        "profile": "The_Titans",
-        "strategy": "LONG_PUT",
-        "strike": 310.0,
-        "expiry": "20260410",
-        "price": 308.72,
-        "premium": 12.69,
-        "score": 100,
-        "analysis": {
-            "strategy": "Long Put",
-            "status": "success",
-            "input": {
-                "stock_price": 308.72,
-                "strike_price": 310.0,
-                "premium": 12.69,
-                "days_to_expiration": 35,
-                "delta": -0.5,
-                "theta": 0.0,
-                "iv": 0.5,
-                "contract_size": 100
-            },
-            "cost_analysis": {
-                "premium_per_share": 12.69,
-                "total_cost": 1269.0,
-                "max_loss": 1269.0,
-                "max_loss_pct": 100.0
-            },
-            "breakeven": {
-                "price": 297.31,
-                "distance_from_current": 11.410000000000025,
-                "distance_pct": 3.6959056750453563,
-                "interpretation": "\ud83d\udfe1 \u4e2d\u7b49\u96e3\u5ea6 - \u9700\u8981\u4e00\u5b9a\u8dcc\u5e45"
-            },
-            "leverage": {
-                "effective_leverage": 12.16,
-                "capital_efficiency": 24.33,
-                "delta": 0.5,
-                "rating": "\ud83d\ude80 \u8d85\u9ad8\u69d3\u687f",
-                "warning": "\u26a0\ufe0f \u9ad8\u98a8\u96aa\u9ad8\u56de\u5831\uff0c\u6ce8\u610f\u5009\u4f4d\u63a7\u5236",
-                "explanation": "\u80a1\u50f9\u6bcf\u8b8a\u52d51%\uff0c\u671f\u6b0a\u7d04\u8b8a\u52d512.2%"
-            },
-            "scenarios": [
-                {
-                    "stock_change_pct": 50,
-                    "stock_price": 463.08,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -1269.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": 30,
-                    "stock_price": 401.34,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -1269.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": 20,
-                    "stock_price": 370.46,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -1269.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": 15,
-                    "stock_price": 355.03,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -1269.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": 10,
-                    "stock_price": 339.59,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -1269.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": 5,
-                    "stock_price": 324.16,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -1269.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": 0,
-                    "stock_price": 308.72,
-                    "intrinsic_value": 1.28,
-                    "total_value": 128.0,
-                    "profit_loss": -1141.0,
-                    "profit_loss_pct": -89.9,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": -5,
-                    "stock_price": 293.28,
-                    "intrinsic_value": 16.72,
-                    "total_value": 1671.6,
-                    "profit_loss": 402.6,
-                    "profit_loss_pct": 31.7,
-                    "result": "\ud83d\udfe2 \u7372\u5229"
-                },
-                {
-                    "stock_change_pct": -10,
-                    "stock_price": 277.85,
-                    "intrinsic_value": 32.15,
-                    "total_value": 3215.2,
-                    "profit_loss": 1946.2,
-                    "profit_loss_pct": 153.4,
-                    "result": "\ud83d\udfe2 \u7372\u5229"
-                },
-                {
-                    "stock_change_pct": -20,
-                    "stock_price": 246.98,
-                    "intrinsic_value": 63.02,
-                    "total_value": 6302.4,
-                    "profit_loss": 5033.4,
-                    "profit_loss_pct": 396.6,
-                    "result": "\ud83d\udfe2 \u7372\u5229"
-                }
-            ],
-            "theta_analysis": {
-                "theta_per_share": 0.0,
-                "daily_decay_dollar": 0.0,
-                "weekly_decay_dollar": 0.0,
-                "daily_decay_pct": 0.0,
-                "days_to_expiration": 35,
-                "estimated_decay_to_expiry": 0.0,
-                "risk_level": "\ud83d\udfe2 \u6975\u4f4e\u98a8\u96aa",
-                "warning": "\u6642\u9593\u8870\u6e1b\u5f71\u97ff\u5c0f",
-                "suggestion": "\u2705 \u5230\u671f\u65e5\u8f03\u9060\uff0cTheta \u5f71\u97ff\u8f03\u5c0f"
-            },
-            "iv_analysis": {
-                "current_iv": 0.5,
-                "iv_level": "\ud83d\udfe2 \u4f4e IV",
-                "assessment": "\u671f\u6b0a\u4fbf\u5b9c\uff0c\u9069\u5408\u8cb7\u5165",
-                "buy_timing": "\u2705 \u597d\u6642\u6a5f",
-                "vega_risk": "IV \u4e0a\u5347\u6703\u589e\u52a0\u671f\u6b0a\u50f9\u503c"
-            },
-            "score": {
-                "total_score": 100,
-                "grade": "A",
-                "grade_description": "\u512a\u79c0 - \u5f37\u70c8\u63a8\u85a6",
-                "factors": [
-                    [
-                        "\u76c8\u8667\u5e73\u8861\u9ede",
-                        "+15",
-                        "\u4e2d\u7b49\u96e3\u5ea6"
-                    ],
-                    [
-                        "\u69d3\u687f\u500d\u6578",
-                        "+20",
-                        "12.2x \u8d85\u9ad8\u69d3\u687f"
-                    ],
-                    [
-                        "Theta \u98a8\u96aa",
-                        "+15",
-                        "\u6975\u4f4e\u8870\u6e1b"
-                    ],
-                    [
-                        "IV \u6c34\u5e73",
-                        "+15",
-                        "\u4f4e IV\uff0c\u671f\u6b0a\u4fbf\u5b9c"
-                    ],
-                    [
-                        "\u5230\u671f\u5929\u6578",
-                        "+10",
-                        "35\u5929\uff0c\u6642\u9593\u5145\u88d5"
-                    ]
-                ]
-            },
-            "recommendation": {
-                "action": "BUY",
-                "confidence": "HIGH",
-                "recommendations": [
-                    "\u2705 PUT \u8a55\u5206 100 \u5206\uff0c\u53ef\u4ee5\u8003\u616e\u8cb7\u5165",
-                    "\ud83d\udcc8 \u69d3\u687f 12.2x\uff0c\u9069\u5408\u4ee5\u5c0f\u535a\u5927",
-                    "\u2705 IV 0.5% \u504f\u4f4e\uff0c\u671f\u6b0a\u76f8\u5c0d\u4fbf\u5b9c"
-                ],
-                "warnings": [],
-                "position_suggestion": "\u5efa\u8b70\u5009\u4f4d: 1-2 \u5f35 (\u6210\u672c $1269-$2538)"
-            },
-            "analysis_time": "2026-03-05 21:07:48"
-        },
-        "reasoning": "Tech \u770b\u8dcc (RSI:33.8) + \u7c4c\u78bc\u963b\u529b(308.97)",
-        "uoa_score": 0
-    },
-    {
-        "ticker": "AAP",
-        "profile": "Small_Cap_Movers",
-        "strategy": "LONG_PUT",
-        "strike": 50.0,
-        "expiry": "20260410",
-        "price": null,
-        "premium": 3.0,
-        "score": 80,
-        "analysis": {
-            "strategy": "Long Put",
-            "status": "success",
-            "input": {
-                "stock_price": null,
-                "strike_price": 50.0,
-                "premium": 3.0,
-                "days_to_expiration": 35,
-                "delta": -0.5,
-                "theta": 0.0,
-                "iv": 0.5,
-                "contract_size": 100
-            },
-            "cost_analysis": {
-                "premium_per_share": 3.0,
-                "total_cost": 300.0,
-                "max_loss": 300.0,
-                "max_loss_pct": 100.0
-            },
-            "breakeven": {
-                "price": 47.0,
-                "distance_from_current": null,
-                "distance_pct": null,
-                "interpretation": "\ud83d\udd34 \u56f0\u96e3 - \u9700\u8981\u5927\u5e45\u4e0b\u8dcc\u624d\u80fd\u7372\u5229"
-            },
-            "leverage": {
-                "effective_leverage": null,
-                "capital_efficiency": null,
-                "delta": 0.5,
-                "rating": "\ud83d\udcc9 \u4f4e\u69d3\u687f",
-                "warning": "\u69d3\u687f\u6548\u76ca\u4e0d\u660e\u986f",
-                "explanation": "\u80a1\u50f9\u6bcf\u8b8a\u52d51%\uff0c\u671f\u6b0a\u7d04\u8b8a\u52d5nan%"
-            },
-            "scenarios": [
-                {
-                    "stock_change_pct": 50,
-                    "stock_price": null,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -300.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": 30,
-                    "stock_price": null,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -300.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": 20,
-                    "stock_price": null,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -300.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": 15,
-                    "stock_price": null,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -300.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": 10,
-                    "stock_price": null,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -300.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": 5,
-                    "stock_price": null,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -300.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": 0,
-                    "stock_price": null,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -300.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": -5,
-                    "stock_price": null,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -300.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": -10,
-                    "stock_price": null,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -300.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": -20,
-                    "stock_price": null,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -300.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                }
-            ],
-            "theta_analysis": {
-                "theta_per_share": 0.0,
-                "daily_decay_dollar": 0.0,
-                "weekly_decay_dollar": 0.0,
-                "daily_decay_pct": 0.0,
-                "days_to_expiration": 35,
-                "estimated_decay_to_expiry": 0.0,
-                "risk_level": "\ud83d\udfe2 \u6975\u4f4e\u98a8\u96aa",
-                "warning": "\u6642\u9593\u8870\u6e1b\u5f71\u97ff\u5c0f",
-                "suggestion": "\u2705 \u5230\u671f\u65e5\u8f03\u9060\uff0cTheta \u5f71\u97ff\u8f03\u5c0f"
-            },
-            "iv_analysis": {
-                "current_iv": 0.5,
-                "iv_level": "\ud83d\udfe2 \u4f4e IV",
-                "assessment": "\u671f\u6b0a\u4fbf\u5b9c\uff0c\u9069\u5408\u8cb7\u5165",
-                "buy_timing": "\u2705 \u597d\u6642\u6a5f",
-                "vega_risk": "IV \u4e0a\u5347\u6703\u589e\u52a0\u671f\u6b0a\u50f9\u503c"
-            },
-            "score": {
-                "total_score": 80,
-                "grade": "A",
-                "grade_description": "\u512a\u79c0 - \u5f37\u70c8\u63a8\u85a6",
-                "factors": [
-                    [
-                        "\u76c8\u8667\u5e73\u8861\u9ede",
-                        "-10",
-                        "\u56f0\u96e3"
-                    ],
-                    [
-                        "\u69d3\u687f\u500d\u6578",
-                        "+0",
-                        "nanx \u4f4e\u69d3\u687f"
-                    ],
-                    [
-                        "Theta \u98a8\u96aa",
-                        "+15",
-                        "\u6975\u4f4e\u8870\u6e1b"
-                    ],
-                    [
-                        "IV \u6c34\u5e73",
-                        "+15",
-                        "\u4f4e IV\uff0c\u671f\u6b0a\u4fbf\u5b9c"
-                    ],
-                    [
-                        "\u5230\u671f\u5929\u6578",
-                        "+10",
-                        "35\u5929\uff0c\u6642\u9593\u5145\u88d5"
-                    ]
-                ]
-            },
-            "recommendation": {
-                "action": "BUY",
-                "confidence": "HIGH",
-                "recommendations": [
-                    "\u2705 PUT \u8a55\u5206 80 \u5206\uff0c\u53ef\u4ee5\u8003\u616e\u8cb7\u5165",
-                    "\u2705 IV 0.5% \u504f\u4f4e\uff0c\u671f\u6b0a\u76f8\u5c0d\u4fbf\u5b9c"
-                ],
-                "warnings": [],
-                "position_suggestion": "\u5efa\u8b70\u5009\u4f4d: 1-2 \u5f35 (\u6210\u672c $300-$600)"
-            },
-            "analysis_time": "2026-03-05 21:07:48"
-        },
-        "reasoning": "Tech \u770b\u8dcc (RSI:46.6) + \u7c4c\u78bc\u963b\u529b(49.86)",
-        "uoa_score": 0
-    },
-    {
-        "ticker": "ABAT",
-        "profile": "Small_Cap_Movers",
-        "strategy": "LONG_PUT",
-        "strike": 4.0,
-        "expiry": "20260410",
-        "price": 3.51,
-        "premium": 0.76,
-        "score": 95,
-        "analysis": {
-            "strategy": "Long Put",
-            "status": "success",
-            "input": {
-                "stock_price": 3.51,
-                "strike_price": 4.0,
-                "premium": 0.76,
-                "days_to_expiration": 35,
-                "delta": -0.5,
-                "theta": 0.0,
-                "iv": 0.5,
-                "contract_size": 100
-            },
-            "cost_analysis": {
-                "premium_per_share": 0.76,
-                "total_cost": 76.0,
-                "max_loss": 76.0,
-                "max_loss_pct": 100.0
-            },
-            "breakeven": {
-                "price": 3.24,
-                "distance_from_current": 0.2699999999999996,
-                "distance_pct": 7.69230769230768,
-                "interpretation": "\ud83d\udfe0 \u8f03\u96e3\u9054\u5230 - \u9700\u8981\u8f03\u5927\u8dcc\u5e45"
-            },
-            "leverage": {
-                "effective_leverage": 2.31,
-                "capital_efficiency": 4.62,
-                "delta": 0.5,
-                "rating": "\ud83d\udcc9 \u4f4e\u69d3\u687f",
-                "warning": "\u69d3\u687f\u6548\u76ca\u4e0d\u660e\u986f",
-                "explanation": "\u80a1\u50f9\u6bcf\u8b8a\u52d51%\uff0c\u671f\u6b0a\u7d04\u8b8a\u52d52.3%"
-            },
-            "scenarios": [
-                {
-                    "stock_change_pct": 50,
-                    "stock_price": 5.26,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -76.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": 30,
-                    "stock_price": 4.56,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -76.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": 20,
-                    "stock_price": 4.21,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -76.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": 15,
-                    "stock_price": 4.04,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -76.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": 10,
-                    "stock_price": 3.86,
-                    "intrinsic_value": 0.14,
-                    "total_value": 13.9,
-                    "profit_loss": -62.1,
-                    "profit_loss_pct": -81.7,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": 5,
-                    "stock_price": 3.69,
-                    "intrinsic_value": 0.31,
-                    "total_value": 31.45,
-                    "profit_loss": -44.55,
-                    "profit_loss_pct": -58.6,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": 0,
-                    "stock_price": 3.51,
-                    "intrinsic_value": 0.49,
-                    "total_value": 49.0,
-                    "profit_loss": -27.0,
-                    "profit_loss_pct": -35.5,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": -5,
-                    "stock_price": 3.33,
-                    "intrinsic_value": 0.67,
-                    "total_value": 66.55,
-                    "profit_loss": -9.45,
-                    "profit_loss_pct": -12.4,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": -10,
-                    "stock_price": 3.16,
-                    "intrinsic_value": 0.84,
-                    "total_value": 84.1,
-                    "profit_loss": 8.1,
-                    "profit_loss_pct": 10.7,
-                    "result": "\ud83d\udfe2 \u7372\u5229"
-                },
-                {
-                    "stock_change_pct": -20,
-                    "stock_price": 2.81,
-                    "intrinsic_value": 1.19,
-                    "total_value": 119.2,
-                    "profit_loss": 43.2,
-                    "profit_loss_pct": 56.8,
-                    "result": "\ud83d\udfe2 \u7372\u5229"
-                }
-            ],
-            "theta_analysis": {
-                "theta_per_share": 0.0,
-                "daily_decay_dollar": 0.0,
-                "weekly_decay_dollar": 0.0,
-                "daily_decay_pct": 0.0,
-                "days_to_expiration": 35,
-                "estimated_decay_to_expiry": 0.0,
-                "risk_level": "\ud83d\udfe2 \u6975\u4f4e\u98a8\u96aa",
-                "warning": "\u6642\u9593\u8870\u6e1b\u5f71\u97ff\u5c0f",
-                "suggestion": "\u2705 \u5230\u671f\u65e5\u8f03\u9060\uff0cTheta \u5f71\u97ff\u8f03\u5c0f"
-            },
-            "iv_analysis": {
-                "current_iv": 0.5,
-                "iv_level": "\ud83d\udfe2 \u4f4e IV",
-                "assessment": "\u671f\u6b0a\u4fbf\u5b9c\uff0c\u9069\u5408\u8cb7\u5165",
-                "buy_timing": "\u2705 \u597d\u6642\u6a5f",
-                "vega_risk": "IV \u4e0a\u5347\u6703\u589e\u52a0\u671f\u6b0a\u50f9\u503c"
-            },
-            "score": {
-                "total_score": 95,
-                "grade": "A",
-                "grade_description": "\u512a\u79c0 - \u5f37\u70c8\u63a8\u85a6",
-                "factors": [
-                    [
-                        "\u76c8\u8667\u5e73\u8861\u9ede",
-                        "+5",
-                        "\u8f03\u96e3\u9054\u5230"
-                    ],
-                    [
-                        "\u69d3\u687f\u500d\u6578",
-                        "+0",
-                        "2.3x \u4f4e\u69d3\u687f"
-                    ],
-                    [
-                        "Theta \u98a8\u96aa",
-                        "+15",
-                        "\u6975\u4f4e\u8870\u6e1b"
-                    ],
-                    [
-                        "IV \u6c34\u5e73",
-                        "+15",
-                        "\u4f4e IV\uff0c\u671f\u6b0a\u4fbf\u5b9c"
-                    ],
-                    [
-                        "\u5230\u671f\u5929\u6578",
-                        "+10",
-                        "35\u5929\uff0c\u6642\u9593\u5145\u88d5"
-                    ]
-                ]
-            },
-            "recommendation": {
-                "action": "BUY",
-                "confidence": "HIGH",
-                "recommendations": [
-                    "\u2705 PUT \u8a55\u5206 95 \u5206\uff0c\u53ef\u4ee5\u8003\u616e\u8cb7\u5165",
-                    "\u2705 IV 0.5% \u504f\u4f4e\uff0c\u671f\u6b0a\u76f8\u5c0d\u4fbf\u5b9c"
-                ],
-                "warnings": [],
-                "position_suggestion": "\u5efa\u8b70\u5009\u4f4d: 1-2 \u5f35 (\u6210\u672c $76-$152)"
-            },
-            "analysis_time": "2026-03-05 21:07:48"
-        },
-        "reasoning": "Tech \u770b\u8dcc (RSI:40.7) + \u7c4c\u78bc\u963b\u529b(3.52)",
-        "uoa_score": 0
-    },
-    {
-        "ticker": "A",
-        "profile": "Small_Cap_Movers",
-        "strategy": "LONG_PUT",
-        "strike": 125.0,
-        "expiry": "20260417",
-        "price": 120.0,
-        "premium": 7.35,
-        "score": 100,
-        "analysis": {
-            "strategy": "Long Put",
-            "status": "success",
-            "input": {
-                "stock_price": 120.0,
-                "strike_price": 125.0,
-                "premium": 7.35,
-                "days_to_expiration": 42,
-                "delta": -0.5,
-                "theta": 0.0,
-                "iv": 0.5,
-                "contract_size": 100
-            },
-            "cost_analysis": {
-                "premium_per_share": 7.35,
-                "total_cost": 735.0,
-                "max_loss": 735.0,
-                "max_loss_pct": 100.0
-            },
-            "breakeven": {
-                "price": 117.65,
-                "distance_from_current": 2.3499999999999943,
-                "distance_pct": 1.9583333333333286,
-                "interpretation": "\u2705 \u5bb9\u6613\u9054\u5230 - \u80a1\u50f9\u53ea\u9700\u5c0f\u5e45\u4e0b\u8dcc"
-            },
-            "leverage": {
-                "effective_leverage": 8.16,
-                "capital_efficiency": 16.33,
-                "delta": 0.5,
-                "rating": "\ud83d\udcc8 \u9ad8\u69d3\u687f",
-                "warning": "\u9069\u5408\u4ee5\u5c0f\u535a\u5927\u7b56\u7565",
-                "explanation": "\u80a1\u50f9\u6bcf\u8b8a\u52d51%\uff0c\u671f\u6b0a\u7d04\u8b8a\u52d58.2%"
-            },
-            "scenarios": [
-                {
-                    "stock_change_pct": 50,
-                    "stock_price": 180.0,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -735.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": 30,
-                    "stock_price": 156.0,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -735.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": 20,
-                    "stock_price": 144.0,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -735.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": 15,
-                    "stock_price": 138.0,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -735.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": 10,
-                    "stock_price": 132.0,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -735.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": 5,
-                    "stock_price": 126.0,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -735.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": 0,
-                    "stock_price": 120.0,
-                    "intrinsic_value": 5.0,
-                    "total_value": 500.0,
-                    "profit_loss": -235.0,
-                    "profit_loss_pct": -32.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": -5,
-                    "stock_price": 114.0,
-                    "intrinsic_value": 11.0,
-                    "total_value": 1100.0,
-                    "profit_loss": 365.0,
-                    "profit_loss_pct": 49.7,
-                    "result": "\ud83d\udfe2 \u7372\u5229"
-                },
-                {
-                    "stock_change_pct": -10,
-                    "stock_price": 108.0,
-                    "intrinsic_value": 17.0,
-                    "total_value": 1700.0,
-                    "profit_loss": 965.0,
-                    "profit_loss_pct": 131.3,
-                    "result": "\ud83d\udfe2 \u7372\u5229"
-                },
-                {
-                    "stock_change_pct": -20,
-                    "stock_price": 96.0,
-                    "intrinsic_value": 29.0,
-                    "total_value": 2900.0,
-                    "profit_loss": 2165.0,
-                    "profit_loss_pct": 294.6,
-                    "result": "\ud83d\udfe2 \u7372\u5229"
-                }
-            ],
-            "theta_analysis": {
-                "theta_per_share": 0.0,
-                "daily_decay_dollar": 0.0,
-                "weekly_decay_dollar": 0.0,
-                "daily_decay_pct": 0.0,
-                "days_to_expiration": 42,
-                "estimated_decay_to_expiry": 0.0,
-                "risk_level": "\ud83d\udfe2 \u6975\u4f4e\u98a8\u96aa",
-                "warning": "\u6642\u9593\u8870\u6e1b\u5f71\u97ff\u5c0f",
-                "suggestion": "\u2705 \u5230\u671f\u65e5\u8f03\u9060\uff0cTheta \u5f71\u97ff\u8f03\u5c0f"
-            },
-            "iv_analysis": {
-                "current_iv": 0.5,
-                "iv_level": "\ud83d\udfe2 \u4f4e IV",
-                "assessment": "\u671f\u6b0a\u4fbf\u5b9c\uff0c\u9069\u5408\u8cb7\u5165",
-                "buy_timing": "\u2705 \u597d\u6642\u6a5f",
-                "vega_risk": "IV \u4e0a\u5347\u6703\u589e\u52a0\u671f\u6b0a\u50f9\u503c"
-            },
-            "score": {
-                "total_score": 100,
-                "grade": "A",
-                "grade_description": "\u512a\u79c0 - \u5f37\u70c8\u63a8\u85a6",
-                "factors": [
-                    [
-                        "\u76c8\u8667\u5e73\u8861\u9ede",
-                        "+25",
-                        "\u5bb9\u6613\u9054\u5230"
-                    ],
-                    [
-                        "\u69d3\u687f\u500d\u6578",
-                        "+20",
-                        "8.2x \u8d85\u9ad8\u69d3\u687f"
-                    ],
-                    [
-                        "Theta \u98a8\u96aa",
-                        "+15",
-                        "\u6975\u4f4e\u8870\u6e1b"
-                    ],
-                    [
-                        "IV \u6c34\u5e73",
-                        "+15",
-                        "\u4f4e IV\uff0c\u671f\u6b0a\u4fbf\u5b9c"
-                    ],
-                    [
-                        "\u5230\u671f\u5929\u6578",
-                        "+10",
-                        "42\u5929\uff0c\u6642\u9593\u5145\u88d5"
-                    ]
-                ]
-            },
-            "recommendation": {
-                "action": "BUY",
-                "confidence": "HIGH",
-                "recommendations": [
-                    "\u2705 PUT \u8a55\u5206 100 \u5206\uff0c\u53ef\u4ee5\u8003\u616e\u8cb7\u5165",
-                    "\ud83d\udcc8 \u69d3\u687f 8.2x\uff0c\u9069\u5408\u4ee5\u5c0f\u535a\u5927",
-                    "\u2705 IV 0.5% \u504f\u4f4e\uff0c\u671f\u6b0a\u76f8\u5c0d\u4fbf\u5b9c"
-                ],
-                "warnings": [],
-                "position_suggestion": "\u5efa\u8b70\u5009\u4f4d: 1-2 \u5f35 (\u6210\u672c $735-$1470)"
-            },
-            "analysis_time": "2026-03-05 21:07:48"
-        },
-        "reasoning": "Tech \u770b\u8dcc (RSI:35.3) + \u7c4c\u78bc\u963b\u529b(126.43)",
-        "uoa_score": 0
-    },
-    {
-        "ticker": "BW",
-        "profile": "Catalysts_News",
-        "strategy": "LONG_CALL",
-        "strike": 7.5,
-        "expiry": "20260417",
-        "price": 12.13,
-        "premium": 4.43,
-        "score": 100,
-        "analysis": {
-            "strategy": "Long Call",
-            "status": "success",
-            "input": {
-                "stock_price": 12.13,
-                "strike_price": 7.5,
-                "premium": 4.43,
-                "days_to_expiration": 42,
-                "delta": 0.5,
-                "theta": 0.0,
-                "iv": 0.5,
-                "contract_size": 100
-            },
-            "cost_analysis": {
-                "premium_per_share": 4.43,
-                "total_cost": 443.0,
-                "max_loss": 443.0,
-                "max_loss_pct": 100.0
-            },
-            "breakeven": {
-                "price": 11.93,
-                "distance_from_current": -0.20000000000000107,
-                "distance_pct": -1.648804616652935,
-                "interpretation": "\u2705 \u5bb9\u6613\u9054\u5230 - \u80a1\u50f9\u53ea\u9700\u5c0f\u5e45\u4e0a\u6f32"
-            },
-            "leverage": {
-                "effective_leverage": 1.37,
-                "capital_efficiency": 2.74,
-                "delta": 0.5,
-                "rating": "\ud83d\udcc9 \u4f4e\u69d3\u687f",
-                "warning": "\u69d3\u687f\u6548\u76ca\u4e0d\u660e\u986f",
-                "explanation": "\u80a1\u50f9\u6bcf\u8b8a\u52d51%\uff0c\u671f\u6b0a\u7d04\u8b8a\u52d51.4%"
-            },
-            "scenarios": [
-                {
-                    "stock_change_pct": -20,
-                    "stock_price": 9.7,
-                    "intrinsic_value": 2.2,
-                    "total_value": 220.4,
-                    "profit_loss": -222.6,
-                    "profit_loss_pct": -50.2,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": -10,
-                    "stock_price": 10.92,
-                    "intrinsic_value": 3.42,
-                    "total_value": 341.7,
-                    "profit_loss": -101.3,
-                    "profit_loss_pct": -22.9,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": -5,
-                    "stock_price": 11.52,
-                    "intrinsic_value": 4.02,
-                    "total_value": 402.35,
-                    "profit_loss": -40.65,
-                    "profit_loss_pct": -9.2,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": 0,
-                    "stock_price": 12.13,
-                    "intrinsic_value": 4.63,
-                    "total_value": 463.0,
-                    "profit_loss": 20.0,
-                    "profit_loss_pct": 4.5,
-                    "result": "\ud83d\udfe2 \u7372\u5229"
-                },
-                {
-                    "stock_change_pct": 5,
-                    "stock_price": 12.74,
-                    "intrinsic_value": 5.24,
-                    "total_value": 523.65,
-                    "profit_loss": 80.65,
-                    "profit_loss_pct": 18.2,
-                    "result": "\ud83d\udfe2 \u7372\u5229"
-                },
-                {
-                    "stock_change_pct": 10,
-                    "stock_price": 13.34,
-                    "intrinsic_value": 5.84,
-                    "total_value": 584.3,
-                    "profit_loss": 141.3,
-                    "profit_loss_pct": 31.9,
-                    "result": "\ud83d\udfe2 \u7372\u5229"
-                },
-                {
-                    "stock_change_pct": 15,
-                    "stock_price": 13.95,
-                    "intrinsic_value": 6.45,
-                    "total_value": 644.95,
-                    "profit_loss": 201.95,
-                    "profit_loss_pct": 45.6,
-                    "result": "\ud83d\udfe2 \u7372\u5229"
-                },
-                {
-                    "stock_change_pct": 20,
-                    "stock_price": 14.56,
-                    "intrinsic_value": 7.06,
-                    "total_value": 705.6,
-                    "profit_loss": 262.6,
-                    "profit_loss_pct": 59.3,
-                    "result": "\ud83d\udfe2 \u7372\u5229"
-                },
-                {
-                    "stock_change_pct": 30,
-                    "stock_price": 15.77,
-                    "intrinsic_value": 8.27,
-                    "total_value": 826.9,
-                    "profit_loss": 383.9,
-                    "profit_loss_pct": 86.7,
-                    "result": "\ud83d\udfe2 \u7372\u5229"
-                },
-                {
-                    "stock_change_pct": 50,
-                    "stock_price": 18.2,
-                    "intrinsic_value": 10.7,
-                    "total_value": 1069.5,
-                    "profit_loss": 626.5,
-                    "profit_loss_pct": 141.4,
-                    "result": "\ud83d\udfe2 \u7372\u5229"
-                }
-            ],
-            "theta_analysis": {
-                "theta_per_share": 0.0,
-                "daily_decay_dollar": 0.0,
-                "weekly_decay_dollar": 0.0,
-                "daily_decay_pct": 0.0,
-                "days_to_expiration": 42,
-                "estimated_decay_to_expiry": 0.0,
-                "risk_level": "\ud83d\udfe2 \u6975\u4f4e\u98a8\u96aa",
-                "warning": "\u6642\u9593\u8870\u6e1b\u5f71\u97ff\u5c0f",
-                "suggestion": "\u2705 \u5230\u671f\u65e5\u8f03\u9060\uff0cTheta \u5f71\u97ff\u8f03\u5c0f"
-            },
-            "iv_analysis": {
-                "current_iv": 0.5,
-                "iv_level": "\ud83d\udfe2 \u4f4e IV",
-                "assessment": "\u671f\u6b0a\u4fbf\u5b9c\uff0c\u9069\u5408\u8cb7\u5165",
-                "buy_timing": "\u2705 \u597d\u6642\u6a5f",
-                "vega_risk": "IV \u4e0a\u5347\u6703\u589e\u52a0\u671f\u6b0a\u50f9\u503c"
-            },
-            "score": {
-                "total_score": 100,
-                "grade": "A",
-                "grade_description": "\u512a\u79c0 - \u5f37\u70c8\u63a8\u85a6",
-                "factors": [
-                    [
-                        "\u76c8\u8667\u5e73\u8861\u9ede",
-                        "+25",
-                        "\u5bb9\u6613\u9054\u5230"
-                    ],
-                    [
-                        "\u69d3\u687f\u500d\u6578",
-                        "+0",
-                        "1.4x \u4f4e\u69d3\u687f"
-                    ],
-                    [
-                        "Theta \u98a8\u96aa",
-                        "+15",
-                        "\u6975\u4f4e\u8870\u6e1b"
-                    ],
-                    [
-                        "IV \u6c34\u5e73",
-                        "+15",
-                        "\u4f4e IV\uff0c\u671f\u6b0a\u4fbf\u5b9c"
-                    ],
-                    [
-                        "\u5230\u671f\u5929\u6578",
-                        "+10",
-                        "42\u5929\uff0c\u6642\u9593\u5145\u88d5"
-                    ]
-                ]
-            },
-            "recommendation": {
-                "action": "BUY",
-                "confidence": "HIGH",
-                "recommendations": [
-                    "\u2705 CALL \u8a55\u5206 100 \u5206\uff0c\u53ef\u4ee5\u8003\u616e\u8cb7\u5165",
-                    "\u2705 IV 0.5% \u504f\u4f4e\uff0c\u671f\u6b0a\u76f8\u5c0d\u4fbf\u5b9c"
-                ],
-                "warnings": [],
-                "position_suggestion": "\u5efa\u8b70\u5009\u4f4d: 1-2 \u5f35 (\u6210\u672c $443-$886)"
-            },
-            "analysis_time": "2026-03-05 21:07:48"
-        },
-        "reasoning": "Tech \u770b\u6f32 (RSI:67.3) + \u7c4c\u78bc\u652f\u6490(6.48)",
-        "uoa_score": 0
-    },
-    {
-        "ticker": "BW",
+        "ticker": "ZNTL",
         "profile": "Catalysts_News",
         "strategy": "SHORT_PUT",
-        "strike": 7.5,
-        "expiry": "20260515",
-        "price": 12.13,
-        "premium": 0.57,
+        "strike": 2.0,
+        "expiry": "20260717",
+        "price": 2.9203,
+        "premium": 0.35,
         "score": 90,
         "analysis": {
             "strategy": "Short Put",
             "status": "success",
             "input": {
-                "price": 12.13,
-                "strike": 7.5,
+                "price": 2.9203,
+                "strike": 2.0,
                 "iv": 0.5
             },
             "financials": {
-                "max_profit": 57.0,
-                "margin_est": 121.3,
-                "roc_pct": 46.99,
-                "annualized_roc_pct": 1225.12
+                "max_profit": 35.0,
+                "margin_est": 29.2,
+                "roc_pct": 119.85,
+                "annualized_roc_pct": 3124.68
             },
             "risk_profile": {
-                "breakeven": 6.93,
-                "safety_cushion_pct": 42.87,
+                "breakeven": 1.65,
+                "safety_cushion_pct": 43.5,
                 "pop_pct": 80.0,
                 "delta": -0.2,
                 "theta_income_day": 10.0
@@ -1052,192 +55,215 @@
                     ]
                 ]
             },
-            "analysis_time": "2026-03-05 21:07:48"
+            "analysis_time": "2026-03-11 21:37:38"
         },
-        "reasoning": "Tech \u770b\u6f32 (RSI:67.3) + \u7c4c\u78bc\u652f\u6490(6.48)",
-        "uoa_score": 0
+        "reasoning": "Tech \u770b\u6f32 (RSI:60.5) + \u7c4c\u78bc\u652f\u6490(1.86)",
+        "uoa_score": 0,
+        "dark_pool": {
+            "ticker": "ZNTL",
+            "dp_volume": 0,
+            "dp_ratio": 0.0,
+            "dp_ratio_diff": 0.0,
+            "dp_ratio_exchange": 0.0,
+            "methods_agree": true,
+            "vwap": 2.9950685,
+            "block_count": 0,
+            "block_volume": 0,
+            "raw_ticks": [],
+            "duration_seconds": 30,
+            "data_source": "ibkr_dp",
+            "data_quality": "partial",
+            "timestamp": "2026-03-11T13:40:35.450687+00:00",
+            "warnings": [
+                "\u65b9\u6cd5 A\uff1aduration \u671f\u9593\u7121 rtVolume \u66f4\u65b0\uff08\u53ef\u80fd\u975e\u4ea4\u6613\u6642\u6bb5\uff09",
+                "\u65b9\u6cd5 B\uff1aduration \u671f\u9593\u7121 AllLast tick\uff08\u53ef\u80fd\u975e\u4ea4\u6613\u6642\u6bb5\u6216 TWS \u672a\u6388\u6b0a\uff09"
+            ],
+            "session_type": "primary",
+            "is_overnight": false
+        },
+        "dp_ratio": 0.0
     },
     {
-        "ticker": "ACT",
+        "ticker": "AB",
         "profile": "Momentum_Growth",
-        "strategy": "LONG_PUT",
-        "strike": 35.0,
+        "strategy": "LONG_CALL",
+        "strike": 40.0,
         "expiry": "20260417",
-        "price": null,
-        "premium": 0.04,
-        "score": 80,
+        "price": 39.92,
+        "premium": 1.275,
+        "score": 85,
         "analysis": {
-            "strategy": "Long Put",
+            "strategy": "Long Call",
             "status": "success",
             "input": {
-                "stock_price": null,
-                "strike_price": 35.0,
-                "premium": 0.04,
-                "days_to_expiration": 42,
-                "delta": -0.5,
-                "theta": 0.0,
+                "stock_price": 39.92,
+                "strike_price": 40.0,
+                "premium": 1.275,
+                "days_to_expiration": 36,
+                "delta": 0.5,
+                "theta": null,
                 "iv": 0.5,
                 "contract_size": 100
             },
             "cost_analysis": {
-                "premium_per_share": 0.04,
-                "total_cost": 4.0,
-                "max_loss": 4.0,
+                "premium_per_share": 1.275,
+                "total_cost": 127.49999999999999,
+                "max_loss": 127.49999999999999,
                 "max_loss_pct": 100.0
             },
             "breakeven": {
-                "price": 34.96,
-                "distance_from_current": null,
-                "distance_pct": null,
-                "interpretation": "\ud83d\udd34 \u56f0\u96e3 - \u9700\u8981\u5927\u5e45\u4e0b\u8dcc\u624d\u80fd\u7372\u5229"
+                "price": 41.275,
+                "distance_from_current": 1.3549999999999969,
+                "distance_pct": 3.3942885771543008,
+                "interpretation": "\ud83d\udfe1 \u4e2d\u7b49\u96e3\u5ea6 - \u9700\u8981\u4e00\u5b9a\u6f32\u5e45"
             },
             "leverage": {
-                "effective_leverage": null,
-                "capital_efficiency": null,
+                "effective_leverage": 15.65,
+                "capital_efficiency": 31.31,
                 "delta": 0.5,
-                "rating": "\ud83d\udcc9 \u4f4e\u69d3\u687f",
-                "warning": "\u69d3\u687f\u6548\u76ca\u4e0d\u660e\u986f",
-                "explanation": "\u80a1\u50f9\u6bcf\u8b8a\u52d51%\uff0c\u671f\u6b0a\u7d04\u8b8a\u52d5nan%"
+                "rating": "\ud83d\ude80 \u8d85\u9ad8\u69d3\u687f",
+                "warning": "\u26a0\ufe0f \u9ad8\u98a8\u96aa\u9ad8\u56de\u5831\uff0c\u6ce8\u610f\u5009\u4f4d\u63a7\u5236",
+                "explanation": "\u80a1\u50f9\u6bcf\u8b8a\u52d51%\uff0c\u671f\u6b0a\u7d04\u8b8a\u52d515.7%"
             },
             "scenarios": [
                 {
-                    "stock_change_pct": 50,
-                    "stock_price": null,
+                    "stock_change_pct": -20,
+                    "stock_price": 31.94,
                     "intrinsic_value": 0,
                     "total_value": 0,
-                    "profit_loss": -4.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": 30,
-                    "stock_price": null,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -4.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": 20,
-                    "stock_price": null,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -4.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": 15,
-                    "stock_price": null,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -4.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": 10,
-                    "stock_price": null,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -4.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": 5,
-                    "stock_price": null,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -4.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": 0,
-                    "stock_price": null,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -4.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": -5,
-                    "stock_price": null,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -4.0,
+                    "profit_loss": -127.5,
                     "profit_loss_pct": -100.0,
                     "result": "\ud83d\udd34 \u8667\u640d"
                 },
                 {
                     "stock_change_pct": -10,
-                    "stock_price": null,
+                    "stock_price": 35.93,
                     "intrinsic_value": 0,
                     "total_value": 0,
-                    "profit_loss": -4.0,
+                    "profit_loss": -127.5,
                     "profit_loss_pct": -100.0,
                     "result": "\ud83d\udd34 \u8667\u640d"
                 },
                 {
-                    "stock_change_pct": -20,
-                    "stock_price": null,
+                    "stock_change_pct": -5,
+                    "stock_price": 37.92,
                     "intrinsic_value": 0,
                     "total_value": 0,
-                    "profit_loss": -4.0,
+                    "profit_loss": -127.5,
                     "profit_loss_pct": -100.0,
                     "result": "\ud83d\udd34 \u8667\u640d"
+                },
+                {
+                    "stock_change_pct": 0,
+                    "stock_price": 39.92,
+                    "intrinsic_value": 0,
+                    "total_value": 0,
+                    "profit_loss": -127.5,
+                    "profit_loss_pct": -100.0,
+                    "result": "\ud83d\udd34 \u8667\u640d"
+                },
+                {
+                    "stock_change_pct": 5,
+                    "stock_price": 41.92,
+                    "intrinsic_value": 1.92,
+                    "total_value": 191.6,
+                    "profit_loss": 64.1,
+                    "profit_loss_pct": 50.3,
+                    "result": "\ud83d\udfe2 \u7372\u5229"
+                },
+                {
+                    "stock_change_pct": 10,
+                    "stock_price": 43.91,
+                    "intrinsic_value": 3.91,
+                    "total_value": 391.2,
+                    "profit_loss": 263.7,
+                    "profit_loss_pct": 206.8,
+                    "result": "\ud83d\udfe2 \u7372\u5229"
+                },
+                {
+                    "stock_change_pct": 15,
+                    "stock_price": 45.91,
+                    "intrinsic_value": 5.91,
+                    "total_value": 590.8,
+                    "profit_loss": 463.3,
+                    "profit_loss_pct": 363.4,
+                    "result": "\ud83d\udfe2 \u7372\u5229"
+                },
+                {
+                    "stock_change_pct": 20,
+                    "stock_price": 47.9,
+                    "intrinsic_value": 7.9,
+                    "total_value": 790.4,
+                    "profit_loss": 662.9,
+                    "profit_loss_pct": 519.9,
+                    "result": "\ud83d\udfe2 \u7372\u5229"
+                },
+                {
+                    "stock_change_pct": 30,
+                    "stock_price": 51.9,
+                    "intrinsic_value": 11.9,
+                    "total_value": 1189.6,
+                    "profit_loss": 1062.1,
+                    "profit_loss_pct": 833.0,
+                    "result": "\ud83d\udfe2 \u7372\u5229"
+                },
+                {
+                    "stock_change_pct": 50,
+                    "stock_price": 59.88,
+                    "intrinsic_value": 19.88,
+                    "total_value": 1988.0,
+                    "profit_loss": 1860.5,
+                    "profit_loss_pct": 1459.2,
+                    "result": "\ud83d\udfe2 \u7372\u5229"
                 }
             ],
             "theta_analysis": {
-                "theta_per_share": 0.0,
-                "daily_decay_dollar": 0.0,
-                "weekly_decay_dollar": 0.0,
-                "daily_decay_pct": 0.0,
-                "days_to_expiration": 42,
-                "estimated_decay_to_expiry": 0.0,
-                "risk_level": "\ud83d\udfe2 \u6975\u4f4e\u98a8\u96aa",
-                "warning": "\u6642\u9593\u8870\u6e1b\u5f71\u97ff\u5c0f",
-                "suggestion": "\u2705 \u5230\u671f\u65e5\u8f03\u9060\uff0cTheta \u5f71\u97ff\u8f03\u5c0f"
+                "theta_per_share": null,
+                "daily_decay_dollar": null,
+                "weekly_decay_dollar": null,
+                "daily_decay_pct": null,
+                "days_to_expiration": 36,
+                "estimated_decay_to_expiry": null,
+                "risk_level": "\u26aa \u6578\u64da\u4e0d\u8db3",
+                "warning": "\u7121 Theta \u6578\u64da\uff0c\u7121\u6cd5\u8a55\u4f30\u6642\u9593\u8870\u6e1b\u98a8\u96aa",
+                "suggestion": "\u5efa\u8b70\u7372\u53d6\u5b8c\u6574\u7684\u671f\u6b0a Greeks \u6578\u64da"
             },
             "iv_analysis": {
-                "current_iv": 0.5,
-                "iv_level": "\ud83d\udfe2 \u4f4e IV",
-                "assessment": "\u671f\u6b0a\u4fbf\u5b9c\uff0c\u9069\u5408\u8cb7\u5165",
-                "buy_timing": "\u2705 \u597d\u6642\u6a5f",
-                "vega_risk": "IV \u4e0a\u5347\u6703\u589e\u52a0\u671f\u6b0a\u50f9\u503c"
+                "current_iv": 50.0,
+                "iv_level": "\ud83d\udd34 \u9ad8 IV",
+                "assessment": "\u671f\u6b0a\u5f88\u8cb4\uff0cIV \u56de\u843d\u6703\u9020\u6210\u8667\u640d",
+                "buy_timing": "\ud83d\udd34 \u4e0d\u5efa\u8b70\u8cb7\u5165",
+                "vega_risk": "IV \u4e0b\u964d\u6703\u5c0e\u81f4\u671f\u6b0a\u50f9\u503c\u4e0b\u8dcc"
             },
             "score": {
-                "total_score": 80,
+                "total_score": 85,
                 "grade": "A",
                 "grade_description": "\u512a\u79c0 - \u5f37\u70c8\u63a8\u85a6",
                 "factors": [
                     [
                         "\u76c8\u8667\u5e73\u8861\u9ede",
-                        "-10",
-                        "\u56f0\u96e3"
+                        "+15",
+                        "\u4e2d\u7b49\u96e3\u5ea6"
                     ],
                     [
                         "\u69d3\u687f\u500d\u6578",
-                        "+0",
-                        "nanx \u4f4e\u69d3\u687f"
+                        "+20",
+                        "15.7x \u8d85\u9ad8\u69d3\u687f"
                     ],
                     [
                         "Theta \u98a8\u96aa",
-                        "+15",
-                        "\u6975\u4f4e\u8870\u6e1b"
+                        "+0",
+                        "\u6578\u64da\u4e0d\u8db3"
                     ],
                     [
                         "IV \u6c34\u5e73",
-                        "+15",
-                        "\u4f4e IV\uff0c\u671f\u6b0a\u4fbf\u5b9c"
+                        "-10",
+                        "\u9ad8 IV\uff0c\u671f\u6b0a\u8cb4"
                     ],
                     [
                         "\u5230\u671f\u5929\u6578",
                         "+10",
-                        "42\u5929\uff0c\u6642\u9593\u5145\u88d5"
+                        "36\u5929\uff0c\u6642\u9593\u5145\u88d5"
                     ]
                 ]
             },
@@ -1245,50 +271,52 @@
                 "action": "BUY",
                 "confidence": "HIGH",
                 "recommendations": [
-                    "\u2705 PUT \u8a55\u5206 80 \u5206\uff0c\u53ef\u4ee5\u8003\u616e\u8cb7\u5165",
-                    "\u2705 IV 0.5% \u504f\u4f4e\uff0c\u671f\u6b0a\u76f8\u5c0d\u4fbf\u5b9c"
+                    "\u2705 CALL \u8a55\u5206 85 \u5206\uff0c\u53ef\u4ee5\u8003\u616e\u8cb7\u5165",
+                    "\ud83d\udcc8 \u69d3\u687f 15.7x\uff0c\u9069\u5408\u4ee5\u5c0f\u535a\u5927"
                 ],
-                "warnings": [],
-                "position_suggestion": "\u5efa\u8b70\u5009\u4f4d: 1-2 \u5f35 (\u6210\u672c $4-$8)"
+                "warnings": [
+                    "\u26a0\ufe0f IV 50.0% \u504f\u9ad8\uff0c\u6ce8\u610f IV \u56de\u843d\u98a8\u96aa"
+                ],
+                "position_suggestion": "\u5efa\u8b70\u5009\u4f4d: 1-2 \u5f35 (\u6210\u672c $127-$255)"
             },
-            "analysis_time": "2026-03-05 21:07:48"
+            "analysis_time": "2026-03-11 21:37:38"
         },
-        "reasoning": "Tech \u770b\u8dcc (RSI:54.3) + \u7c4c\u78bc\u963b\u529b(35.47)",
+        "reasoning": "Tech \u770b\u6f32 (RSI:53.1) + \u7c4c\u78bc\u652f\u6490(39.50)",
         "uoa_score": 0
     },
     {
-        "ticker": "ABBV",
-        "profile": "The_Titans",
+        "ticker": "AB",
+        "profile": "Momentum_Growth",
         "strategy": "SHORT_PUT",
-        "strike": 227.5,
-        "expiry": "20260320",
-        "price": 234.85,
-        "premium": 2.28,
-        "score": 65,
+        "strike": 40.0,
+        "expiry": "20260717",
+        "price": 39.92,
+        "premium": 2.8,
+        "score": 80,
         "analysis": {
             "strategy": "Short Put",
             "status": "success",
             "input": {
-                "price": 234.85,
-                "strike": 227.5,
+                "price": 39.92,
+                "strike": 40.0,
                 "iv": 0.5
             },
             "financials": {
-                "max_profit": 228.0,
-                "margin_est": 4190.0,
-                "roc_pct": 5.44,
-                "annualized_roc_pct": 141.87
+                "max_profit": 280.0,
+                "margin_est": 1078.4,
+                "roc_pct": 25.96,
+                "annualized_roc_pct": 676.93
             },
             "risk_profile": {
-                "breakeven": 225.22,
-                "safety_cushion_pct": 4.1,
+                "breakeven": 37.2,
+                "safety_cushion_pct": 6.81,
                 "pop_pct": 80.0,
                 "delta": -0.2,
                 "theta_income_day": 10.0
             },
             "score": {
-                "total_score": 65,
-                "grade": "B",
+                "total_score": 80,
+                "grade": "A",
                 "factors": [
                     [
                         "PoP",
@@ -1302,8 +330,8 @@
                     ],
                     [
                         "Safety",
-                        "-10",
-                        "\u7de9\u885d\u5340\u592a\u5c0f"
+                        "+5",
+                        "\u7de9\u885d\u5340\u9069\u4e2d"
                     ],
                     [
                         "IV",
@@ -1312,165 +340,165 @@
                     ]
                 ]
             },
-            "analysis_time": "2026-03-05 21:07:48"
+            "analysis_time": "2026-03-11 21:37:38"
         },
-        "reasoning": "Tech \u770b\u6f32 (RSI:62.4) + \u7c4c\u78bc\u652f\u6490(227.92)",
+        "reasoning": "Tech \u770b\u6f32 (RSI:53.1) + \u7c4c\u78bc\u652f\u6490(39.50)",
         "uoa_score": 0
     },
     {
-        "ticker": "ACN",
+        "ticker": "ABCB",
         "profile": "Momentum_Growth",
         "strategy": "LONG_PUT",
-        "strike": 235.0,
-        "expiry": "20260410",
-        "price": 209.7,
-        "premium": 28.38,
-        "score": 100,
+        "strike": 80.0,
+        "expiry": "20260417",
+        "price": 76.02,
+        "premium": 5.6,
+        "score": 90,
         "analysis": {
             "strategy": "Long Put",
             "status": "success",
             "input": {
-                "stock_price": 209.7,
-                "strike_price": 235.0,
-                "premium": 28.38,
-                "days_to_expiration": 35,
+                "stock_price": 76.02,
+                "strike_price": 80.0,
+                "premium": 5.6,
+                "days_to_expiration": 36,
                 "delta": -0.5,
-                "theta": 0.0,
+                "theta": null,
                 "iv": 0.5,
                 "contract_size": 100
             },
             "cost_analysis": {
-                "premium_per_share": 28.38,
-                "total_cost": 2838.0,
-                "max_loss": 2838.0,
+                "premium_per_share": 5.6,
+                "total_cost": 560.0,
+                "max_loss": 560.0,
                 "max_loss_pct": 100.0
             },
             "breakeven": {
-                "price": 206.62,
-                "distance_from_current": 3.079999999999984,
-                "distance_pct": 1.4687649022412894,
+                "price": 74.4,
+                "distance_from_current": 1.6199999999999903,
+                "distance_pct": 2.131018153117588,
                 "interpretation": "\u2705 \u5bb9\u6613\u9054\u5230 - \u80a1\u50f9\u53ea\u9700\u5c0f\u5e45\u4e0b\u8dcc"
             },
             "leverage": {
-                "effective_leverage": 3.69,
-                "capital_efficiency": 7.39,
+                "effective_leverage": 6.79,
+                "capital_efficiency": 13.57,
                 "delta": 0.5,
-                "rating": "\ud83d\udcca \u4e2d\u7b49\u69d3\u687f",
-                "warning": "\u98a8\u96aa\u6536\u76ca\u8f03\u5e73\u8861",
-                "explanation": "\u80a1\u50f9\u6bcf\u8b8a\u52d51%\uff0c\u671f\u6b0a\u7d04\u8b8a\u52d53.7%"
+                "rating": "\ud83d\udcc8 \u9ad8\u69d3\u687f",
+                "warning": "\u9069\u5408\u4ee5\u5c0f\u535a\u5927\u7b56\u7565",
+                "explanation": "\u80a1\u50f9\u6bcf\u8b8a\u52d51%\uff0c\u671f\u6b0a\u7d04\u8b8a\u52d56.8%"
             },
             "scenarios": [
                 {
                     "stock_change_pct": 50,
-                    "stock_price": 314.55,
+                    "stock_price": 114.03,
                     "intrinsic_value": 0,
                     "total_value": 0,
-                    "profit_loss": -2838.0,
+                    "profit_loss": -560.0,
                     "profit_loss_pct": -100.0,
                     "result": "\ud83d\udd34 \u8667\u640d"
                 },
                 {
                     "stock_change_pct": 30,
-                    "stock_price": 272.61,
+                    "stock_price": 98.83,
                     "intrinsic_value": 0,
                     "total_value": 0,
-                    "profit_loss": -2838.0,
+                    "profit_loss": -560.0,
                     "profit_loss_pct": -100.0,
                     "result": "\ud83d\udd34 \u8667\u640d"
                 },
                 {
                     "stock_change_pct": 20,
-                    "stock_price": 251.64,
+                    "stock_price": 91.22,
                     "intrinsic_value": 0,
                     "total_value": 0,
-                    "profit_loss": -2838.0,
+                    "profit_loss": -560.0,
                     "profit_loss_pct": -100.0,
                     "result": "\ud83d\udd34 \u8667\u640d"
                 },
                 {
                     "stock_change_pct": 15,
-                    "stock_price": 241.15,
+                    "stock_price": 87.42,
                     "intrinsic_value": 0,
                     "total_value": 0,
-                    "profit_loss": -2838.0,
+                    "profit_loss": -560.0,
                     "profit_loss_pct": -100.0,
                     "result": "\ud83d\udd34 \u8667\u640d"
                 },
                 {
                     "stock_change_pct": 10,
-                    "stock_price": 230.67,
-                    "intrinsic_value": 4.33,
-                    "total_value": 433.0,
-                    "profit_loss": -2405.0,
-                    "profit_loss_pct": -84.7,
+                    "stock_price": 83.62,
+                    "intrinsic_value": 0,
+                    "total_value": 0,
+                    "profit_loss": -560.0,
+                    "profit_loss_pct": -100.0,
                     "result": "\ud83d\udd34 \u8667\u640d"
                 },
                 {
                     "stock_change_pct": 5,
-                    "stock_price": 220.19,
-                    "intrinsic_value": 14.81,
-                    "total_value": 1481.5,
-                    "profit_loss": -1356.5,
-                    "profit_loss_pct": -47.8,
+                    "stock_price": 79.82,
+                    "intrinsic_value": 0.18,
+                    "total_value": 17.9,
+                    "profit_loss": -542.1,
+                    "profit_loss_pct": -96.8,
                     "result": "\ud83d\udd34 \u8667\u640d"
                 },
                 {
                     "stock_change_pct": 0,
-                    "stock_price": 209.7,
-                    "intrinsic_value": 25.3,
-                    "total_value": 2530.0,
-                    "profit_loss": -308.0,
-                    "profit_loss_pct": -10.9,
+                    "stock_price": 76.02,
+                    "intrinsic_value": 3.98,
+                    "total_value": 398.0,
+                    "profit_loss": -162.0,
+                    "profit_loss_pct": -28.9,
                     "result": "\ud83d\udd34 \u8667\u640d"
                 },
                 {
                     "stock_change_pct": -5,
-                    "stock_price": 199.21,
-                    "intrinsic_value": 35.79,
-                    "total_value": 3578.5,
-                    "profit_loss": 740.5,
-                    "profit_loss_pct": 26.1,
+                    "stock_price": 72.22,
+                    "intrinsic_value": 7.78,
+                    "total_value": 778.1,
+                    "profit_loss": 218.1,
+                    "profit_loss_pct": 38.9,
                     "result": "\ud83d\udfe2 \u7372\u5229"
                 },
                 {
                     "stock_change_pct": -10,
-                    "stock_price": 188.73,
-                    "intrinsic_value": 46.27,
-                    "total_value": 4627.0,
-                    "profit_loss": 1789.0,
-                    "profit_loss_pct": 63.0,
+                    "stock_price": 68.42,
+                    "intrinsic_value": 11.58,
+                    "total_value": 1158.2,
+                    "profit_loss": 598.2,
+                    "profit_loss_pct": 106.8,
                     "result": "\ud83d\udfe2 \u7372\u5229"
                 },
                 {
                     "stock_change_pct": -20,
-                    "stock_price": 167.76,
-                    "intrinsic_value": 67.24,
-                    "total_value": 6724.0,
-                    "profit_loss": 3886.0,
-                    "profit_loss_pct": 136.9,
+                    "stock_price": 60.82,
+                    "intrinsic_value": 19.18,
+                    "total_value": 1918.4,
+                    "profit_loss": 1358.4,
+                    "profit_loss_pct": 242.6,
                     "result": "\ud83d\udfe2 \u7372\u5229"
                 }
             ],
             "theta_analysis": {
-                "theta_per_share": 0.0,
-                "daily_decay_dollar": 0.0,
-                "weekly_decay_dollar": 0.0,
-                "daily_decay_pct": 0.0,
-                "days_to_expiration": 35,
-                "estimated_decay_to_expiry": 0.0,
-                "risk_level": "\ud83d\udfe2 \u6975\u4f4e\u98a8\u96aa",
-                "warning": "\u6642\u9593\u8870\u6e1b\u5f71\u97ff\u5c0f",
-                "suggestion": "\u2705 \u5230\u671f\u65e5\u8f03\u9060\uff0cTheta \u5f71\u97ff\u8f03\u5c0f"
+                "theta_per_share": null,
+                "daily_decay_dollar": null,
+                "weekly_decay_dollar": null,
+                "daily_decay_pct": null,
+                "days_to_expiration": 36,
+                "estimated_decay_to_expiry": null,
+                "risk_level": "\u26aa \u6578\u64da\u4e0d\u8db3",
+                "warning": "\u7121 Theta \u6578\u64da\uff0c\u7121\u6cd5\u8a55\u4f30\u6642\u9593\u8870\u6e1b\u98a8\u96aa",
+                "suggestion": "\u5efa\u8b70\u7372\u53d6\u5b8c\u6574\u7684\u671f\u6b0a Greeks \u6578\u64da"
             },
             "iv_analysis": {
-                "current_iv": 0.5,
-                "iv_level": "\ud83d\udfe2 \u4f4e IV",
-                "assessment": "\u671f\u6b0a\u4fbf\u5b9c\uff0c\u9069\u5408\u8cb7\u5165",
-                "buy_timing": "\u2705 \u597d\u6642\u6a5f",
-                "vega_risk": "IV \u4e0a\u5347\u6703\u589e\u52a0\u671f\u6b0a\u50f9\u503c"
+                "current_iv": 50.0,
+                "iv_level": "\ud83d\udd34 \u9ad8 IV",
+                "assessment": "\u671f\u6b0a\u5f88\u8cb4\uff0cIV \u56de\u843d\u6703\u9020\u6210\u8667\u640d",
+                "buy_timing": "\ud83d\udd34 \u4e0d\u5efa\u8b70\u8cb7\u5165",
+                "vega_risk": "IV \u4e0b\u964d\u6703\u5c0e\u81f4\u671f\u6b0a\u50f9\u503c\u4e0b\u8dcc"
             },
             "score": {
-                "total_score": 100,
+                "total_score": 90,
                 "grade": "A",
                 "grade_description": "\u512a\u79c0 - \u5f37\u70c8\u63a8\u85a6",
                 "factors": [
@@ -1481,23 +509,23 @@
                     ],
                     [
                         "\u69d3\u687f\u500d\u6578",
-                        "+10",
-                        "3.7x \u4e2d\u7b49\u69d3\u687f"
+                        "+15",
+                        "6.8x \u9ad8\u69d3\u687f"
                     ],
                     [
                         "Theta \u98a8\u96aa",
-                        "+15",
-                        "\u6975\u4f4e\u8870\u6e1b"
+                        "+0",
+                        "\u6578\u64da\u4e0d\u8db3"
                     ],
                     [
                         "IV \u6c34\u5e73",
-                        "+15",
-                        "\u4f4e IV\uff0c\u671f\u6b0a\u4fbf\u5b9c"
+                        "-10",
+                        "\u9ad8 IV\uff0c\u671f\u6b0a\u8cb4"
                     ],
                     [
                         "\u5230\u671f\u5929\u6578",
                         "+10",
-                        "35\u5929\uff0c\u6642\u9593\u5145\u88d5"
+                        "36\u5929\uff0c\u6642\u9593\u5145\u88d5"
                     ]
                 ]
             },
@@ -1505,43 +533,68 @@
                 "action": "BUY",
                 "confidence": "HIGH",
                 "recommendations": [
-                    "\u2705 PUT \u8a55\u5206 100 \u5206\uff0c\u53ef\u4ee5\u8003\u616e\u8cb7\u5165",
-                    "\u2705 IV 0.5% \u504f\u4f4e\uff0c\u671f\u6b0a\u76f8\u5c0d\u4fbf\u5b9c"
+                    "\u2705 PUT \u8a55\u5206 90 \u5206\uff0c\u53ef\u4ee5\u8003\u616e\u8cb7\u5165",
+                    "\ud83d\udcc8 \u69d3\u687f 6.8x\uff0c\u9069\u5408\u4ee5\u5c0f\u535a\u5927"
                 ],
-                "warnings": [],
-                "position_suggestion": "\u5efa\u8b70\u5009\u4f4d: 1-2 \u5f35 (\u6210\u672c $2838-$5676)"
+                "warnings": [
+                    "\u26a0\ufe0f IV 50.0% \u504f\u9ad8\uff0c\u6ce8\u610f IV \u56de\u843d\u98a8\u96aa"
+                ],
+                "position_suggestion": "\u5efa\u8b70\u5009\u4f4d: 1-2 \u5f35 (\u6210\u672c $560-$1120)"
             },
-            "analysis_time": "2026-03-05 21:07:48"
+            "analysis_time": "2026-03-11 21:37:38"
         },
-        "reasoning": "Tech \u770b\u8dcc (RSI:38.1) + \u7c4c\u78bc\u963b\u529b(235.15)",
-        "uoa_score": 0
+        "reasoning": "Tech \u770b\u8dcc (RSI:36.6) + \u7c4c\u78bc\u963b\u529b(79.64)",
+        "uoa_score": 0,
+        "dark_pool": {
+            "ticker": "ABCB",
+            "dp_volume": 0,
+            "dp_ratio": 0.0,
+            "dp_ratio_diff": 0.0,
+            "dp_ratio_exchange": 0.0,
+            "methods_agree": true,
+            "vwap": 76.18471259,
+            "block_count": 0,
+            "block_volume": 0,
+            "raw_ticks": [],
+            "duration_seconds": 30,
+            "data_source": "ibkr_dp",
+            "data_quality": "partial",
+            "timestamp": "2026-03-11T13:41:35.770139+00:00",
+            "warnings": [
+                "\u65b9\u6cd5 A\uff1aduration \u671f\u9593\u7121 rtVolume \u66f4\u65b0\uff08\u53ef\u80fd\u975e\u4ea4\u6613\u6642\u6bb5\uff09",
+                "\u65b9\u6cd5 B\uff1aduration \u671f\u9593\u7121 AllLast tick\uff08\u53ef\u80fd\u975e\u4ea4\u6613\u6642\u6bb5\u6216 TWS \u672a\u6388\u6b0a\uff09"
+            ],
+            "session_type": "primary",
+            "is_overnight": false
+        },
+        "dp_ratio": 0.0
     },
     {
-        "ticker": "ACN",
+        "ticker": "ABCB",
         "profile": "Momentum_Growth",
         "strategy": "SHORT_CALL",
-        "strike": 235.0,
-        "expiry": "20260320",
-        "price": 209.7,
-        "premium": 2.18,
+        "strike": 80.0,
+        "expiry": "20260717",
+        "price": 76.02,
+        "premium": 4.97,
         "score": 90,
         "analysis": {
             "strategy": "Short Call",
             "status": "success",
             "input": {
-                "price": 209.7,
-                "strike": 235.0,
+                "price": 76.02,
+                "strike": 80.0,
                 "iv": 0.5
             },
             "financials": {
-                "max_profit": 218.0,
-                "margin_est": 2097.0,
-                "roc_pct": 10.4,
-                "annualized_roc_pct": 271.03
+                "max_profit": 497.0,
+                "margin_est": 1619.4,
+                "roc_pct": 30.69,
+                "annualized_roc_pct": 800.14
             },
             "risk_profile": {
-                "breakeven": 237.18,
-                "safety_cushion_pct": 13.1,
+                "breakeven": 84.97,
+                "safety_cushion_pct": 11.77,
                 "pop_pct": 80.0,
                 "delta": 0.2,
                 "theta_income_day": 10.0
@@ -1572,167 +625,592 @@
                     ]
                 ]
             },
-            "analysis_time": "2026-03-05 21:07:48"
+            "analysis_time": "2026-03-11 21:37:38"
         },
-        "reasoning": "Tech \u770b\u8dcc (RSI:38.1) + \u7c4c\u78bc\u963b\u529b(235.15)",
-        "uoa_score": 0
+        "reasoning": "Tech \u770b\u8dcc (RSI:36.6) + \u7c4c\u78bc\u963b\u529b(79.64)",
+        "uoa_score": 0,
+        "dark_pool": {
+            "ticker": "ABCB",
+            "dp_volume": 0,
+            "dp_ratio": 0.0,
+            "dp_ratio_diff": 0.0,
+            "dp_ratio_exchange": 0.0,
+            "methods_agree": true,
+            "vwap": 76.18471259,
+            "block_count": 0,
+            "block_volume": 0,
+            "raw_ticks": [],
+            "duration_seconds": 30,
+            "data_source": "ibkr_dp",
+            "data_quality": "partial",
+            "timestamp": "2026-03-11T13:41:35.770139+00:00",
+            "warnings": [
+                "\u65b9\u6cd5 A\uff1aduration \u671f\u9593\u7121 rtVolume \u66f4\u65b0\uff08\u53ef\u80fd\u975e\u4ea4\u6613\u6642\u6bb5\uff09",
+                "\u65b9\u6cd5 B\uff1aduration \u671f\u9593\u7121 AllLast tick\uff08\u53ef\u80fd\u975e\u4ea4\u6613\u6642\u6bb5\u6216 TWS \u672a\u6388\u6b0a\uff09"
+            ],
+            "session_type": "primary",
+            "is_overnight": false
+        },
+        "dp_ratio": 0.0
     },
     {
-        "ticker": "AA",
+        "ticker": "AAP",
         "profile": "Small_Cap_Movers",
-        "strategy": "LONG_CALL",
-        "strike": 61.0,
-        "expiry": "20260410",
-        "price": 62.03,
-        "premium": 5.54,
-        "score": 100,
+        "strategy": "LONG_PUT",
+        "strike": 52.5,
+        "expiry": "20260417",
+        "price": 51.6,
+        "premium": 4.1,
+        "score": 80,
         "analysis": {
-            "strategy": "Long Call",
+            "strategy": "Long Put",
             "status": "success",
             "input": {
-                "stock_price": 62.03,
-                "strike_price": 61.0,
-                "premium": 5.54,
-                "days_to_expiration": 35,
-                "delta": 0.5,
-                "theta": 0.0,
+                "stock_price": 51.6,
+                "strike_price": 52.5,
+                "premium": 4.1,
+                "days_to_expiration": 36,
+                "delta": -0.5,
+                "theta": null,
                 "iv": 0.5,
                 "contract_size": 100
             },
             "cost_analysis": {
-                "premium_per_share": 5.54,
-                "total_cost": 554.0,
-                "max_loss": 554.0,
+                "premium_per_share": 4.1,
+                "total_cost": 409.99999999999994,
+                "max_loss": 409.99999999999994,
                 "max_loss_pct": 100.0
             },
             "breakeven": {
-                "price": 66.54,
-                "distance_from_current": 4.510000000000005,
-                "distance_pct": 7.27067547960665,
-                "interpretation": "\ud83d\udfe0 \u8f03\u96e3\u9054\u5230 - \u9700\u8981\u8f03\u5927\u6f32\u5e45"
+                "price": 48.4,
+                "distance_from_current": 3.200000000000003,
+                "distance_pct": 6.201550387596905,
+                "interpretation": "\ud83d\udfe1 \u4e2d\u7b49\u96e3\u5ea6 - \u9700\u8981\u4e00\u5b9a\u8dcc\u5e45"
             },
             "leverage": {
-                "effective_leverage": 5.6,
-                "capital_efficiency": 11.2,
+                "effective_leverage": 6.29,
+                "capital_efficiency": 12.59,
                 "delta": 0.5,
                 "rating": "\ud83d\udcc8 \u9ad8\u69d3\u687f",
                 "warning": "\u9069\u5408\u4ee5\u5c0f\u535a\u5927\u7b56\u7565",
-                "explanation": "\u80a1\u50f9\u6bcf\u8b8a\u52d51%\uff0c\u671f\u6b0a\u7d04\u8b8a\u52d55.6%"
+                "explanation": "\u80a1\u50f9\u6bcf\u8b8a\u52d51%\uff0c\u671f\u6b0a\u7d04\u8b8a\u52d56.3%"
             },
             "scenarios": [
                 {
-                    "stock_change_pct": -20,
-                    "stock_price": 49.62,
+                    "stock_change_pct": 50,
+                    "stock_price": 77.4,
                     "intrinsic_value": 0,
                     "total_value": 0,
-                    "profit_loss": -554.0,
+                    "profit_loss": -410.0,
                     "profit_loss_pct": -100.0,
                     "result": "\ud83d\udd34 \u8667\u640d"
                 },
                 {
-                    "stock_change_pct": -10,
-                    "stock_price": 55.83,
+                    "stock_change_pct": 30,
+                    "stock_price": 67.08,
                     "intrinsic_value": 0,
                     "total_value": 0,
-                    "profit_loss": -554.0,
+                    "profit_loss": -410.0,
                     "profit_loss_pct": -100.0,
                     "result": "\ud83d\udd34 \u8667\u640d"
                 },
                 {
-                    "stock_change_pct": -5,
-                    "stock_price": 58.93,
+                    "stock_change_pct": 20,
+                    "stock_price": 61.92,
                     "intrinsic_value": 0,
                     "total_value": 0,
-                    "profit_loss": -554.0,
+                    "profit_loss": -410.0,
+                    "profit_loss_pct": -100.0,
+                    "result": "\ud83d\udd34 \u8667\u640d"
+                },
+                {
+                    "stock_change_pct": 15,
+                    "stock_price": 59.34,
+                    "intrinsic_value": 0,
+                    "total_value": 0,
+                    "profit_loss": -410.0,
+                    "profit_loss_pct": -100.0,
+                    "result": "\ud83d\udd34 \u8667\u640d"
+                },
+                {
+                    "stock_change_pct": 10,
+                    "stock_price": 56.76,
+                    "intrinsic_value": 0,
+                    "total_value": 0,
+                    "profit_loss": -410.0,
+                    "profit_loss_pct": -100.0,
+                    "result": "\ud83d\udd34 \u8667\u640d"
+                },
+                {
+                    "stock_change_pct": 5,
+                    "stock_price": 54.18,
+                    "intrinsic_value": 0,
+                    "total_value": 0,
+                    "profit_loss": -410.0,
                     "profit_loss_pct": -100.0,
                     "result": "\ud83d\udd34 \u8667\u640d"
                 },
                 {
                     "stock_change_pct": 0,
-                    "stock_price": 62.03,
-                    "intrinsic_value": 1.03,
-                    "total_value": 103.0,
-                    "profit_loss": -451.0,
-                    "profit_loss_pct": -81.4,
+                    "stock_price": 51.6,
+                    "intrinsic_value": 0.9,
+                    "total_value": 90.0,
+                    "profit_loss": -320.0,
+                    "profit_loss_pct": -78.0,
                     "result": "\ud83d\udd34 \u8667\u640d"
                 },
                 {
-                    "stock_change_pct": 5,
-                    "stock_price": 65.13,
-                    "intrinsic_value": 4.13,
-                    "total_value": 413.15,
-                    "profit_loss": -140.85,
-                    "profit_loss_pct": -25.4,
+                    "stock_change_pct": -5,
+                    "stock_price": 49.02,
+                    "intrinsic_value": 3.48,
+                    "total_value": 348.0,
+                    "profit_loss": -62.0,
+                    "profit_loss_pct": -15.1,
                     "result": "\ud83d\udd34 \u8667\u640d"
                 },
                 {
-                    "stock_change_pct": 10,
-                    "stock_price": 68.23,
-                    "intrinsic_value": 7.23,
-                    "total_value": 723.3,
-                    "profit_loss": 169.3,
-                    "profit_loss_pct": 30.6,
+                    "stock_change_pct": -10,
+                    "stock_price": 46.44,
+                    "intrinsic_value": 6.06,
+                    "total_value": 606.0,
+                    "profit_loss": 196.0,
+                    "profit_loss_pct": 47.8,
                     "result": "\ud83d\udfe2 \u7372\u5229"
                 },
                 {
-                    "stock_change_pct": 15,
-                    "stock_price": 71.33,
-                    "intrinsic_value": 10.33,
-                    "total_value": 1033.45,
-                    "profit_loss": 479.45,
-                    "profit_loss_pct": 86.5,
-                    "result": "\ud83d\udfe2 \u7372\u5229"
-                },
-                {
-                    "stock_change_pct": 20,
-                    "stock_price": 74.44,
-                    "intrinsic_value": 13.44,
-                    "total_value": 1343.6,
-                    "profit_loss": 789.6,
-                    "profit_loss_pct": 142.5,
-                    "result": "\ud83d\udfe2 \u7372\u5229"
-                },
-                {
-                    "stock_change_pct": 30,
-                    "stock_price": 80.64,
-                    "intrinsic_value": 19.64,
-                    "total_value": 1963.9,
-                    "profit_loss": 1409.9,
-                    "profit_loss_pct": 254.5,
-                    "result": "\ud83d\udfe2 \u7372\u5229"
-                },
-                {
-                    "stock_change_pct": 50,
-                    "stock_price": 93.05,
-                    "intrinsic_value": 32.05,
-                    "total_value": 3204.5,
-                    "profit_loss": 2650.5,
-                    "profit_loss_pct": 478.4,
+                    "stock_change_pct": -20,
+                    "stock_price": 41.28,
+                    "intrinsic_value": 11.22,
+                    "total_value": 1122.0,
+                    "profit_loss": 712.0,
+                    "profit_loss_pct": 173.7,
                     "result": "\ud83d\udfe2 \u7372\u5229"
                 }
             ],
             "theta_analysis": {
-                "theta_per_share": 0.0,
-                "daily_decay_dollar": 0.0,
-                "weekly_decay_dollar": 0.0,
-                "daily_decay_pct": 0.0,
-                "days_to_expiration": 35,
-                "estimated_decay_to_expiry": 0.0,
-                "risk_level": "\ud83d\udfe2 \u6975\u4f4e\u98a8\u96aa",
-                "warning": "\u6642\u9593\u8870\u6e1b\u5f71\u97ff\u5c0f",
-                "suggestion": "\u2705 \u5230\u671f\u65e5\u8f03\u9060\uff0cTheta \u5f71\u97ff\u8f03\u5c0f"
+                "theta_per_share": null,
+                "daily_decay_dollar": null,
+                "weekly_decay_dollar": null,
+                "daily_decay_pct": null,
+                "days_to_expiration": 36,
+                "estimated_decay_to_expiry": null,
+                "risk_level": "\u26aa \u6578\u64da\u4e0d\u8db3",
+                "warning": "\u7121 Theta \u6578\u64da\uff0c\u7121\u6cd5\u8a55\u4f30\u6642\u9593\u8870\u6e1b\u98a8\u96aa",
+                "suggestion": "\u5efa\u8b70\u7372\u53d6\u5b8c\u6574\u7684\u671f\u6b0a Greeks \u6578\u64da"
             },
             "iv_analysis": {
-                "current_iv": 0.5,
-                "iv_level": "\ud83d\udfe2 \u4f4e IV",
-                "assessment": "\u671f\u6b0a\u4fbf\u5b9c\uff0c\u9069\u5408\u8cb7\u5165",
-                "buy_timing": "\u2705 \u597d\u6642\u6a5f",
-                "vega_risk": "IV \u4e0a\u5347\u6703\u589e\u52a0\u671f\u6b0a\u50f9\u503c"
+                "current_iv": 50.0,
+                "iv_level": "\ud83d\udd34 \u9ad8 IV",
+                "assessment": "\u671f\u6b0a\u5f88\u8cb4\uff0cIV \u56de\u843d\u6703\u9020\u6210\u8667\u640d",
+                "buy_timing": "\ud83d\udd34 \u4e0d\u5efa\u8b70\u8cb7\u5165",
+                "vega_risk": "IV \u4e0b\u964d\u6703\u5c0e\u81f4\u671f\u6b0a\u50f9\u503c\u4e0b\u8dcc"
             },
             "score": {
-                "total_score": 100,
+                "total_score": 80,
                 "grade": "A",
                 "grade_description": "\u512a\u79c0 - \u5f37\u70c8\u63a8\u85a6",
+                "factors": [
+                    [
+                        "\u76c8\u8667\u5e73\u8861\u9ede",
+                        "+15",
+                        "\u4e2d\u7b49\u96e3\u5ea6"
+                    ],
+                    [
+                        "\u69d3\u687f\u500d\u6578",
+                        "+15",
+                        "6.3x \u9ad8\u69d3\u687f"
+                    ],
+                    [
+                        "Theta \u98a8\u96aa",
+                        "+0",
+                        "\u6578\u64da\u4e0d\u8db3"
+                    ],
+                    [
+                        "IV \u6c34\u5e73",
+                        "-10",
+                        "\u9ad8 IV\uff0c\u671f\u6b0a\u8cb4"
+                    ],
+                    [
+                        "\u5230\u671f\u5929\u6578",
+                        "+10",
+                        "36\u5929\uff0c\u6642\u9593\u5145\u88d5"
+                    ]
+                ]
+            },
+            "recommendation": {
+                "action": "BUY",
+                "confidence": "HIGH",
+                "recommendations": [
+                    "\u2705 PUT \u8a55\u5206 80 \u5206\uff0c\u53ef\u4ee5\u8003\u616e\u8cb7\u5165",
+                    "\ud83d\udcc8 \u69d3\u687f 6.3x\uff0c\u9069\u5408\u4ee5\u5c0f\u535a\u5927"
+                ],
+                "warnings": [
+                    "\u26a0\ufe0f IV 50.0% \u504f\u9ad8\uff0c\u6ce8\u610f IV \u56de\u843d\u98a8\u96aa"
+                ],
+                "position_suggestion": "\u5efa\u8b70\u5009\u4f4d: 1-2 \u5f35 (\u6210\u672c $410-$820)"
+            },
+            "analysis_time": "2026-03-11 21:37:38"
+        },
+        "reasoning": "Tech \u770b\u8dcc (RSI:48.7) + \u7c4c\u78bc\u963b\u529b(52.32)",
+        "uoa_score": 0
+    },
+    {
+        "ticker": "AXP",
+        "profile": "The_Titans",
+        "strategy": "LONG_PUT",
+        "strike": 310.0,
+        "expiry": "20260417",
+        "price": 304.41,
+        "premium": 16.45,
+        "score": 85,
+        "analysis": {
+            "strategy": "Long Put",
+            "status": "success",
+            "input": {
+                "stock_price": 304.41,
+                "strike_price": 310.0,
+                "premium": 16.45,
+                "days_to_expiration": 36,
+                "delta": -0.5,
+                "theta": null,
+                "iv": 0.5,
+                "contract_size": 100
+            },
+            "cost_analysis": {
+                "premium_per_share": 16.45,
+                "total_cost": 1645.0,
+                "max_loss": 1645.0,
+                "max_loss_pct": 100.0
+            },
+            "breakeven": {
+                "price": 293.55,
+                "distance_from_current": 10.860000000000014,
+                "distance_pct": 3.5675569133734153,
+                "interpretation": "\ud83d\udfe1 \u4e2d\u7b49\u96e3\u5ea6 - \u9700\u8981\u4e00\u5b9a\u8dcc\u5e45"
+            },
+            "leverage": {
+                "effective_leverage": 9.25,
+                "capital_efficiency": 18.51,
+                "delta": 0.5,
+                "rating": "\ud83d\udcc8 \u9ad8\u69d3\u687f",
+                "warning": "\u9069\u5408\u4ee5\u5c0f\u535a\u5927\u7b56\u7565",
+                "explanation": "\u80a1\u50f9\u6bcf\u8b8a\u52d51%\uff0c\u671f\u6b0a\u7d04\u8b8a\u52d59.3%"
+            },
+            "scenarios": [
+                {
+                    "stock_change_pct": 50,
+                    "stock_price": 456.62,
+                    "intrinsic_value": 0,
+                    "total_value": 0,
+                    "profit_loss": -1645.0,
+                    "profit_loss_pct": -100.0,
+                    "result": "\ud83d\udd34 \u8667\u640d"
+                },
+                {
+                    "stock_change_pct": 30,
+                    "stock_price": 395.73,
+                    "intrinsic_value": 0,
+                    "total_value": 0,
+                    "profit_loss": -1645.0,
+                    "profit_loss_pct": -100.0,
+                    "result": "\ud83d\udd34 \u8667\u640d"
+                },
+                {
+                    "stock_change_pct": 20,
+                    "stock_price": 365.29,
+                    "intrinsic_value": 0,
+                    "total_value": 0,
+                    "profit_loss": -1645.0,
+                    "profit_loss_pct": -100.0,
+                    "result": "\ud83d\udd34 \u8667\u640d"
+                },
+                {
+                    "stock_change_pct": 15,
+                    "stock_price": 350.07,
+                    "intrinsic_value": 0,
+                    "total_value": 0,
+                    "profit_loss": -1645.0,
+                    "profit_loss_pct": -100.0,
+                    "result": "\ud83d\udd34 \u8667\u640d"
+                },
+                {
+                    "stock_change_pct": 10,
+                    "stock_price": 334.85,
+                    "intrinsic_value": 0,
+                    "total_value": 0,
+                    "profit_loss": -1645.0,
+                    "profit_loss_pct": -100.0,
+                    "result": "\ud83d\udd34 \u8667\u640d"
+                },
+                {
+                    "stock_change_pct": 5,
+                    "stock_price": 319.63,
+                    "intrinsic_value": 0,
+                    "total_value": 0,
+                    "profit_loss": -1645.0,
+                    "profit_loss_pct": -100.0,
+                    "result": "\ud83d\udd34 \u8667\u640d"
+                },
+                {
+                    "stock_change_pct": 0,
+                    "stock_price": 304.41,
+                    "intrinsic_value": 5.59,
+                    "total_value": 559.0,
+                    "profit_loss": -1086.0,
+                    "profit_loss_pct": -66.0,
+                    "result": "\ud83d\udd34 \u8667\u640d"
+                },
+                {
+                    "stock_change_pct": -5,
+                    "stock_price": 289.19,
+                    "intrinsic_value": 20.81,
+                    "total_value": 2081.05,
+                    "profit_loss": 436.05,
+                    "profit_loss_pct": 26.5,
+                    "result": "\ud83d\udfe2 \u7372\u5229"
+                },
+                {
+                    "stock_change_pct": -10,
+                    "stock_price": 273.97,
+                    "intrinsic_value": 36.03,
+                    "total_value": 3603.1,
+                    "profit_loss": 1958.1,
+                    "profit_loss_pct": 119.0,
+                    "result": "\ud83d\udfe2 \u7372\u5229"
+                },
+                {
+                    "stock_change_pct": -20,
+                    "stock_price": 243.53,
+                    "intrinsic_value": 66.47,
+                    "total_value": 6647.2,
+                    "profit_loss": 5002.2,
+                    "profit_loss_pct": 304.1,
+                    "result": "\ud83d\udfe2 \u7372\u5229"
+                }
+            ],
+            "theta_analysis": {
+                "theta_per_share": null,
+                "daily_decay_dollar": null,
+                "weekly_decay_dollar": null,
+                "daily_decay_pct": null,
+                "days_to_expiration": 36,
+                "estimated_decay_to_expiry": null,
+                "risk_level": "\u26aa \u6578\u64da\u4e0d\u8db3",
+                "warning": "\u7121 Theta \u6578\u64da\uff0c\u7121\u6cd5\u8a55\u4f30\u6642\u9593\u8870\u6e1b\u98a8\u96aa",
+                "suggestion": "\u5efa\u8b70\u7372\u53d6\u5b8c\u6574\u7684\u671f\u6b0a Greeks \u6578\u64da"
+            },
+            "iv_analysis": {
+                "current_iv": 50.0,
+                "iv_level": "\ud83d\udd34 \u9ad8 IV",
+                "assessment": "\u671f\u6b0a\u5f88\u8cb4\uff0cIV \u56de\u843d\u6703\u9020\u6210\u8667\u640d",
+                "buy_timing": "\ud83d\udd34 \u4e0d\u5efa\u8b70\u8cb7\u5165",
+                "vega_risk": "IV \u4e0b\u964d\u6703\u5c0e\u81f4\u671f\u6b0a\u50f9\u503c\u4e0b\u8dcc"
+            },
+            "score": {
+                "total_score": 85,
+                "grade": "A",
+                "grade_description": "\u512a\u79c0 - \u5f37\u70c8\u63a8\u85a6",
+                "factors": [
+                    [
+                        "\u76c8\u8667\u5e73\u8861\u9ede",
+                        "+15",
+                        "\u4e2d\u7b49\u96e3\u5ea6"
+                    ],
+                    [
+                        "\u69d3\u687f\u500d\u6578",
+                        "+20",
+                        "9.2x \u8d85\u9ad8\u69d3\u687f"
+                    ],
+                    [
+                        "Theta \u98a8\u96aa",
+                        "+0",
+                        "\u6578\u64da\u4e0d\u8db3"
+                    ],
+                    [
+                        "IV \u6c34\u5e73",
+                        "-10",
+                        "\u9ad8 IV\uff0c\u671f\u6b0a\u8cb4"
+                    ],
+                    [
+                        "\u5230\u671f\u5929\u6578",
+                        "+10",
+                        "36\u5929\uff0c\u6642\u9593\u5145\u88d5"
+                    ]
+                ]
+            },
+            "recommendation": {
+                "action": "BUY",
+                "confidence": "HIGH",
+                "recommendations": [
+                    "\u2705 PUT \u8a55\u5206 85 \u5206\uff0c\u53ef\u4ee5\u8003\u616e\u8cb7\u5165",
+                    "\ud83d\udcc8 \u69d3\u687f 9.2x\uff0c\u9069\u5408\u4ee5\u5c0f\u535a\u5927"
+                ],
+                "warnings": [
+                    "\u26a0\ufe0f IV 50.0% \u504f\u9ad8\uff0c\u6ce8\u610f IV \u56de\u843d\u98a8\u96aa"
+                ],
+                "position_suggestion": "\u5efa\u8b70\u5009\u4f4d: 1-2 \u5f35 (\u6210\u672c $1645-$3290)"
+            },
+            "analysis_time": "2026-03-11 21:37:38"
+        },
+        "reasoning": "Tech \u770b\u8dcc (RSI:34.2) + \u7c4c\u78bc\u963b\u529b(308.97)",
+        "uoa_score": 0
+    },
+    {
+        "ticker": "AAON",
+        "profile": "Small_Cap_Movers",
+        "strategy": "LONG_PUT",
+        "strike": 90.0,
+        "expiry": "20260417",
+        "price": 90.03,
+        "premium": 6.5,
+        "score": 70,
+        "analysis": {
+            "strategy": "Long Put",
+            "status": "success",
+            "input": {
+                "stock_price": 90.03,
+                "strike_price": 90.0,
+                "premium": 6.5,
+                "days_to_expiration": 36,
+                "delta": -0.5,
+                "theta": null,
+                "iv": 0.5,
+                "contract_size": 100
+            },
+            "cost_analysis": {
+                "premium_per_share": 6.5,
+                "total_cost": 650.0,
+                "max_loss": 650.0,
+                "max_loss_pct": 100.0
+            },
+            "breakeven": {
+                "price": 83.5,
+                "distance_from_current": 6.530000000000001,
+                "distance_pct": 7.253137842941243,
+                "interpretation": "\ud83d\udfe0 \u8f03\u96e3\u9054\u5230 - \u9700\u8981\u8f03\u5927\u8dcc\u5e45"
+            },
+            "leverage": {
+                "effective_leverage": 6.93,
+                "capital_efficiency": 13.85,
+                "delta": 0.5,
+                "rating": "\ud83d\udcc8 \u9ad8\u69d3\u687f",
+                "warning": "\u9069\u5408\u4ee5\u5c0f\u535a\u5927\u7b56\u7565",
+                "explanation": "\u80a1\u50f9\u6bcf\u8b8a\u52d51%\uff0c\u671f\u6b0a\u7d04\u8b8a\u52d56.9%"
+            },
+            "scenarios": [
+                {
+                    "stock_change_pct": 50,
+                    "stock_price": 135.05,
+                    "intrinsic_value": 0,
+                    "total_value": 0,
+                    "profit_loss": -650.0,
+                    "profit_loss_pct": -100.0,
+                    "result": "\ud83d\udd34 \u8667\u640d"
+                },
+                {
+                    "stock_change_pct": 30,
+                    "stock_price": 117.04,
+                    "intrinsic_value": 0,
+                    "total_value": 0,
+                    "profit_loss": -650.0,
+                    "profit_loss_pct": -100.0,
+                    "result": "\ud83d\udd34 \u8667\u640d"
+                },
+                {
+                    "stock_change_pct": 20,
+                    "stock_price": 108.04,
+                    "intrinsic_value": 0,
+                    "total_value": 0,
+                    "profit_loss": -650.0,
+                    "profit_loss_pct": -100.0,
+                    "result": "\ud83d\udd34 \u8667\u640d"
+                },
+                {
+                    "stock_change_pct": 15,
+                    "stock_price": 103.53,
+                    "intrinsic_value": 0,
+                    "total_value": 0,
+                    "profit_loss": -650.0,
+                    "profit_loss_pct": -100.0,
+                    "result": "\ud83d\udd34 \u8667\u640d"
+                },
+                {
+                    "stock_change_pct": 10,
+                    "stock_price": 99.03,
+                    "intrinsic_value": 0,
+                    "total_value": 0,
+                    "profit_loss": -650.0,
+                    "profit_loss_pct": -100.0,
+                    "result": "\ud83d\udd34 \u8667\u640d"
+                },
+                {
+                    "stock_change_pct": 5,
+                    "stock_price": 94.53,
+                    "intrinsic_value": 0,
+                    "total_value": 0,
+                    "profit_loss": -650.0,
+                    "profit_loss_pct": -100.0,
+                    "result": "\ud83d\udd34 \u8667\u640d"
+                },
+                {
+                    "stock_change_pct": 0,
+                    "stock_price": 90.03,
+                    "intrinsic_value": 0,
+                    "total_value": 0,
+                    "profit_loss": -650.0,
+                    "profit_loss_pct": -100.0,
+                    "result": "\ud83d\udd34 \u8667\u640d"
+                },
+                {
+                    "stock_change_pct": -5,
+                    "stock_price": 85.53,
+                    "intrinsic_value": 4.47,
+                    "total_value": 447.15,
+                    "profit_loss": -202.85,
+                    "profit_loss_pct": -31.2,
+                    "result": "\ud83d\udd34 \u8667\u640d"
+                },
+                {
+                    "stock_change_pct": -10,
+                    "stock_price": 81.03,
+                    "intrinsic_value": 8.97,
+                    "total_value": 897.3,
+                    "profit_loss": 247.3,
+                    "profit_loss_pct": 38.0,
+                    "result": "\ud83d\udfe2 \u7372\u5229"
+                },
+                {
+                    "stock_change_pct": -20,
+                    "stock_price": 72.02,
+                    "intrinsic_value": 17.98,
+                    "total_value": 1797.6,
+                    "profit_loss": 1147.6,
+                    "profit_loss_pct": 176.6,
+                    "result": "\ud83d\udfe2 \u7372\u5229"
+                }
+            ],
+            "theta_analysis": {
+                "theta_per_share": null,
+                "daily_decay_dollar": null,
+                "weekly_decay_dollar": null,
+                "daily_decay_pct": null,
+                "days_to_expiration": 36,
+                "estimated_decay_to_expiry": null,
+                "risk_level": "\u26aa \u6578\u64da\u4e0d\u8db3",
+                "warning": "\u7121 Theta \u6578\u64da\uff0c\u7121\u6cd5\u8a55\u4f30\u6642\u9593\u8870\u6e1b\u98a8\u96aa",
+                "suggestion": "\u5efa\u8b70\u7372\u53d6\u5b8c\u6574\u7684\u671f\u6b0a Greeks \u6578\u64da"
+            },
+            "iv_analysis": {
+                "current_iv": 50.0,
+                "iv_level": "\ud83d\udd34 \u9ad8 IV",
+                "assessment": "\u671f\u6b0a\u5f88\u8cb4\uff0cIV \u56de\u843d\u6703\u9020\u6210\u8667\u640d",
+                "buy_timing": "\ud83d\udd34 \u4e0d\u5efa\u8b70\u8cb7\u5165",
+                "vega_risk": "IV \u4e0b\u964d\u6703\u5c0e\u81f4\u671f\u6b0a\u50f9\u503c\u4e0b\u8dcc"
+            },
+            "score": {
+                "total_score": 70,
+                "grade": "B",
+                "grade_description": "\u826f\u597d - \u53ef\u4ee5\u8003\u616e",
                 "factors": [
                     [
                         "\u76c8\u8667\u5e73\u8861\u9ede",
@@ -1742,477 +1220,79 @@
                     [
                         "\u69d3\u687f\u500d\u6578",
                         "+15",
-                        "5.6x \u9ad8\u69d3\u687f"
+                        "6.9x \u9ad8\u69d3\u687f"
                     ],
                     [
                         "Theta \u98a8\u96aa",
-                        "+15",
-                        "\u6975\u4f4e\u8870\u6e1b"
-                    ],
-                    [
-                        "IV \u6c34\u5e73",
-                        "+15",
-                        "\u4f4e IV\uff0c\u671f\u6b0a\u4fbf\u5b9c"
-                    ],
-                    [
-                        "\u5230\u671f\u5929\u6578",
-                        "+10",
-                        "35\u5929\uff0c\u6642\u9593\u5145\u88d5"
-                    ]
-                ]
-            },
-            "recommendation": {
-                "action": "BUY",
-                "confidence": "HIGH",
-                "recommendations": [
-                    "\u2705 CALL \u8a55\u5206 100 \u5206\uff0c\u53ef\u4ee5\u8003\u616e\u8cb7\u5165",
-                    "\ud83d\udcc8 \u69d3\u687f 5.6x\uff0c\u9069\u5408\u4ee5\u5c0f\u535a\u5927",
-                    "\u2705 IV 0.5% \u504f\u4f4e\uff0c\u671f\u6b0a\u76f8\u5c0d\u4fbf\u5b9c"
-                ],
-                "warnings": [],
-                "position_suggestion": "\u5efa\u8b70\u5009\u4f4d: 1-2 \u5f35 (\u6210\u672c $554-$1108)"
-            },
-            "analysis_time": "2026-03-05 21:07:48"
-        },
-        "reasoning": "Tech \u770b\u6f32 (RSI:51.6) + \u7c4c\u78bc\u652f\u6490(61.37)",
-        "uoa_score": 0
-    },
-    {
-        "ticker": "ABCB",
-        "profile": "Momentum_Growth",
-        "strategy": "LONG_PUT",
-        "strike": 75.0,
-        "expiry": "20260417",
-        "price": null,
-        "premium": 2.51,
-        "score": 80,
-        "analysis": {
-            "strategy": "Long Put",
-            "status": "success",
-            "input": {
-                "stock_price": null,
-                "strike_price": 75.0,
-                "premium": 2.51,
-                "days_to_expiration": 42,
-                "delta": -0.5,
-                "theta": 0.0,
-                "iv": 0.5,
-                "contract_size": 100
-            },
-            "cost_analysis": {
-                "premium_per_share": 2.51,
-                "total_cost": 250.99999999999997,
-                "max_loss": 250.99999999999997,
-                "max_loss_pct": 100.0
-            },
-            "breakeven": {
-                "price": 72.49,
-                "distance_from_current": null,
-                "distance_pct": null,
-                "interpretation": "\ud83d\udd34 \u56f0\u96e3 - \u9700\u8981\u5927\u5e45\u4e0b\u8dcc\u624d\u80fd\u7372\u5229"
-            },
-            "leverage": {
-                "effective_leverage": null,
-                "capital_efficiency": null,
-                "delta": 0.5,
-                "rating": "\ud83d\udcc9 \u4f4e\u69d3\u687f",
-                "warning": "\u69d3\u687f\u6548\u76ca\u4e0d\u660e\u986f",
-                "explanation": "\u80a1\u50f9\u6bcf\u8b8a\u52d51%\uff0c\u671f\u6b0a\u7d04\u8b8a\u52d5nan%"
-            },
-            "scenarios": [
-                {
-                    "stock_change_pct": 50,
-                    "stock_price": null,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -251.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": 30,
-                    "stock_price": null,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -251.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": 20,
-                    "stock_price": null,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -251.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": 15,
-                    "stock_price": null,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -251.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": 10,
-                    "stock_price": null,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -251.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": 5,
-                    "stock_price": null,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -251.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": 0,
-                    "stock_price": null,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -251.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": -5,
-                    "stock_price": null,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -251.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": -10,
-                    "stock_price": null,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -251.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": -20,
-                    "stock_price": null,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -251.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                }
-            ],
-            "theta_analysis": {
-                "theta_per_share": 0.0,
-                "daily_decay_dollar": 0.0,
-                "weekly_decay_dollar": 0.0,
-                "daily_decay_pct": 0.0,
-                "days_to_expiration": 42,
-                "estimated_decay_to_expiry": 0.0,
-                "risk_level": "\ud83d\udfe2 \u6975\u4f4e\u98a8\u96aa",
-                "warning": "\u6642\u9593\u8870\u6e1b\u5f71\u97ff\u5c0f",
-                "suggestion": "\u2705 \u5230\u671f\u65e5\u8f03\u9060\uff0cTheta \u5f71\u97ff\u8f03\u5c0f"
-            },
-            "iv_analysis": {
-                "current_iv": 0.5,
-                "iv_level": "\ud83d\udfe2 \u4f4e IV",
-                "assessment": "\u671f\u6b0a\u4fbf\u5b9c\uff0c\u9069\u5408\u8cb7\u5165",
-                "buy_timing": "\u2705 \u597d\u6642\u6a5f",
-                "vega_risk": "IV \u4e0a\u5347\u6703\u589e\u52a0\u671f\u6b0a\u50f9\u503c"
-            },
-            "score": {
-                "total_score": 80,
-                "grade": "A",
-                "grade_description": "\u512a\u79c0 - \u5f37\u70c8\u63a8\u85a6",
-                "factors": [
-                    [
-                        "\u76c8\u8667\u5e73\u8861\u9ede",
-                        "-10",
-                        "\u56f0\u96e3"
-                    ],
-                    [
-                        "\u69d3\u687f\u500d\u6578",
                         "+0",
-                        "nanx \u4f4e\u69d3\u687f"
-                    ],
-                    [
-                        "Theta \u98a8\u96aa",
-                        "+15",
-                        "\u6975\u4f4e\u8870\u6e1b"
+                        "\u6578\u64da\u4e0d\u8db3"
                     ],
                     [
                         "IV \u6c34\u5e73",
-                        "+15",
-                        "\u4f4e IV\uff0c\u671f\u6b0a\u4fbf\u5b9c"
+                        "-10",
+                        "\u9ad8 IV\uff0c\u671f\u6b0a\u8cb4"
                     ],
                     [
                         "\u5230\u671f\u5929\u6578",
                         "+10",
-                        "42\u5929\uff0c\u6642\u9593\u5145\u88d5"
+                        "36\u5929\uff0c\u6642\u9593\u5145\u88d5"
                     ]
                 ]
             },
             "recommendation": {
                 "action": "BUY",
-                "confidence": "HIGH",
+                "confidence": "MEDIUM",
                 "recommendations": [
-                    "\u2705 PUT \u8a55\u5206 80 \u5206\uff0c\u53ef\u4ee5\u8003\u616e\u8cb7\u5165",
-                    "\u2705 IV 0.5% \u504f\u4f4e\uff0c\u671f\u6b0a\u76f8\u5c0d\u4fbf\u5b9c"
+                    "\u2705 PUT \u8a55\u5206 70 \u5206\uff0c\u53ef\u4ee5\u8003\u616e\u8cb7\u5165",
+                    "\ud83d\udcc8 \u69d3\u687f 6.9x\uff0c\u9069\u5408\u4ee5\u5c0f\u535a\u5927"
                 ],
-                "warnings": [],
-                "position_suggestion": "\u5efa\u8b70\u5009\u4f4d: 1-2 \u5f35 (\u6210\u672c $251-$502)"
+                "warnings": [
+                    "\u26a0\ufe0f IV 50.0% \u504f\u9ad8\uff0c\u6ce8\u610f IV \u56de\u843d\u98a8\u96aa"
+                ],
+                "position_suggestion": "\u5efa\u8b70\u5009\u4f4d: 1 \u5f35 (\u6210\u672c $650)"
             },
-            "analysis_time": "2026-03-05 21:07:48"
+            "analysis_time": "2026-03-11 21:37:38"
         },
-        "reasoning": "Tech \u770b\u8dcc (RSI:44.9) + \u7c4c\u78bc\u963b\u529b(73.29)",
+        "reasoning": "Tech \u770b\u8dcc (RSI:40.6) + \u7c4c\u78bc\u963b\u529b(91.72)",
         "uoa_score": 0
     },
     {
-        "ticker": "AAPL",
+        "ticker": "AMAT",
         "profile": "The_Titans",
-        "strategy": "LONG_PUT",
-        "strike": 270.0,
-        "expiry": "20260410",
-        "price": 262.14,
-        "premium": 12.41,
-        "score": 100,
-        "analysis": {
-            "strategy": "Long Put",
-            "status": "success",
-            "input": {
-                "stock_price": 262.14,
-                "strike_price": 270.0,
-                "premium": 12.41,
-                "days_to_expiration": 35,
-                "delta": -0.5,
-                "theta": 0.0,
-                "iv": 0.5,
-                "contract_size": 100
-            },
-            "cost_analysis": {
-                "premium_per_share": 12.41,
-                "total_cost": 1241.0,
-                "max_loss": 1241.0,
-                "max_loss_pct": 100.0
-            },
-            "breakeven": {
-                "price": 257.59,
-                "distance_from_current": 4.550000000000011,
-                "distance_pct": 1.7357137407492225,
-                "interpretation": "\u2705 \u5bb9\u6613\u9054\u5230 - \u80a1\u50f9\u53ea\u9700\u5c0f\u5e45\u4e0b\u8dcc"
-            },
-            "leverage": {
-                "effective_leverage": 10.56,
-                "capital_efficiency": 21.12,
-                "delta": 0.5,
-                "rating": "\ud83d\ude80 \u8d85\u9ad8\u69d3\u687f",
-                "warning": "\u26a0\ufe0f \u9ad8\u98a8\u96aa\u9ad8\u56de\u5831\uff0c\u6ce8\u610f\u5009\u4f4d\u63a7\u5236",
-                "explanation": "\u80a1\u50f9\u6bcf\u8b8a\u52d51%\uff0c\u671f\u6b0a\u7d04\u8b8a\u52d510.6%"
-            },
-            "scenarios": [
-                {
-                    "stock_change_pct": 50,
-                    "stock_price": 393.21,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -1241.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": 30,
-                    "stock_price": 340.78,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -1241.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": 20,
-                    "stock_price": 314.57,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -1241.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": 15,
-                    "stock_price": 301.46,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -1241.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": 10,
-                    "stock_price": 288.35,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -1241.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": 5,
-                    "stock_price": 275.25,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -1241.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": 0,
-                    "stock_price": 262.14,
-                    "intrinsic_value": 7.86,
-                    "total_value": 786.0,
-                    "profit_loss": -455.0,
-                    "profit_loss_pct": -36.7,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": -5,
-                    "stock_price": 249.03,
-                    "intrinsic_value": 20.97,
-                    "total_value": 2096.7,
-                    "profit_loss": 855.7,
-                    "profit_loss_pct": 69.0,
-                    "result": "\ud83d\udfe2 \u7372\u5229"
-                },
-                {
-                    "stock_change_pct": -10,
-                    "stock_price": 235.93,
-                    "intrinsic_value": 34.07,
-                    "total_value": 3407.4,
-                    "profit_loss": 2166.4,
-                    "profit_loss_pct": 174.6,
-                    "result": "\ud83d\udfe2 \u7372\u5229"
-                },
-                {
-                    "stock_change_pct": -20,
-                    "stock_price": 209.71,
-                    "intrinsic_value": 60.29,
-                    "total_value": 6028.8,
-                    "profit_loss": 4787.8,
-                    "profit_loss_pct": 385.8,
-                    "result": "\ud83d\udfe2 \u7372\u5229"
-                }
-            ],
-            "theta_analysis": {
-                "theta_per_share": 0.0,
-                "daily_decay_dollar": 0.0,
-                "weekly_decay_dollar": 0.0,
-                "daily_decay_pct": 0.0,
-                "days_to_expiration": 35,
-                "estimated_decay_to_expiry": 0.0,
-                "risk_level": "\ud83d\udfe2 \u6975\u4f4e\u98a8\u96aa",
-                "warning": "\u6642\u9593\u8870\u6e1b\u5f71\u97ff\u5c0f",
-                "suggestion": "\u2705 \u5230\u671f\u65e5\u8f03\u9060\uff0cTheta \u5f71\u97ff\u8f03\u5c0f"
-            },
-            "iv_analysis": {
-                "current_iv": 0.5,
-                "iv_level": "\ud83d\udfe2 \u4f4e IV",
-                "assessment": "\u671f\u6b0a\u4fbf\u5b9c\uff0c\u9069\u5408\u8cb7\u5165",
-                "buy_timing": "\u2705 \u597d\u6642\u6a5f",
-                "vega_risk": "IV \u4e0a\u5347\u6703\u589e\u52a0\u671f\u6b0a\u50f9\u503c"
-            },
-            "score": {
-                "total_score": 100,
-                "grade": "A",
-                "grade_description": "\u512a\u79c0 - \u5f37\u70c8\u63a8\u85a6",
-                "factors": [
-                    [
-                        "\u76c8\u8667\u5e73\u8861\u9ede",
-                        "+25",
-                        "\u5bb9\u6613\u9054\u5230"
-                    ],
-                    [
-                        "\u69d3\u687f\u500d\u6578",
-                        "+20",
-                        "10.6x \u8d85\u9ad8\u69d3\u687f"
-                    ],
-                    [
-                        "Theta \u98a8\u96aa",
-                        "+15",
-                        "\u6975\u4f4e\u8870\u6e1b"
-                    ],
-                    [
-                        "IV \u6c34\u5e73",
-                        "+15",
-                        "\u4f4e IV\uff0c\u671f\u6b0a\u4fbf\u5b9c"
-                    ],
-                    [
-                        "\u5230\u671f\u5929\u6578",
-                        "+10",
-                        "35\u5929\uff0c\u6642\u9593\u5145\u88d5"
-                    ]
-                ]
-            },
-            "recommendation": {
-                "action": "BUY",
-                "confidence": "HIGH",
-                "recommendations": [
-                    "\u2705 PUT \u8a55\u5206 100 \u5206\uff0c\u53ef\u4ee5\u8003\u616e\u8cb7\u5165",
-                    "\ud83d\udcc8 \u69d3\u687f 10.6x\uff0c\u9069\u5408\u4ee5\u5c0f\u535a\u5927",
-                    "\u2705 IV 0.5% \u504f\u4f4e\uff0c\u671f\u6b0a\u76f8\u5c0d\u4fbf\u5b9c"
-                ],
-                "warnings": [],
-                "position_suggestion": "\u5efa\u8b70\u5009\u4f4d: 1-2 \u5f35 (\u6210\u672c $1241-$2482)"
-            },
-            "analysis_time": "2026-03-05 21:07:48"
-        },
-        "reasoning": "Tech \u770b\u8dcc (RSI:45.9) + \u7c4c\u78bc\u963b\u529b(270.71)",
-        "uoa_score": 0
-    },
-    {
-        "ticker": "DAWN",
-        "profile": "Catalysts_News",
         "strategy": "LONG_CALL",
-        "strike": 9.0,
+        "strike": 230.0,
         "expiry": "20260417",
-        "price": 12.84,
-        "premium": 4.18,
-        "score": 100,
+        "price": 346.01,
+        "premium": 118.4,
+        "score": 75,
         "analysis": {
             "strategy": "Long Call",
             "status": "success",
             "input": {
-                "stock_price": 12.84,
-                "strike_price": 9.0,
-                "premium": 4.18,
-                "days_to_expiration": 42,
+                "stock_price": 346.01,
+                "strike_price": 230.0,
+                "premium": 118.4,
+                "days_to_expiration": 36,
                 "delta": 0.5,
-                "theta": 0.0,
+                "theta": null,
                 "iv": 0.5,
                 "contract_size": 100
             },
             "cost_analysis": {
-                "premium_per_share": 4.18,
-                "total_cost": 418.0,
-                "max_loss": 418.0,
+                "premium_per_share": 118.4,
+                "total_cost": 11840.0,
+                "max_loss": 11840.0,
                 "max_loss_pct": 100.0
             },
             "breakeven": {
-                "price": 13.18,
-                "distance_from_current": 0.33999999999999986,
-                "distance_pct": 2.6479750778816187,
+                "price": 348.4,
+                "distance_from_current": 2.3899999999999864,
+                "distance_pct": 0.6907314817490785,
                 "interpretation": "\u2705 \u5bb9\u6613\u9054\u5230 - \u80a1\u50f9\u53ea\u9700\u5c0f\u5e45\u4e0a\u6f32"
             },
             "leverage": {
-                "effective_leverage": 1.54,
-                "capital_efficiency": 3.07,
+                "effective_leverage": 1.46,
+                "capital_efficiency": 2.92,
                 "delta": 0.5,
                 "rating": "\ud83d\udcc9 \u4f4e\u69d3\u687f",
                 "warning": "\u69d3\u687f\u6548\u76ca\u4e0d\u660e\u986f",
@@ -2221,117 +1301,117 @@
             "scenarios": [
                 {
                     "stock_change_pct": -20,
-                    "stock_price": 10.27,
-                    "intrinsic_value": 1.27,
-                    "total_value": 127.2,
-                    "profit_loss": -290.8,
-                    "profit_loss_pct": -69.6,
+                    "stock_price": 276.81,
+                    "intrinsic_value": 46.81,
+                    "total_value": 4680.8,
+                    "profit_loss": -7159.2,
+                    "profit_loss_pct": -60.5,
                     "result": "\ud83d\udd34 \u8667\u640d"
                 },
                 {
                     "stock_change_pct": -10,
-                    "stock_price": 11.56,
-                    "intrinsic_value": 2.56,
-                    "total_value": 255.6,
-                    "profit_loss": -162.4,
-                    "profit_loss_pct": -38.9,
+                    "stock_price": 311.41,
+                    "intrinsic_value": 81.41,
+                    "total_value": 8140.9,
+                    "profit_loss": -3699.1,
+                    "profit_loss_pct": -31.2,
                     "result": "\ud83d\udd34 \u8667\u640d"
                 },
                 {
                     "stock_change_pct": -5,
-                    "stock_price": 12.2,
-                    "intrinsic_value": 3.2,
-                    "total_value": 319.8,
-                    "profit_loss": -98.2,
-                    "profit_loss_pct": -23.5,
+                    "stock_price": 328.71,
+                    "intrinsic_value": 98.71,
+                    "total_value": 9870.95,
+                    "profit_loss": -1969.05,
+                    "profit_loss_pct": -16.6,
                     "result": "\ud83d\udd34 \u8667\u640d"
                 },
                 {
                     "stock_change_pct": 0,
-                    "stock_price": 12.84,
-                    "intrinsic_value": 3.84,
-                    "total_value": 384.0,
-                    "profit_loss": -34.0,
-                    "profit_loss_pct": -8.1,
+                    "stock_price": 346.01,
+                    "intrinsic_value": 116.01,
+                    "total_value": 11601.0,
+                    "profit_loss": -239.0,
+                    "profit_loss_pct": -2.0,
                     "result": "\ud83d\udd34 \u8667\u640d"
                 },
                 {
                     "stock_change_pct": 5,
-                    "stock_price": 13.48,
-                    "intrinsic_value": 4.48,
-                    "total_value": 448.2,
-                    "profit_loss": 30.2,
-                    "profit_loss_pct": 7.2,
+                    "stock_price": 363.31,
+                    "intrinsic_value": 133.31,
+                    "total_value": 13331.05,
+                    "profit_loss": 1491.05,
+                    "profit_loss_pct": 12.6,
                     "result": "\ud83d\udfe2 \u7372\u5229"
                 },
                 {
                     "stock_change_pct": 10,
-                    "stock_price": 14.12,
-                    "intrinsic_value": 5.12,
-                    "total_value": 512.4,
-                    "profit_loss": 94.4,
-                    "profit_loss_pct": 22.6,
+                    "stock_price": 380.61,
+                    "intrinsic_value": 150.61,
+                    "total_value": 15061.1,
+                    "profit_loss": 3221.1,
+                    "profit_loss_pct": 27.2,
                     "result": "\ud83d\udfe2 \u7372\u5229"
                 },
                 {
                     "stock_change_pct": 15,
-                    "stock_price": 14.77,
-                    "intrinsic_value": 5.77,
-                    "total_value": 576.6,
-                    "profit_loss": 158.6,
-                    "profit_loss_pct": 37.9,
+                    "stock_price": 397.91,
+                    "intrinsic_value": 167.91,
+                    "total_value": 16791.15,
+                    "profit_loss": 4951.15,
+                    "profit_loss_pct": 41.8,
                     "result": "\ud83d\udfe2 \u7372\u5229"
                 },
                 {
                     "stock_change_pct": 20,
-                    "stock_price": 15.41,
-                    "intrinsic_value": 6.41,
-                    "total_value": 640.8,
-                    "profit_loss": 222.8,
-                    "profit_loss_pct": 53.3,
+                    "stock_price": 415.21,
+                    "intrinsic_value": 185.21,
+                    "total_value": 18521.2,
+                    "profit_loss": 6681.2,
+                    "profit_loss_pct": 56.4,
                     "result": "\ud83d\udfe2 \u7372\u5229"
                 },
                 {
                     "stock_change_pct": 30,
-                    "stock_price": 16.69,
-                    "intrinsic_value": 7.69,
-                    "total_value": 769.2,
-                    "profit_loss": 351.2,
-                    "profit_loss_pct": 84.0,
+                    "stock_price": 449.81,
+                    "intrinsic_value": 219.81,
+                    "total_value": 21981.3,
+                    "profit_loss": 10141.3,
+                    "profit_loss_pct": 85.7,
                     "result": "\ud83d\udfe2 \u7372\u5229"
                 },
                 {
                     "stock_change_pct": 50,
-                    "stock_price": 19.26,
-                    "intrinsic_value": 10.26,
-                    "total_value": 1026.0,
-                    "profit_loss": 608.0,
-                    "profit_loss_pct": 145.5,
+                    "stock_price": 519.01,
+                    "intrinsic_value": 289.01,
+                    "total_value": 28901.5,
+                    "profit_loss": 17061.5,
+                    "profit_loss_pct": 144.1,
                     "result": "\ud83d\udfe2 \u7372\u5229"
                 }
             ],
             "theta_analysis": {
-                "theta_per_share": 0.0,
-                "daily_decay_dollar": 0.0,
-                "weekly_decay_dollar": 0.0,
-                "daily_decay_pct": 0.0,
-                "days_to_expiration": 42,
-                "estimated_decay_to_expiry": 0.0,
-                "risk_level": "\ud83d\udfe2 \u6975\u4f4e\u98a8\u96aa",
-                "warning": "\u6642\u9593\u8870\u6e1b\u5f71\u97ff\u5c0f",
-                "suggestion": "\u2705 \u5230\u671f\u65e5\u8f03\u9060\uff0cTheta \u5f71\u97ff\u8f03\u5c0f"
+                "theta_per_share": null,
+                "daily_decay_dollar": null,
+                "weekly_decay_dollar": null,
+                "daily_decay_pct": null,
+                "days_to_expiration": 36,
+                "estimated_decay_to_expiry": null,
+                "risk_level": "\u26aa \u6578\u64da\u4e0d\u8db3",
+                "warning": "\u7121 Theta \u6578\u64da\uff0c\u7121\u6cd5\u8a55\u4f30\u6642\u9593\u8870\u6e1b\u98a8\u96aa",
+                "suggestion": "\u5efa\u8b70\u7372\u53d6\u5b8c\u6574\u7684\u671f\u6b0a Greeks \u6578\u64da"
             },
             "iv_analysis": {
-                "current_iv": 0.5,
-                "iv_level": "\ud83d\udfe2 \u4f4e IV",
-                "assessment": "\u671f\u6b0a\u4fbf\u5b9c\uff0c\u9069\u5408\u8cb7\u5165",
-                "buy_timing": "\u2705 \u597d\u6642\u6a5f",
-                "vega_risk": "IV \u4e0a\u5347\u6703\u589e\u52a0\u671f\u6b0a\u50f9\u503c"
+                "current_iv": 50.0,
+                "iv_level": "\ud83d\udd34 \u9ad8 IV",
+                "assessment": "\u671f\u6b0a\u5f88\u8cb4\uff0cIV \u56de\u843d\u6703\u9020\u6210\u8667\u640d",
+                "buy_timing": "\ud83d\udd34 \u4e0d\u5efa\u8b70\u8cb7\u5165",
+                "vega_risk": "IV \u4e0b\u964d\u6703\u5c0e\u81f4\u671f\u6b0a\u50f9\u503c\u4e0b\u8dcc"
             },
             "score": {
-                "total_score": 100,
-                "grade": "A",
-                "grade_description": "\u512a\u79c0 - \u5f37\u70c8\u63a8\u85a6",
+                "total_score": 75,
+                "grade": "B",
+                "grade_description": "\u826f\u597d - \u53ef\u4ee5\u8003\u616e",
                 "factors": [
                     [
                         "\u76c8\u8667\u5e73\u8861\u9ede",
@@ -2345,64 +1425,327 @@
                     ],
                     [
                         "Theta \u98a8\u96aa",
-                        "+15",
-                        "\u6975\u4f4e\u8870\u6e1b"
+                        "+0",
+                        "\u6578\u64da\u4e0d\u8db3"
                     ],
                     [
                         "IV \u6c34\u5e73",
-                        "+15",
-                        "\u4f4e IV\uff0c\u671f\u6b0a\u4fbf\u5b9c"
+                        "-10",
+                        "\u9ad8 IV\uff0c\u671f\u6b0a\u8cb4"
                     ],
                     [
                         "\u5230\u671f\u5929\u6578",
                         "+10",
-                        "42\u5929\uff0c\u6642\u9593\u5145\u88d5"
+                        "36\u5929\uff0c\u6642\u9593\u5145\u88d5"
                     ]
                 ]
             },
             "recommendation": {
                 "action": "BUY",
-                "confidence": "HIGH",
+                "confidence": "MEDIUM",
                 "recommendations": [
-                    "\u2705 CALL \u8a55\u5206 100 \u5206\uff0c\u53ef\u4ee5\u8003\u616e\u8cb7\u5165",
-                    "\u2705 IV 0.5% \u504f\u4f4e\uff0c\u671f\u6b0a\u76f8\u5c0d\u4fbf\u5b9c"
+                    "\u2705 CALL \u8a55\u5206 75 \u5206\uff0c\u53ef\u4ee5\u8003\u616e\u8cb7\u5165"
                 ],
-                "warnings": [],
-                "position_suggestion": "\u5efa\u8b70\u5009\u4f4d: 1-2 \u5f35 (\u6210\u672c $418-$836)"
+                "warnings": [
+                    "\u26a0\ufe0f IV 50.0% \u504f\u9ad8\uff0c\u6ce8\u610f IV \u56de\u843d\u98a8\u96aa"
+                ],
+                "position_suggestion": "\u5efa\u8b70\u5009\u4f4d: 1 \u5f35 (\u6210\u672c $11840)"
             },
-            "analysis_time": "2026-03-05 21:07:48"
+            "analysis_time": "2026-03-11 21:37:38"
         },
-        "reasoning": "Tech \u770b\u6f32 (RSI:62.1) + \u7c4c\u78bc\u652f\u6490(9.49)",
+        "reasoning": "Tech \u770b\u6f32 (RSI:50.4) + \u7c4c\u78bc\u652f\u6490(229.90)",
         "uoa_score": 0
     },
     {
-        "ticker": "DAWN",
-        "profile": "Catalysts_News",
+        "ticker": "AMAT",
+        "profile": "The_Titans",
         "strategy": "SHORT_PUT",
-        "strike": 9.0,
-        "expiry": "20260717",
-        "price": 12.84,
-        "premium": 1.26,
-        "score": 90,
+        "strike": 230.0,
+        "expiry": "20260327",
+        "price": 346.01,
+        "premium": 0.28,
+        "score": 85,
         "analysis": {
             "strategy": "Short Put",
             "status": "success",
             "input": {
-                "price": 12.84,
-                "strike": 9.0,
+                "price": 346.01,
+                "strike": 230.0,
                 "iv": 0.5
             },
             "financials": {
-                "max_profit": 126.0,
-                "margin_est": 128.4,
-                "roc_pct": 98.13,
-                "annualized_roc_pct": 2558.41
+                "max_profit": 28.0,
+                "margin_est": 3460.1,
+                "roc_pct": 0.81,
+                "annualized_roc_pct": 21.1
             },
             "risk_profile": {
-                "breakeven": 7.74,
-                "safety_cushion_pct": 39.72,
+                "breakeven": 229.72,
+                "safety_cushion_pct": 33.61,
                 "pop_pct": 80.0,
                 "delta": -0.2,
+                "theta_income_day": 10.0
+            },
+            "score": {
+                "total_score": 85,
+                "grade": "A",
+                "factors": [
+                    [
+                        "PoP",
+                        "+15",
+                        "\u9ad8\u52dd\u7387"
+                    ],
+                    [
+                        "ROC",
+                        "+10",
+                        "\u56de\u5831\u4e0d\u932f"
+                    ],
+                    [
+                        "Safety",
+                        "+15",
+                        "\u7de9\u885d\u5340\u5927"
+                    ],
+                    [
+                        "IV",
+                        "-5",
+                        "IV \u4f4e\uff0c\u8089\u5c11"
+                    ]
+                ]
+            },
+            "analysis_time": "2026-03-11 21:37:38"
+        },
+        "reasoning": "Tech \u770b\u6f32 (RSI:50.4) + \u7c4c\u78bc\u652f\u6490(229.90)",
+        "uoa_score": 0
+    },
+    {
+        "ticker": "AAL",
+        "profile": "Small_Cap_Movers",
+        "strategy": "LONG_PUT",
+        "strike": 11.0,
+        "expiry": "20260417",
+        "price": 11.19,
+        "premium": 0.8300000000000001,
+        "score": 70,
+        "analysis": {
+            "strategy": "Long Put",
+            "status": "success",
+            "input": {
+                "stock_price": 11.19,
+                "strike_price": 11.0,
+                "premium": 0.8300000000000001,
+                "days_to_expiration": 36,
+                "delta": -0.5,
+                "theta": null,
+                "iv": 0.5,
+                "contract_size": 100
+            },
+            "cost_analysis": {
+                "premium_per_share": 0.8300000000000001,
+                "total_cost": 83.0,
+                "max_loss": 83.0,
+                "max_loss_pct": 100.0
+            },
+            "breakeven": {
+                "price": 10.17,
+                "distance_from_current": 1.0199999999999996,
+                "distance_pct": 9.11528150134048,
+                "interpretation": "\ud83d\udfe0 \u8f03\u96e3\u9054\u5230 - \u9700\u8981\u8f03\u5927\u8dcc\u5e45"
+            },
+            "leverage": {
+                "effective_leverage": 6.74,
+                "capital_efficiency": 13.48,
+                "delta": 0.5,
+                "rating": "\ud83d\udcc8 \u9ad8\u69d3\u687f",
+                "warning": "\u9069\u5408\u4ee5\u5c0f\u535a\u5927\u7b56\u7565",
+                "explanation": "\u80a1\u50f9\u6bcf\u8b8a\u52d51%\uff0c\u671f\u6b0a\u7d04\u8b8a\u52d56.7%"
+            },
+            "scenarios": [
+                {
+                    "stock_change_pct": 50,
+                    "stock_price": 16.79,
+                    "intrinsic_value": 0,
+                    "total_value": 0,
+                    "profit_loss": -83.0,
+                    "profit_loss_pct": -100.0,
+                    "result": "\ud83d\udd34 \u8667\u640d"
+                },
+                {
+                    "stock_change_pct": 30,
+                    "stock_price": 14.55,
+                    "intrinsic_value": 0,
+                    "total_value": 0,
+                    "profit_loss": -83.0,
+                    "profit_loss_pct": -100.0,
+                    "result": "\ud83d\udd34 \u8667\u640d"
+                },
+                {
+                    "stock_change_pct": 20,
+                    "stock_price": 13.43,
+                    "intrinsic_value": 0,
+                    "total_value": 0,
+                    "profit_loss": -83.0,
+                    "profit_loss_pct": -100.0,
+                    "result": "\ud83d\udd34 \u8667\u640d"
+                },
+                {
+                    "stock_change_pct": 15,
+                    "stock_price": 12.87,
+                    "intrinsic_value": 0,
+                    "total_value": 0,
+                    "profit_loss": -83.0,
+                    "profit_loss_pct": -100.0,
+                    "result": "\ud83d\udd34 \u8667\u640d"
+                },
+                {
+                    "stock_change_pct": 10,
+                    "stock_price": 12.31,
+                    "intrinsic_value": 0,
+                    "total_value": 0,
+                    "profit_loss": -83.0,
+                    "profit_loss_pct": -100.0,
+                    "result": "\ud83d\udd34 \u8667\u640d"
+                },
+                {
+                    "stock_change_pct": 5,
+                    "stock_price": 11.75,
+                    "intrinsic_value": 0,
+                    "total_value": 0,
+                    "profit_loss": -83.0,
+                    "profit_loss_pct": -100.0,
+                    "result": "\ud83d\udd34 \u8667\u640d"
+                },
+                {
+                    "stock_change_pct": 0,
+                    "stock_price": 11.19,
+                    "intrinsic_value": 0,
+                    "total_value": 0,
+                    "profit_loss": -83.0,
+                    "profit_loss_pct": -100.0,
+                    "result": "\ud83d\udd34 \u8667\u640d"
+                },
+                {
+                    "stock_change_pct": -5,
+                    "stock_price": 10.63,
+                    "intrinsic_value": 0.37,
+                    "total_value": 36.95,
+                    "profit_loss": -46.05,
+                    "profit_loss_pct": -55.5,
+                    "result": "\ud83d\udd34 \u8667\u640d"
+                },
+                {
+                    "stock_change_pct": -10,
+                    "stock_price": 10.07,
+                    "intrinsic_value": 0.93,
+                    "total_value": 92.9,
+                    "profit_loss": 9.9,
+                    "profit_loss_pct": 11.9,
+                    "result": "\ud83d\udfe2 \u7372\u5229"
+                },
+                {
+                    "stock_change_pct": -20,
+                    "stock_price": 8.95,
+                    "intrinsic_value": 2.05,
+                    "total_value": 204.8,
+                    "profit_loss": 121.8,
+                    "profit_loss_pct": 146.7,
+                    "result": "\ud83d\udfe2 \u7372\u5229"
+                }
+            ],
+            "theta_analysis": {
+                "theta_per_share": null,
+                "daily_decay_dollar": null,
+                "weekly_decay_dollar": null,
+                "daily_decay_pct": null,
+                "days_to_expiration": 36,
+                "estimated_decay_to_expiry": null,
+                "risk_level": "\u26aa \u6578\u64da\u4e0d\u8db3",
+                "warning": "\u7121 Theta \u6578\u64da\uff0c\u7121\u6cd5\u8a55\u4f30\u6642\u9593\u8870\u6e1b\u98a8\u96aa",
+                "suggestion": "\u5efa\u8b70\u7372\u53d6\u5b8c\u6574\u7684\u671f\u6b0a Greeks \u6578\u64da"
+            },
+            "iv_analysis": {
+                "current_iv": 50.0,
+                "iv_level": "\ud83d\udd34 \u9ad8 IV",
+                "assessment": "\u671f\u6b0a\u5f88\u8cb4\uff0cIV \u56de\u843d\u6703\u9020\u6210\u8667\u640d",
+                "buy_timing": "\ud83d\udd34 \u4e0d\u5efa\u8b70\u8cb7\u5165",
+                "vega_risk": "IV \u4e0b\u964d\u6703\u5c0e\u81f4\u671f\u6b0a\u50f9\u503c\u4e0b\u8dcc"
+            },
+            "score": {
+                "total_score": 70,
+                "grade": "B",
+                "grade_description": "\u826f\u597d - \u53ef\u4ee5\u8003\u616e",
+                "factors": [
+                    [
+                        "\u76c8\u8667\u5e73\u8861\u9ede",
+                        "+5",
+                        "\u8f03\u96e3\u9054\u5230"
+                    ],
+                    [
+                        "\u69d3\u687f\u500d\u6578",
+                        "+15",
+                        "6.7x \u9ad8\u69d3\u687f"
+                    ],
+                    [
+                        "Theta \u98a8\u96aa",
+                        "+0",
+                        "\u6578\u64da\u4e0d\u8db3"
+                    ],
+                    [
+                        "IV \u6c34\u5e73",
+                        "-10",
+                        "\u9ad8 IV\uff0c\u671f\u6b0a\u8cb4"
+                    ],
+                    [
+                        "\u5230\u671f\u5929\u6578",
+                        "+10",
+                        "36\u5929\uff0c\u6642\u9593\u5145\u88d5"
+                    ]
+                ]
+            },
+            "recommendation": {
+                "action": "BUY",
+                "confidence": "MEDIUM",
+                "recommendations": [
+                    "\u2705 PUT \u8a55\u5206 70 \u5206\uff0c\u53ef\u4ee5\u8003\u616e\u8cb7\u5165",
+                    "\ud83d\udcc8 \u69d3\u687f 6.7x\uff0c\u9069\u5408\u4ee5\u5c0f\u535a\u5927"
+                ],
+                "warnings": [
+                    "\u26a0\ufe0f IV 50.0% \u504f\u9ad8\uff0c\u6ce8\u610f IV \u56de\u843d\u98a8\u96aa"
+                ],
+                "position_suggestion": "\u5efa\u8b70\u5009\u4f4d: 1 \u5f35 (\u6210\u672c $83)"
+            },
+            "analysis_time": "2026-03-11 21:37:38"
+        },
+        "reasoning": "Tech \u770b\u8dcc (RSI:31.7) + \u7c4c\u78bc\u963b\u529b(11.46)",
+        "uoa_score": 0
+    },
+    {
+        "ticker": "ACN",
+        "profile": "Momentum_Growth",
+        "strategy": "SHORT_CALL",
+        "strike": 232.5,
+        "expiry": "20260327",
+        "price": 205.97,
+        "premium": 2.925,
+        "score": 90,
+        "analysis": {
+            "strategy": "Short Call",
+            "status": "success",
+            "input": {
+                "price": 205.97,
+                "strike": 232.5,
+                "iv": 0.5
+            },
+            "financials": {
+                "max_profit": 292.5,
+                "margin_est": 2059.7,
+                "roc_pct": 14.2,
+                "annualized_roc_pct": 370.24
+            },
+            "risk_profile": {
+                "breakeven": 235.43,
+                "safety_cushion_pct": 14.3,
+                "pop_pct": 80.0,
+                "delta": 0.2,
                 "theta_income_day": 10.0
             },
             "score": {
@@ -2431,192 +1774,192 @@
                     ]
                 ]
             },
-            "analysis_time": "2026-03-05 21:07:48"
+            "analysis_time": "2026-03-11 21:37:38"
         },
-        "reasoning": "Tech \u770b\u6f32 (RSI:62.1) + \u7c4c\u78bc\u652f\u6490(9.49)",
+        "reasoning": "Tech \u770b\u8dcc (RSI:38.7) + \u7c4c\u78bc\u963b\u529b(232.52)",
         "uoa_score": 0
     },
     {
-        "ticker": "AAL",
-        "profile": "Small_Cap_Movers",
+        "ticker": "AAPL",
+        "profile": "The_Titans",
         "strategy": "LONG_PUT",
-        "strike": 12.5,
-        "expiry": "20260410",
-        "price": 12.3,
-        "premium": 0.88,
-        "score": 100,
+        "strike": 270.0,
+        "expiry": "20260417",
+        "price": 261.95,
+        "premium": 12.350000000000001,
+        "score": 95,
         "analysis": {
             "strategy": "Long Put",
             "status": "success",
             "input": {
-                "stock_price": 12.3,
-                "strike_price": 12.5,
-                "premium": 0.88,
-                "days_to_expiration": 35,
+                "stock_price": 261.95,
+                "strike_price": 270.0,
+                "premium": 12.350000000000001,
+                "days_to_expiration": 36,
                 "delta": -0.5,
-                "theta": 0.0,
+                "theta": null,
                 "iv": 0.5,
                 "contract_size": 100
             },
             "cost_analysis": {
-                "premium_per_share": 0.88,
-                "total_cost": 88.0,
-                "max_loss": 88.0,
+                "premium_per_share": 12.350000000000001,
+                "total_cost": 1235.0000000000002,
+                "max_loss": 1235.0000000000002,
                 "max_loss_pct": 100.0
             },
             "breakeven": {
-                "price": 11.62,
-                "distance_from_current": 0.6800000000000015,
-                "distance_pct": 5.528455284552857,
-                "interpretation": "\ud83d\udfe1 \u4e2d\u7b49\u96e3\u5ea6 - \u9700\u8981\u4e00\u5b9a\u8dcc\u5e45"
+                "price": 257.65,
+                "distance_from_current": 4.300000000000011,
+                "distance_pct": 1.641534644016038,
+                "interpretation": "\u2705 \u5bb9\u6613\u9054\u5230 - \u80a1\u50f9\u53ea\u9700\u5c0f\u5e45\u4e0b\u8dcc"
             },
             "leverage": {
-                "effective_leverage": 6.99,
-                "capital_efficiency": 13.98,
+                "effective_leverage": 10.61,
+                "capital_efficiency": 21.21,
                 "delta": 0.5,
-                "rating": "\ud83d\udcc8 \u9ad8\u69d3\u687f",
-                "warning": "\u9069\u5408\u4ee5\u5c0f\u535a\u5927\u7b56\u7565",
-                "explanation": "\u80a1\u50f9\u6bcf\u8b8a\u52d51%\uff0c\u671f\u6b0a\u7d04\u8b8a\u52d57.0%"
+                "rating": "\ud83d\ude80 \u8d85\u9ad8\u69d3\u687f",
+                "warning": "\u26a0\ufe0f \u9ad8\u98a8\u96aa\u9ad8\u56de\u5831\uff0c\u6ce8\u610f\u5009\u4f4d\u63a7\u5236",
+                "explanation": "\u80a1\u50f9\u6bcf\u8b8a\u52d51%\uff0c\u671f\u6b0a\u7d04\u8b8a\u52d510.6%"
             },
             "scenarios": [
                 {
                     "stock_change_pct": 50,
-                    "stock_price": 18.45,
+                    "stock_price": 392.92,
                     "intrinsic_value": 0,
                     "total_value": 0,
-                    "profit_loss": -88.0,
+                    "profit_loss": -1235.0,
                     "profit_loss_pct": -100.0,
                     "result": "\ud83d\udd34 \u8667\u640d"
                 },
                 {
                     "stock_change_pct": 30,
-                    "stock_price": 15.99,
+                    "stock_price": 340.54,
                     "intrinsic_value": 0,
                     "total_value": 0,
-                    "profit_loss": -88.0,
+                    "profit_loss": -1235.0,
                     "profit_loss_pct": -100.0,
                     "result": "\ud83d\udd34 \u8667\u640d"
                 },
                 {
                     "stock_change_pct": 20,
-                    "stock_price": 14.76,
+                    "stock_price": 314.34,
                     "intrinsic_value": 0,
                     "total_value": 0,
-                    "profit_loss": -88.0,
+                    "profit_loss": -1235.0,
                     "profit_loss_pct": -100.0,
                     "result": "\ud83d\udd34 \u8667\u640d"
                 },
                 {
                     "stock_change_pct": 15,
-                    "stock_price": 14.14,
+                    "stock_price": 301.24,
                     "intrinsic_value": 0,
                     "total_value": 0,
-                    "profit_loss": -88.0,
+                    "profit_loss": -1235.0,
                     "profit_loss_pct": -100.0,
                     "result": "\ud83d\udd34 \u8667\u640d"
                 },
                 {
                     "stock_change_pct": 10,
-                    "stock_price": 13.53,
+                    "stock_price": 288.15,
                     "intrinsic_value": 0,
                     "total_value": 0,
-                    "profit_loss": -88.0,
+                    "profit_loss": -1235.0,
                     "profit_loss_pct": -100.0,
                     "result": "\ud83d\udd34 \u8667\u640d"
                 },
                 {
                     "stock_change_pct": 5,
-                    "stock_price": 12.92,
+                    "stock_price": 275.05,
                     "intrinsic_value": 0,
                     "total_value": 0,
-                    "profit_loss": -88.0,
+                    "profit_loss": -1235.0,
                     "profit_loss_pct": -100.0,
                     "result": "\ud83d\udd34 \u8667\u640d"
                 },
                 {
                     "stock_change_pct": 0,
-                    "stock_price": 12.3,
-                    "intrinsic_value": 0.2,
-                    "total_value": 20.0,
-                    "profit_loss": -68.0,
-                    "profit_loss_pct": -77.3,
+                    "stock_price": 261.95,
+                    "intrinsic_value": 8.05,
+                    "total_value": 805.0,
+                    "profit_loss": -430.0,
+                    "profit_loss_pct": -34.8,
                     "result": "\ud83d\udd34 \u8667\u640d"
                 },
                 {
                     "stock_change_pct": -5,
-                    "stock_price": 11.69,
-                    "intrinsic_value": 0.81,
-                    "total_value": 81.5,
-                    "profit_loss": -6.5,
-                    "profit_loss_pct": -7.4,
-                    "result": "\ud83d\udd34 \u8667\u640d"
+                    "stock_price": 248.85,
+                    "intrinsic_value": 21.15,
+                    "total_value": 2114.75,
+                    "profit_loss": 879.75,
+                    "profit_loss_pct": 71.2,
+                    "result": "\ud83d\udfe2 \u7372\u5229"
                 },
                 {
                     "stock_change_pct": -10,
-                    "stock_price": 11.07,
-                    "intrinsic_value": 1.43,
-                    "total_value": 143.0,
-                    "profit_loss": 55.0,
-                    "profit_loss_pct": 62.5,
+                    "stock_price": 235.75,
+                    "intrinsic_value": 34.25,
+                    "total_value": 3424.5,
+                    "profit_loss": 2189.5,
+                    "profit_loss_pct": 177.3,
                     "result": "\ud83d\udfe2 \u7372\u5229"
                 },
                 {
                     "stock_change_pct": -20,
-                    "stock_price": 9.84,
-                    "intrinsic_value": 2.66,
-                    "total_value": 266.0,
-                    "profit_loss": 178.0,
-                    "profit_loss_pct": 202.3,
+                    "stock_price": 209.56,
+                    "intrinsic_value": 60.44,
+                    "total_value": 6044.0,
+                    "profit_loss": 4809.0,
+                    "profit_loss_pct": 389.4,
                     "result": "\ud83d\udfe2 \u7372\u5229"
                 }
             ],
             "theta_analysis": {
-                "theta_per_share": 0.0,
-                "daily_decay_dollar": 0.0,
-                "weekly_decay_dollar": 0.0,
-                "daily_decay_pct": 0.0,
-                "days_to_expiration": 35,
-                "estimated_decay_to_expiry": 0.0,
-                "risk_level": "\ud83d\udfe2 \u6975\u4f4e\u98a8\u96aa",
-                "warning": "\u6642\u9593\u8870\u6e1b\u5f71\u97ff\u5c0f",
-                "suggestion": "\u2705 \u5230\u671f\u65e5\u8f03\u9060\uff0cTheta \u5f71\u97ff\u8f03\u5c0f"
+                "theta_per_share": null,
+                "daily_decay_dollar": null,
+                "weekly_decay_dollar": null,
+                "daily_decay_pct": null,
+                "days_to_expiration": 36,
+                "estimated_decay_to_expiry": null,
+                "risk_level": "\u26aa \u6578\u64da\u4e0d\u8db3",
+                "warning": "\u7121 Theta \u6578\u64da\uff0c\u7121\u6cd5\u8a55\u4f30\u6642\u9593\u8870\u6e1b\u98a8\u96aa",
+                "suggestion": "\u5efa\u8b70\u7372\u53d6\u5b8c\u6574\u7684\u671f\u6b0a Greeks \u6578\u64da"
             },
             "iv_analysis": {
-                "current_iv": 0.5,
-                "iv_level": "\ud83d\udfe2 \u4f4e IV",
-                "assessment": "\u671f\u6b0a\u4fbf\u5b9c\uff0c\u9069\u5408\u8cb7\u5165",
-                "buy_timing": "\u2705 \u597d\u6642\u6a5f",
-                "vega_risk": "IV \u4e0a\u5347\u6703\u589e\u52a0\u671f\u6b0a\u50f9\u503c"
+                "current_iv": 50.0,
+                "iv_level": "\ud83d\udd34 \u9ad8 IV",
+                "assessment": "\u671f\u6b0a\u5f88\u8cb4\uff0cIV \u56de\u843d\u6703\u9020\u6210\u8667\u640d",
+                "buy_timing": "\ud83d\udd34 \u4e0d\u5efa\u8b70\u8cb7\u5165",
+                "vega_risk": "IV \u4e0b\u964d\u6703\u5c0e\u81f4\u671f\u6b0a\u50f9\u503c\u4e0b\u8dcc"
             },
             "score": {
-                "total_score": 100,
+                "total_score": 95,
                 "grade": "A",
                 "grade_description": "\u512a\u79c0 - \u5f37\u70c8\u63a8\u85a6",
                 "factors": [
                     [
                         "\u76c8\u8667\u5e73\u8861\u9ede",
-                        "+15",
-                        "\u4e2d\u7b49\u96e3\u5ea6"
+                        "+25",
+                        "\u5bb9\u6613\u9054\u5230"
                     ],
                     [
                         "\u69d3\u687f\u500d\u6578",
-                        "+15",
-                        "7.0x \u9ad8\u69d3\u687f"
+                        "+20",
+                        "10.6x \u8d85\u9ad8\u69d3\u687f"
                     ],
                     [
                         "Theta \u98a8\u96aa",
-                        "+15",
-                        "\u6975\u4f4e\u8870\u6e1b"
+                        "+0",
+                        "\u6578\u64da\u4e0d\u8db3"
                     ],
                     [
                         "IV \u6c34\u5e73",
-                        "+15",
-                        "\u4f4e IV\uff0c\u671f\u6b0a\u4fbf\u5b9c"
+                        "-10",
+                        "\u9ad8 IV\uff0c\u671f\u6b0a\u8cb4"
                     ],
                     [
                         "\u5230\u671f\u5929\u6578",
                         "+10",
-                        "35\u5929\uff0c\u6642\u9593\u5145\u88d5"
+                        "36\u5929\uff0c\u6642\u9593\u5145\u88d5"
                     ]
                 ]
             },
@@ -2624,215 +1967,101 @@
                 "action": "BUY",
                 "confidence": "HIGH",
                 "recommendations": [
-                    "\u2705 PUT \u8a55\u5206 100 \u5206\uff0c\u53ef\u4ee5\u8003\u616e\u8cb7\u5165",
-                    "\ud83d\udcc8 \u69d3\u687f 7.0x\uff0c\u9069\u5408\u4ee5\u5c0f\u535a\u5927",
-                    "\u2705 IV 0.5% \u504f\u4f4e\uff0c\u671f\u6b0a\u76f8\u5c0d\u4fbf\u5b9c"
+                    "\u2705 PUT \u8a55\u5206 95 \u5206\uff0c\u53ef\u4ee5\u8003\u616e\u8cb7\u5165",
+                    "\ud83d\udcc8 \u69d3\u687f 10.6x\uff0c\u9069\u5408\u4ee5\u5c0f\u535a\u5927"
                 ],
-                "warnings": [],
-                "position_suggestion": "\u5efa\u8b70\u5009\u4f4d: 1-2 \u5f35 (\u6210\u672c $88-$176)"
+                "warnings": [
+                    "\u26a0\ufe0f IV 50.0% \u504f\u9ad8\uff0c\u6ce8\u610f IV \u56de\u843d\u98a8\u96aa"
+                ],
+                "position_suggestion": "\u5efa\u8b70\u5009\u4f4d: 1-2 \u5f35 (\u6210\u672c $1235-$2470)"
             },
-            "analysis_time": "2026-03-05 21:07:48"
+            "analysis_time": "2026-03-11 21:37:38"
         },
-        "reasoning": "Tech \u770b\u8dcc (RSI:37.1) + \u7c4c\u78bc\u963b\u529b(12.58)",
-        "uoa_score": 0
+        "reasoning": "Tech \u770b\u8dcc (RSI:47.0) + \u7c4c\u78bc\u963b\u529b(270.71)",
+        "uoa_score": 0,
+        "dark_pool": {
+            "ticker": "AAPL",
+            "dp_volume": 0,
+            "dp_ratio": 0.0,
+            "dp_ratio_diff": 0.0,
+            "dp_ratio_exchange": 0.0,
+            "methods_agree": true,
+            "vwap": 261.31932664,
+            "block_count": 0,
+            "block_volume": 0,
+            "raw_ticks": [],
+            "duration_seconds": 30,
+            "data_source": "ibkr_dp",
+            "data_quality": "partial",
+            "timestamp": "2026-03-11T13:41:05.590512+00:00",
+            "warnings": [
+                "\u65b9\u6cd5 A\uff1aduration \u671f\u9593\u7121 rtVolume \u66f4\u65b0\uff08\u53ef\u80fd\u975e\u4ea4\u6613\u6642\u6bb5\uff09",
+                "\u65b9\u6cd5 B\uff1aduration \u671f\u9593\u7121 AllLast tick\uff08\u53ef\u80fd\u975e\u4ea4\u6613\u6642\u6bb5\u6216 TWS \u672a\u6388\u6b0a\uff09"
+            ],
+            "session_type": "primary",
+            "is_overnight": false
+        },
+        "dp_ratio": 0.0
     },
     {
-        "ticker": "ACGL",
-        "profile": "Momentum_Growth",
-        "strategy": "LONG_PUT",
-        "strike": 90.0,
-        "expiry": "20260417",
-        "price": null,
-        "premium": 0.7,
+        "ticker": "AMGN",
+        "profile": "The_Titans",
+        "strategy": "SHORT_PUT",
+        "strike": 342.5,
+        "expiry": "20260327",
+        "price": 374.4,
+        "premium": 1.615,
         "score": 80,
         "analysis": {
-            "strategy": "Long Put",
+            "strategy": "Short Put",
             "status": "success",
             "input": {
-                "stock_price": null,
-                "strike_price": 90.0,
-                "premium": 0.7,
-                "days_to_expiration": 42,
-                "delta": -0.5,
-                "theta": 0.0,
-                "iv": 0.5,
-                "contract_size": 100
+                "price": 374.4,
+                "strike": 342.5,
+                "iv": 0.5
             },
-            "cost_analysis": {
-                "premium_per_share": 0.7,
-                "total_cost": 70.0,
-                "max_loss": 70.0,
-                "max_loss_pct": 100.0
+            "financials": {
+                "max_profit": 161.5,
+                "margin_est": 4459.5,
+                "roc_pct": 3.62,
+                "annualized_roc_pct": 94.42
             },
-            "breakeven": {
-                "price": 89.3,
-                "distance_from_current": null,
-                "distance_pct": null,
-                "interpretation": "\ud83d\udd34 \u56f0\u96e3 - \u9700\u8981\u5927\u5e45\u4e0b\u8dcc\u624d\u80fd\u7372\u5229"
-            },
-            "leverage": {
-                "effective_leverage": null,
-                "capital_efficiency": null,
-                "delta": 0.5,
-                "rating": "\ud83d\udcc9 \u4f4e\u69d3\u687f",
-                "warning": "\u69d3\u687f\u6548\u76ca\u4e0d\u660e\u986f",
-                "explanation": "\u80a1\u50f9\u6bcf\u8b8a\u52d51%\uff0c\u671f\u6b0a\u7d04\u8b8a\u52d5nan%"
-            },
-            "scenarios": [
-                {
-                    "stock_change_pct": 50,
-                    "stock_price": null,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -70.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": 30,
-                    "stock_price": null,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -70.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": 20,
-                    "stock_price": null,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -70.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": 15,
-                    "stock_price": null,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -70.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": 10,
-                    "stock_price": null,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -70.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": 5,
-                    "stock_price": null,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -70.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": 0,
-                    "stock_price": null,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -70.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": -5,
-                    "stock_price": null,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -70.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": -10,
-                    "stock_price": null,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -70.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                },
-                {
-                    "stock_change_pct": -20,
-                    "stock_price": null,
-                    "intrinsic_value": 0,
-                    "total_value": 0,
-                    "profit_loss": -70.0,
-                    "profit_loss_pct": -100.0,
-                    "result": "\ud83d\udd34 \u8667\u640d"
-                }
-            ],
-            "theta_analysis": {
-                "theta_per_share": 0.0,
-                "daily_decay_dollar": 0.0,
-                "weekly_decay_dollar": 0.0,
-                "daily_decay_pct": 0.0,
-                "days_to_expiration": 42,
-                "estimated_decay_to_expiry": 0.0,
-                "risk_level": "\ud83d\udfe2 \u6975\u4f4e\u98a8\u96aa",
-                "warning": "\u6642\u9593\u8870\u6e1b\u5f71\u97ff\u5c0f",
-                "suggestion": "\u2705 \u5230\u671f\u65e5\u8f03\u9060\uff0cTheta \u5f71\u97ff\u8f03\u5c0f"
-            },
-            "iv_analysis": {
-                "current_iv": 0.5,
-                "iv_level": "\ud83d\udfe2 \u4f4e IV",
-                "assessment": "\u671f\u6b0a\u4fbf\u5b9c\uff0c\u9069\u5408\u8cb7\u5165",
-                "buy_timing": "\u2705 \u597d\u6642\u6a5f",
-                "vega_risk": "IV \u4e0a\u5347\u6703\u589e\u52a0\u671f\u6b0a\u50f9\u503c"
+            "risk_profile": {
+                "breakeven": 340.88,
+                "safety_cushion_pct": 8.95,
+                "pop_pct": 80.0,
+                "delta": -0.2,
+                "theta_income_day": 10.0
             },
             "score": {
                 "total_score": 80,
                 "grade": "A",
-                "grade_description": "\u512a\u79c0 - \u5f37\u70c8\u63a8\u85a6",
                 "factors": [
                     [
-                        "\u76c8\u8667\u5e73\u8861\u9ede",
-                        "-10",
-                        "\u56f0\u96e3"
-                    ],
-                    [
-                        "\u69d3\u687f\u500d\u6578",
-                        "+0",
-                        "nanx \u4f4e\u69d3\u687f"
-                    ],
-                    [
-                        "Theta \u98a8\u96aa",
+                        "PoP",
                         "+15",
-                        "\u6975\u4f4e\u8870\u6e1b"
+                        "\u9ad8\u52dd\u7387"
                     ],
                     [
-                        "IV \u6c34\u5e73",
+                        "ROC",
                         "+15",
-                        "\u4f4e IV\uff0c\u671f\u6b0a\u4fbf\u5b9c"
+                        "\u56de\u5831\u6975\u9ad8"
                     ],
                     [
-                        "\u5230\u671f\u5929\u6578",
-                        "+10",
-                        "42\u5929\uff0c\u6642\u9593\u5145\u88d5"
+                        "Safety",
+                        "+5",
+                        "\u7de9\u885d\u5340\u9069\u4e2d"
+                    ],
+                    [
+                        "IV",
+                        "-5",
+                        "IV \u4f4e\uff0c\u8089\u5c11"
                     ]
                 ]
             },
-            "recommendation": {
-                "action": "BUY",
-                "confidence": "HIGH",
-                "recommendations": [
-                    "\u2705 PUT \u8a55\u5206 80 \u5206\uff0c\u53ef\u4ee5\u8003\u616e\u8cb7\u5165",
-                    "\u2705 IV 0.5% \u504f\u4f4e\uff0c\u671f\u6b0a\u76f8\u5c0d\u4fbf\u5b9c"
-                ],
-                "warnings": [],
-                "position_suggestion": "\u5efa\u8b70\u5009\u4f4d: 1-2 \u5f35 (\u6210\u672c $70-$140)"
-            },
-            "analysis_time": "2026-03-05 21:07:48"
+            "analysis_time": "2026-03-11 21:37:38"
         },
-        "reasoning": "Tech \u770b\u8dcc (RSI:51.2) + \u7c4c\u78bc\u963b\u529b(91.03)",
+        "reasoning": "Tech \u770b\u6f32 (RSI:53.6) + \u7c4c\u78bc\u652f\u6490(343.24)",
         "uoa_score": 0
     }
 ]

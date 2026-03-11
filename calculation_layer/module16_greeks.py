@@ -140,7 +140,9 @@ class GreeksCalculator:
         time_to_expiration: float,
         volatility: float,
         option_type: str = 'call',
-        dividend_yield: float = 0.0  # 🆕 Fix 6: 股息率支持
+        dividend_yield: float = 0.0,  # 🆕 Fix 6: 股息率支持
+        is_american: bool = True,
+        discrete_dividends: list = None
     ) -> float:
         """
         計算 Delta
@@ -170,23 +172,34 @@ class GreeksCalculator:
             - ATM 期權的 Delta 約為 ±0.5
         """
         try:
-            # 計算 d1
-            d1, _ = self.bs_calculator.calculate_d1_d2(
-                stock_price, strike_price, risk_free_rate,
-                time_to_expiration, volatility, dividend_yield
-            )
-            
-            # 計算 Delta
-            option_type_lower = option_type.lower()
-            
-            if option_type_lower == 'call':
-                # Call Delta: N(d1)
-                delta = self.bs_calculator.normal_cdf(d1)
-            elif option_type_lower == 'put':
-                # Put Delta: N(d1) - 1
-                delta = self.bs_calculator.normal_cdf(d1) - 1
+            if is_american:
+                logger.debug(f"  使用美式二叉樹模型計算單獨 Delta ({option_type})...")
+                am_result = self.am_pricer.calculate_american_price(
+                    stock_price=stock_price, strike_price=strike_price,
+                    risk_free_rate=risk_free_rate, time_to_expiration=time_to_expiration,
+                    volatility=volatility, option_type=option_type,
+                    dividend_yield=dividend_yield, discrete_dividends=discrete_dividends,
+                    steps=500
+                )
+                delta = am_result.delta
             else:
-                raise ValueError(f"無效的期權類型: {option_type}")
+                # 計算 d1
+                d1, _ = self.bs_calculator.calculate_d1_d2(
+                    stock_price, strike_price, risk_free_rate,
+                    time_to_expiration, volatility, dividend_yield
+                )
+                
+                # 計算 Delta
+                option_type_lower = option_type.lower()
+                
+                if option_type_lower == 'call':
+                    # Call Delta: N(d1)
+                    delta = self.bs_calculator.normal_cdf(d1)
+                elif option_type_lower == 'put':
+                    # Put Delta: N(d1) - 1
+                    delta = self.bs_calculator.normal_cdf(d1) - 1
+                else:
+                    raise ValueError(f"無效的期權類型: {option_type}")
             
             logger.debug(f"  Delta ({option_type}): {delta:.6f}")
             
@@ -203,7 +216,9 @@ class GreeksCalculator:
         risk_free_rate: float,
         time_to_expiration: float,
         volatility: float,
-        dividend_yield: float = 0.0  # 🆕 Fix 6: 股息率支持
+        dividend_yield: float = 0.0,  # 🆕 Fix 6: 股息率支持
+        is_american: bool = True,
+        discrete_dividends: list = None
     ) -> float:
         """
         計算 Gamma
@@ -235,18 +250,30 @@ class GreeksCalculator:
             if time_to_expiration < 1e-10:
                 logger.debug("  Gamma: 0.0 (T≈0, 到期時 Gamma 趨向 0)")
                 return 0.0
-            
-            # 計算 d1
-            d1, _ = self.bs_calculator.calculate_d1_d2(
-                stock_price, strike_price, risk_free_rate,
-                time_to_expiration, volatility, dividend_yield
-            )
-            
-            # 計算 Gamma
-            # Γ = N'(d1) / (S × σ × √T)
-            sqrt_t = math.sqrt(time_to_expiration)
-            gamma = (self.bs_calculator.normal_pdf(d1) / 
-                    (stock_price * volatility * sqrt_t))
+
+            if is_american:
+                logger.debug(f"  使用美式二叉樹模型計算單獨 Gamma...")
+                # Call vs Put Gamma 應該是一樣的，但是為了統一輸入我們使用 call
+                am_result = self.am_pricer.calculate_american_price(
+                    stock_price=stock_price, strike_price=strike_price,
+                    risk_free_rate=risk_free_rate, time_to_expiration=time_to_expiration,
+                    volatility=volatility, option_type='call',
+                    dividend_yield=dividend_yield, discrete_dividends=discrete_dividends,
+                    steps=500
+                )
+                gamma = am_result.gamma
+            else:
+                # 計算 d1
+                d1, _ = self.bs_calculator.calculate_d1_d2(
+                    stock_price, strike_price, risk_free_rate,
+                    time_to_expiration, volatility, dividend_yield
+                )
+                
+                # 計算 Gamma
+                # Γ = N'(d1) / (S × σ × √T)
+                sqrt_t = math.sqrt(time_to_expiration)
+                gamma = (self.bs_calculator.normal_pdf(d1) / 
+                        (stock_price * volatility * sqrt_t))
             
             logger.debug(f"  Gamma: {gamma:.6f}")
             
@@ -330,7 +357,9 @@ class GreeksCalculator:
         time_to_expiration: float,
         volatility: float,
         option_type: str = 'call',
-        dividend_yield: float = 0.0  # 🆕 Fix 6: 股息率支持
+        dividend_yield: float = 0.0,  # 🆕 Fix 6: 股息率支持
+        is_american: bool = True,
+        discrete_dividends: list = None
     ) -> float:
         """
         計算 Theta（每日時間衰減）
@@ -361,15 +390,30 @@ class GreeksCalculator:
             - 返回值為每日衰減金額，例如 -0.05 表示每天損失 $0.05
         """
         try:
-            # 計算年化 Theta
-            theta_annual = self._calculate_theta_annual(
-                stock_price, strike_price, risk_free_rate,
-                time_to_expiration, volatility, option_type, dividend_yield
-            )
-            
-            # 轉換為每日 Theta
-            # Fix 1: 使用 252（交易日）而非 365，與 IBKR/Bloomberg 標準一致
-            theta_daily = theta_annual / 252.0
+            if is_american:
+                logger.debug(f"  使用美式二叉樹模型計算單獨 Theta ({option_type})...")
+                if time_to_expiration < 1e-10:
+                    logger.debug("  Theta: 0.0 (T≈0, 到期時 Theta 趨向 0)")
+                    return 0.0
+                am_result = self.am_pricer.calculate_american_price(
+                    stock_price=stock_price, strike_price=strike_price,
+                    risk_free_rate=risk_free_rate, time_to_expiration=time_to_expiration,
+                    volatility=volatility, option_type=option_type,
+                    dividend_yield=dividend_yield, discrete_dividends=discrete_dividends,
+                    steps=500
+                )
+                theta_daily = am_result.theta
+                theta_annual = theta_daily * 252.0
+            else:
+                # 計算年化 Theta
+                theta_annual = self._calculate_theta_annual(
+                    stock_price, strike_price, risk_free_rate,
+                    time_to_expiration, volatility, option_type, dividend_yield
+                )
+                
+                # 轉換為每日 Theta
+                # Fix 1: 使用 252（交易日）而非 365，與 IBKR/Bloomberg 標準一致
+                theta_daily = theta_annual / 252.0
             
             # 記錄年化值和每日值以便驗證
             logger.debug(f"  Theta ({option_type}): 年化={theta_annual:.6f}, 每日={theta_daily:.6f} ($/天)")
@@ -387,7 +431,10 @@ class GreeksCalculator:
         risk_free_rate: float,
         time_to_expiration: float,
         volatility: float,
-        dividend_yield: float = 0.0  # 🆕 Fix 6: 股息率支持
+        option_type: str = 'call',  # Added for unified interface, though vega same
+        dividend_yield: float = 0.0,  # 🆕 Fix 6: 股息率支持
+        is_american: bool = True,
+        discrete_dividends: list = None
     ) -> float:
         """
         計算 Vega
@@ -446,33 +493,44 @@ class GreeksCalculator:
             - Call 和 Put 的 Vega 相同（相同行使價和到期日）
         """
         try:
-            # 計算 d1
-            d1, _ = self.bs_calculator.calculate_d1_d2(
-                stock_price, strike_price, risk_free_rate,
-                time_to_expiration, volatility, dividend_yield
-            )
-            
-            # 計算 Vega
-            # ν = S × N'(d1) × √T / 100
-            # 
-            # 單位說明：
-            # - 除以 100 是因為 Vega 表示 IV 變化 1 個百分點時的期權價格變化
-            # - 例如：IV 從 20% 變為 21%（變化 1 個百分點），不是變化 1%（即 0.2% → 0.202%）
-            # - 返回值單位：美元/百分點 ($/%)
-            # 
-            # 使用方式：
-            # - 正確：price_change = vega * iv_change_in_percentage_points
-            # - 例如：vega = 0.25, IV 從 25% 升至 30%（變化 5 個百分點）
-            #         price_change = 0.25 * 5 = $1.25
-            # 
-            # 常見錯誤：
-            # - 錯誤：price_change = vega * iv_change / 100  # 不要再除以 100！
-            sqrt_t = math.sqrt(time_to_expiration)
-            vega = stock_price * self.bs_calculator.normal_pdf(d1) * sqrt_t / 100
-            
-            # 標準 Vega 定義：IV 上升 1 個百分點，期權價格變化多少美元
-            # 例如：Vega = 0.25 表示 IV 從 31% 升到 32%，期權價格上升 $0.25
-            
+            if is_american:
+                logger.debug(f"  使用美式二叉樹模型計算單獨 Vega (Bump Method)...")
+                # 計算 Vega (Bump 1%)
+                am_result = self.am_pricer.calculate_american_price(
+                    stock_price=stock_price,
+                    strike_price=strike_price,
+                    risk_free_rate=risk_free_rate,
+                    time_to_expiration=time_to_expiration,
+                    volatility=volatility,
+                    option_type=option_type,
+                    dividend_yield=dividend_yield,
+                    discrete_dividends=discrete_dividends,
+                    steps=500
+                )
+                vega_bump_res = self.am_pricer.calculate_american_price(
+                    stock_price=stock_price,
+                    strike_price=strike_price,
+                    risk_free_rate=risk_free_rate,
+                    time_to_expiration=time_to_expiration,
+                    volatility=volatility + 0.01,
+                    option_type=option_type,
+                    dividend_yield=dividend_yield,
+                    discrete_dividends=discrete_dividends,
+                    steps=500
+                )
+                vega = max(0.0, vega_bump_res.american_price - am_result.american_price)
+            else:
+                # 計算 d1
+                d1, _ = self.bs_calculator.calculate_d1_d2(
+                    stock_price, strike_price, risk_free_rate,
+                    time_to_expiration, volatility, dividend_yield
+                )
+                
+                # 計算 Vega
+                # ν = S × N'(d1) × √T / 100
+                sqrt_t = math.sqrt(time_to_expiration)
+                vega = stock_price * self.bs_calculator.normal_pdf(d1) * sqrt_t / 100
+                
             logger.debug(f"  Vega: {vega:.6f}")
             
             # 驗證 Vega 為正數
@@ -493,7 +551,9 @@ class GreeksCalculator:
         time_to_expiration: float,
         volatility: float,
         option_type: str = 'call',
-        dividend_yield: float = 0.0  # 🆕 Fix 6: 股息率支持
+        dividend_yield: float = 0.0,  # 🆕 Fix 6: 股息率支持
+        is_american: bool = True,
+        discrete_dividends: list = None
     ) -> float:
         """
         計算 Rho
@@ -521,26 +581,53 @@ class GreeksCalculator:
             - 在低利率環境下，Rho 的影響較小
         """
         try:
-            # 計算 d2
-            _, d2 = self.bs_calculator.calculate_d1_d2(
-                stock_price, strike_price, risk_free_rate,
-                time_to_expiration, volatility, dividend_yield
-            )
-            
-            # 計算折現因子
-            discount_factor = math.exp(-risk_free_rate * time_to_expiration)
-            
-            # 計算 Rho
-            option_type_lower = option_type.lower()
-            
-            if option_type_lower == 'call':
-                # Fix 2: Call Rho: K×T×e^(-r×T)×N(d2) / 100（業界標準：每1%利率變化）
-                rho = strike_price * time_to_expiration * discount_factor * self.bs_calculator.normal_cdf(d2) / 100
-            elif option_type_lower == 'put':
-                # Fix 2: Put Rho: -K×T×e^(-r×T)×N(-d2) / 100（業界標準：每1%利率變化）
-                rho = -strike_price * time_to_expiration * discount_factor * self.bs_calculator.normal_cdf(-d2) / 100
+            if is_american:
+                logger.debug(f"  使用美式二叉樹模型計算單獨 Rho (Bump Method)...")
+                # 計算 Rho (Bump 1%)
+                am_result = self.am_pricer.calculate_american_price(
+                    stock_price=stock_price,
+                    strike_price=strike_price,
+                    risk_free_rate=risk_free_rate,
+                    time_to_expiration=time_to_expiration,
+                    volatility=volatility,
+                    option_type=option_type,
+                    dividend_yield=dividend_yield,
+                    discrete_dividends=discrete_dividends,
+                    steps=500
+                )
+                rho_bump_res = self.am_pricer.calculate_american_price(
+                    stock_price=stock_price,
+                    strike_price=strike_price,
+                    risk_free_rate=risk_free_rate + 0.01,
+                    time_to_expiration=time_to_expiration,
+                    volatility=volatility,
+                    option_type=option_type,
+                    dividend_yield=dividend_yield,
+                    discrete_dividends=discrete_dividends,
+                    steps=500
+                )
+                rho = rho_bump_res.american_price - am_result.american_price
             else:
-                raise ValueError(f"無效的期權類型: {option_type}")
+                # 計算 d2
+                _, d2 = self.bs_calculator.calculate_d1_d2(
+                    stock_price, strike_price, risk_free_rate,
+                    time_to_expiration, volatility, dividend_yield
+                )
+                
+                # 計算折現因子
+                discount_factor = math.exp(-risk_free_rate * time_to_expiration)
+                
+                # 計算 Rho
+                option_type_lower = option_type.lower()
+                
+                if option_type_lower == 'call':
+                    # Fix 2: Call Rho: K×T×e^(-r×T)×N(d2) / 100（業界標準：每1%利率變化）
+                    rho = strike_price * time_to_expiration * discount_factor * self.bs_calculator.normal_cdf(d2) / 100
+                elif option_type_lower == 'put':
+                    # Fix 2: Put Rho: -K×T×e^(-r×T)×N(-d2) / 100（業界標準：每1%利率變化）
+                    rho = -strike_price * time_to_expiration * discount_factor * self.bs_calculator.normal_cdf(-d2) / 100
+                else:
+                    raise ValueError(f"無效的期權類型: {option_type}")
             
             logger.debug(f"  Rho ({option_type}): {rho:.6f}")
             

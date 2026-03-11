@@ -1367,7 +1367,10 @@ class IBKRClient:
                     else:
                         # Calculate time to expiration
                         from datetime import datetime
-                        exp_date = datetime.strptime(expiration, '%Y-%m-%d')
+                        if '-' in expiration:
+                            exp_date = datetime.strptime(expiration, '%Y-%m-%d')
+                        else:
+                            exp_date = datetime.strptime(expiration, '%Y%m%d')
                         today = datetime.now()
                         days_to_exp = (exp_date - today).days
                         time_to_exp = days_to_exp / 365.0
@@ -2639,14 +2642,10 @@ class IBKRClient:
                 self.ib.sleep(0.02)
 
                 # Read correct attribute based on tick_type
-                if tick_type in ('AllLast', 'Last'):
-                    raw_ticks = ticker.tickByTickAllLasts
-                elif tick_type == 'BidAsk':
-                    raw_ticks = ticker.tickByTickBidAsks
-                elif tick_type == 'MidPoint':
-                    raw_ticks = ticker.tickByTickMidPoints
+                if tick_type in ('AllLast', 'Last', 'BidAsk', 'MidPoint'):
+                    raw_ticks = ticker.tickByTicks
                 else:
-                    raw_ticks = ticker.tickByTickAllLasts
+                    raw_ticks = ticker.tickByTicks
 
                 if not raw_ticks:
                     continue

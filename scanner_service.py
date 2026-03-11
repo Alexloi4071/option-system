@@ -4,8 +4,17 @@ import json
 import os
 import random
 import math
+import sys
 from typing import List, Dict, Optional
 from datetime import datetime
+
+# Windows encoding fix to prevent UnicodeEncodeError on emojis
+if hasattr(sys.stdout, 'reconfigure'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
 
 from ib_insync import *
 from config.settings import settings as SETTINGS
@@ -30,6 +39,17 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger("ScannerService")
+
+class IBKRErrorFilter(logging.Filter):
+    def filter(self, record):
+        msg = record.getMessage()
+        if "Error 200" in msg or "Error 2119" in msg or "Warning 2119" in msg:
+            return False
+        return True
+
+logging.getLogger('ib_insync.wrapper').addFilter(IBKRErrorFilter())
+logging.getLogger('ib_insync.ib').addFilter(IBKRErrorFilter())
+
 
 # 配置 (這些現在應該從 settings 或 profiles 獲取，保留以免破壞舊代碼)
 CLIENT_ID = 104 
@@ -141,7 +161,7 @@ class ScannerService:
         return data
         
     def on_error(self, reqId, errorCode, errorString, contract):
-        if errorCode not in [2104, 2106, 2158]: # 忽略常見的市場數據連接提示
+        if errorCode not in [200, 2104, 2106, 2108, 2119, 2158]: # 忽略常見的市場數據連接與查無合約提示
             logger.error(f"IBKR Error {errorCode}: {errorString}")
 
     async def connect(self):
@@ -404,10 +424,9 @@ class ScannerService:
                     progress_callback=progress_callback
                 )
                 
-                # 5. Generate Report
-                msg = f"Generating Report for {ticker}..."
-                progress_callback(32, 32, "Generating Report")
-                system.report_generator.generate_json_report(result, ticker)
+                # 5. Report Generation is handled internally by main.py
+                msg = f"Completed Deep Analysis for {ticker}."
+                progress_callback(32, 32, "Analysis & Report Finished")
                 
                 return result
                 
@@ -639,7 +658,7 @@ class ScannerService:
             
         score = analysis.get('score', {}).get('total_score', 0)
         
-        if score > 50:
+        if score >= 0:
              return {
                 'ticker': ticker,
                 'profile': profile.name,
@@ -912,6 +931,23 @@ class ScannerService:
                     self.last_scan_time = datetime.now()
                     self.status_message = f"Scan Complete. Found {len(clean_opps)} opportunities."
                     logger.info(f"掃描完成! 發現 {len(clean_opps)} 個機會")
+                    
+                    # [NEW] Phase E: Trigger Deep Analysis for Top 1 Pick
+                    try:
+                        if clean_opps:
+                            top_opp = sorted(clean_opps, key=lambda x: x.get('score', 0), reverse=True)[0]
+                            logger.info(f"🏆 自動觸發 Top 1 候選標的深度分析 (40 模組): {top_opp['ticker']}")
+                            asyncio.create_task(self.run_deep_analysis(
+                                ticker=top_opp['ticker'],
+                                setup_info={
+                                    'strike': top_opp.get('strike'),
+                                    'expiry': top_opp.get('expiry'),
+                                    'strategy': top_opp.get('strategy')
+                                }
+                            ))
+                    except Exception as e:
+                        logger.error(f"Failed to auto-trigger deep analysis: {e}")
+
                     # Save to file as backup
                     try:
                         with open(OUTPUT_FILE, 'w') as f:
@@ -1019,7 +1055,7 @@ class ScannerService:
                         profile = profile_mapping.get(ticker)
                         if not profile: continue
                         
-                        logger.info(f"  📊 {ticker} 趨勢: {daily_trend}, RSI: {rsi:.1f}, POC: {vp_result.poc:.2f}")
+                        logger.info(f"  > {ticker} 趨勢: {daily_trend}, RSI: {rsi:.1f}, POC: {vp_result.poc:.2f}")
                         
                         # 3. 決策邏輯
                         target_strike = current_price
@@ -1065,7 +1101,7 @@ class ScannerService:
                                     
                     except Exception as e:
                         logger.warning(f"  {ticker} Technical 掃描錯誤: {e}")
-                        
+
                 # output
                 if all_opportunities:
                     # [Phase 5] Auto Fetch Dark Pool for top 3 before saving
@@ -1076,6 +1112,23 @@ class ScannerService:
                     self.last_scan_time = datetime.now()
                     self.status_message = f"Tech Scan Complete. Found {len(clean_opps)} opportunities."
                     logger.info(f"技術面掃描完成! 發現 {len(clean_opps)} 個機會")
+                    
+                    # [NEW] Phase E: Trigger Deep Analysis for Top 1 Pick
+                    try:
+                        if clean_opps:
+                            top_opp = sorted(clean_opps, key=lambda x: x.get('score', 0), reverse=True)[0]
+                            logger.info(f"🏆 自動觸發 Top 1 候選標的技術面深度分析 (40 模組): {top_opp['ticker']}")
+                            asyncio.create_task(self.run_deep_analysis(
+                                ticker=top_opp['ticker'],
+                                setup_info={
+                                    'strike': top_opp.get('strike'),
+                                    'expiry': top_opp.get('expiry'),
+                                    'strategy': top_opp.get('strategy')
+                                }
+                            ))
+                    except Exception as e:
+                        logger.error(f"Failed to auto-trigger deep analysis in tech loop: {e}")
+
                     try:
                         with open(OUTPUT_FILE, 'w') as f:
                             json.dump(clean_opps, f, default=str, indent=4)
