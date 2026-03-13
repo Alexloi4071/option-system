@@ -1,4 +1,4 @@
-# calculation_layer/module17_implied_volatility.py
+﻿# calculation_layer/module17_implied_volatility.py
 """
 模塊17: 隱含波動率計算器 (Implied Volatility Calculator)
 書籍來源: 金融工程標準模型
@@ -303,9 +303,12 @@ class ImpliedVolatilityCalculator:
                 bs_price = bs_result.option_price
                 price_diff = bs_price - market_price
                 
-                # 🔧 BUG-17-03 Fix: 使用相對誤差 + 絕對誤差混合條件
-                # adaptive_tolerance = max(tolerance, market_price * relative_tolerance)
-                adaptive_tolerance = max(self.tolerance, market_price * self.relative_tolerance)
+                option_type_lower = option_type.lower()
+                intrinsic_value = (max(0.0, stock_price - strike_price * math.exp(-risk_free_rate * time_to_expiration))
+                                   if option_type_lower == 'call'
+                                   else max(0.0, strike_price * math.exp(-risk_free_rate * time_to_expiration) - stock_price))
+                time_value = max(0.0, market_price - intrinsic_value)
+                adaptive_tolerance = max(self.tolerance, time_value * self.relative_tolerance)
                 
                 # 檢查收斂
                 if abs(price_diff) < adaptive_tolerance:
@@ -324,7 +327,9 @@ class ImpliedVolatilityCalculator:
                     strike_price=strike_price,
                     risk_free_rate=risk_free_rate,
                     time_to_expiration=time_to_expiration,
-                    volatility=volatility
+                    volatility=volatility,
+                    option_type=option_type,
+                    is_american=False
                 )
                 vega = vega_per_percent * 100.0
                 

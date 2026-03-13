@@ -139,41 +139,41 @@ class ArbitrageSpreadCalculator:
             
             # 如果有 Bid/Ask 數據，進行更精確的判斷
             if bid_price is not None and ask_price is not None and bid_price > 0 and ask_price > 0:
-                # 判斷是否真的有套利空間 (考慮買賣價差)
+                # 判斷是否真的有偏離空間 (考慮買賣價差)
                 if fair_value < bid_price:
                     # 理論價 < Bid，說明市場價(Bid)過高，可以 Sell at Bid
                     real_profit_pct = ((bid_price - fair_value) / fair_value) * 100
                     if real_profit_pct > self.THRESHOLDS['overvalued']:
-                        recommendation = f"高估 (Bid > 理論價) - 可直接沽出獲利 (潛在利潤 {real_profit_pct:.1f}%)"
+                        recommendation = f"高估 (Bid > 理論價) - 可考慮沽出 (潛在理論利潤 {real_profit_pct:.1f}%)"
                     else:
                         recommendation = "略高估 - 但利潤空間有限 (考慮交易成本)"
                 elif fair_value > ask_price:
                     # 理論價 > Ask，說明市場價(Ask)過低，可以 Buy at Ask
                     real_profit_pct = ((fair_value - ask_price) / ask_price) * 100
                     if real_profit_pct > abs(self.THRESHOLDS['undervalued']):
-                        recommendation = f"低估 (Ask < 理論價) - 可直接買入獲利 (潛在利潤 {real_profit_pct:.1f}%)"
+                        recommendation = f"低估 (Ask < 理論價) - 可考慮買入 (潛在理論利潤 {real_profit_pct:.1f}%)"
                     else:
                         recommendation = "略低估 - 但利潤空間有限 (考慮交易成本)"
                 else:
-                    # 理論價在 Bid/Ask 之間，無套利機會
-                    recommendation = "合理定價 - 理論價在買賣價差內 (無套利空間)"
+                    # 理論價在 Bid/Ask 之間，無偏離空間
+                    recommendation = "合理定價 - 理論價在買賣價差內 (無理論偏離空間)"
             
             # 如果沒有 Bid/Ask 或上面的判斷未觸發 (fallback 到中間價判斷)
             if not recommendation:
                 if spread_percentage >= self.THRESHOLDS['strong_overvalued']:
-                    recommendation = "嚴重高估 - 強烈套戥機會 (建議沽出)"
+                    recommendation = "嚴重高估 - 強烈偏離 (建議沽出)"
                 elif spread_percentage >= self.THRESHOLDS['overvalued']:
-                    recommendation = "略高估 - 輕微套戥機會 (觀望或輕倉沽出)"
+                    recommendation = "略高估 - 輕微偏離 (觀望或輕倉沽出)"
                 elif spread_percentage >= -self.THRESHOLDS['fair']:
-                    recommendation = "合理定價 - 無套戥機會 (公平價格,建議觀望)"
+                    recommendation = "合理定價 - 無偏離 (公平價格,建議觀望)"
                 elif spread_percentage >= self.THRESHOLDS['strong_undervalued']:
-                    recommendation = "略低估 - 輕微套戥機會 (考慮買入)"
+                    recommendation = "略低估 - 輕微偏離 (考慮買入)"
                 else:
-                    recommendation = "嚴重低估 - 強烈套戥機會 (建議買入)"
+                    recommendation = "嚴重低估 - 強烈偏離 (建議買入)"
             
             logger.info(f"  計算結果:")
-            logger.info(f"    套戥水位: ${arbitrage_spread:.2f}")
-            logger.info(f"    套戥百分比: {spread_percentage:.4f}%")
+            logger.info(f"    偏離水位: ${arbitrage_spread:.2f}")
+            logger.info(f"    偏離百分比: {spread_percentage:.4f}%")
             logger.info(f"    建議: {recommendation}")
             
             result = ArbitrageSpreadResult(

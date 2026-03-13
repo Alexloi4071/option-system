@@ -960,6 +960,11 @@ class ScannerService:
                     self.last_scan_time = datetime.now()
                     self.status_message = "Scan Complete. No opportunities found."
                     logger.info("本輪掃描未發現高分機會。")
+                    try:
+                        with open(OUTPUT_FILE, 'w') as f:
+                            json.dump([], f)
+                    except Exception as e:
+                        logger.error(f"Failed to clear results file: {e}")
                     
                 if single_pass:
                     logger.info("Single pass complete. Exiting loop.")
@@ -1139,6 +1144,11 @@ class ScannerService:
                     self.last_scan_time = datetime.now()
                     self.status_message = "Tech Scan Complete. No opportunities found."
                     logger.info("本輪技術面掃描未發現符合條件機會。")
+                    try:
+                        with open(OUTPUT_FILE, 'w') as f:
+                            json.dump([], f)
+                    except Exception as e:
+                        logger.error(f"Failed to clear results file: {e}")
 
                 if single_pass:
                     logger.info("Single pass complete. Exiting loop.")

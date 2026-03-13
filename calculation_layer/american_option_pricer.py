@@ -1,4 +1,4 @@
-# calculation_layer/american_option_pricer.py
+﻿# calculation_layer/american_option_pricer.py
 """
 美式期權定價模型 (American Option Pricing)
 
@@ -310,7 +310,7 @@ class AmericanOptionPricer:
             european_price=euro_price,
             american_price=am_price,
             early_exercise_premium=premium,
-            model_used='binomial (vectorized numpy)',
+            model_used='binomial',
             calculation_date=calc_date,
             delta=delta,
             gamma=gamma,

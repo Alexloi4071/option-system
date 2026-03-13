@@ -95,6 +95,26 @@ class ComplexStrategyAnalyzer:
     
     def __init__(self):
         logger.info("* 高級組合策略分析器 (Complex Strategy) 已初始化")
+
+    @staticmethod
+    def _resolve_option_price(leg: pd.Series) -> float:
+        """Resolve price fields across mixed option chain schemas."""
+        for field in ('lastPrice', 'last', 'mark', 'mid'):
+            value = leg.get(field)
+            if value is not None and pd.notna(value) and float(value) > 0:
+                return float(value)
+
+        bid = leg.get('bid')
+        ask = leg.get('ask')
+        if bid is not None and ask is not None and pd.notna(bid) and pd.notna(ask):
+            return (float(bid) + float(ask)) / 2.0
+
+        for field in ('close', 'price'):
+            value = leg.get(field)
+            if value is not None and pd.notna(value) and float(value) > 0:
+                return float(value)
+
+        return 0.0
         
     def analyze_vertical_spreads(self, 
                                calls_df: pd.DataFrame, 
@@ -157,7 +177,7 @@ class ComplexStrategyAnalyzer:
         
         for _, short_leg in short_candidates.iterrows():
             short_strike = short_leg['strike']
-            short_price = short_leg['lastPrice'] or (short_leg['bid'] + short_leg['ask']) / 2
+            short_price = self._resolve_option_price(short_leg)
             
             # 2. 尋找 Long Leg (Strike 距離約 5%)
             # Bull Put: Long Strike < Short Strike
@@ -172,7 +192,7 @@ class ComplexStrategyAnalyzer:
             if not long_candidates.empty:
                 long_leg = long_candidates.iloc[0]
                 long_strike = long_leg['strike']
-                long_price = long_leg['lastPrice'] or (long_leg['bid'] + long_leg['ask']) / 2
+                long_price = self._resolve_option_price(long_leg)
                 
                 # 構建策略對象
                 leg1 = OptionLeg(short_strike, option_type, 'sell', 1, 
@@ -320,8 +340,8 @@ class ComplexStrategyAnalyzer:
                 
                 # 行使價必須相同
                 if call_leg['strike'] == put_leg['strike']:
-                    call_price = call_leg['lastPrice'] or (call_leg['bid'] + call_leg['ask']) / 2
-                    put_price = put_leg['lastPrice'] or (put_leg['bid'] + put_leg['ask']) / 2
+                    call_price = self._resolve_option_price(call_leg)
+                    put_price = self._resolve_option_price(put_leg)
                     total_premium = (call_price + put_price) * 100
                     
                     leg1 = OptionLeg(call_leg['strike'], 'call', 'buy', 1, premium=call_price, 
@@ -379,8 +399,8 @@ class ComplexStrategyAnalyzer:
                 call_leg = otm_calls.iloc[0]
                 put_leg = otm_puts.iloc[0]
                 
-                call_price = call_leg['lastPrice'] or (call_leg['bid'] + call_leg['ask']) / 2
-                put_price = put_leg['lastPrice'] or (put_leg['bid'] + put_leg['ask']) / 2
+                call_price = self._resolve_option_price(call_leg)
+                put_price = self._resolve_option_price(put_leg)
                 total_premium = (call_price + put_price) * 100
                 
                 leg1 = OptionLeg(call_leg['strike'], 'call', 'buy', 1, premium=call_price,

@@ -2208,7 +2208,9 @@ class DataFetcher:
         
         for data_type, sources in self.fallback_used.items():
             for source in sources:
-                if 'self_calculated' in source.lower() or 'bs_calculated' in source.lower():
+                source_name = source.get('source') if isinstance(source, dict) else source
+                source_name = str(source_name)
+                if 'self_calculated' in source_name.lower() or 'bs_calculated' in source_name.lower():
                     self_calculated_count += 1
                     if data_type not in self_calculated_types:
                         self_calculated_types.append(data_type)
@@ -4013,6 +4015,9 @@ class DataFetcher:
                                             low_liq_mask.at[idx] = True
                                     low_count = low_liq_mask.sum()
                                     if low_count > 0:
+                                        if 'data_quality' in df_ref.columns and hasattr(df_ref['data_quality'], 'cat'):
+                                            if 'low_liquidity' not in df_ref['data_quality'].cat.categories:
+                                                df_ref['data_quality'] = df_ref['data_quality'].cat.add_categories(['low_liquidity'])
                                         df_ref.loc[low_liq_mask, 'data_quality'] = 'low_liquidity'
                                         msg = (
                                             f"{opt_type}: {low_count}/{total} 個行使價在 {session} 時段"
@@ -4425,7 +4430,10 @@ class DataFetcher:
             if atm_data is None:
                 return None
             
-            iv = float(atm_data['call_atm']['impliedVolatility'])
+            call_iv = atm_data['call_atm'].get('impliedVolatility')
+            if call_iv is None:
+                return None
+            iv = float(call_iv)
             
             logger.info(f"* {ticker} 隱含波動率: {iv:.2f}%")
             
@@ -4496,8 +4504,10 @@ class DataFetcher:
                     # 找到對應行使價的期權
                     matching_options = df[df['strike'] == strike]
                     if not matching_options.empty:
-                        api_iv = float(matching_options.iloc[0]['impliedVolatility'])
-                        logger.info(f"  * API IV: {api_iv:.2f}%")
+                        api_iv_raw = matching_options.iloc[0].get('impliedVolatility')
+                        if api_iv_raw is not None:
+                            api_iv = float(api_iv_raw)
+                            logger.info(f"  * API IV: {api_iv:.2f}%")
                     else:
                         logger.warning(f"  ! 未找到行使價 {strike} 的期權")
                         
@@ -4920,15 +4930,18 @@ class DataFetcher:
             # 方法2: Finviz fundamentals['dividend_yield']（降級方案）
             if self.finviz_scraper:
                 try:
-                    fundamentals = self.finviz_scraper.get_fundamentals(ticker)
+                    fundamentals = self.finviz_scraper.get_stock_fundamentals(ticker)
                     
                     if fundamentals and 'dividend_yield' in fundamentals:
                         div_yield_str = fundamentals['dividend_yield']
                         
                         # Finviz 返回格式: "3.25%" 或 "-"
                         if div_yield_str and div_yield_str != '-':
-                            # 移除 % 符號並轉換為小數
-                            dividend_yield = float(div_yield_str.rstrip('%')) / 100
+                            # Finviz scraper returns percentage values, e.g. 5.4 for 5.4%
+                            if isinstance(div_yield_str, str):
+                                dividend_yield = float(div_yield_str.rstrip('%')) / 100
+                            else:
+                                dividend_yield = float(div_yield_str) / 100
                             
                             if 0 <= dividend_yield <= 0.2:
                                 logger.info(f"* {ticker} 股息率: {dividend_yield*100:.2f}% (來源: Finviz)")
@@ -5803,6 +5816,19 @@ class DataFetcher:
             call_atm = atm_data['call_atm']
             put_atm = atm_data['put_atm']
             atm_strike = atm_data['atm_strike']
+            fallback_chain_ivs = []
+            for side in ('calls', 'puts'):
+                side_df = option_chain.get(side)
+                if side_df is None or getattr(side_df, 'empty', True) or 'impliedVolatility' not in side_df.columns:
+                    continue
+                for raw_chain_iv in side_df['impliedVolatility'].tolist():
+                    chain_iv_result = IVNormalizer.normalize_iv(raw_chain_iv, source=f'{side}_chain')
+                    if chain_iv_result['is_valid'] and chain_iv_result['normalized_iv'] > 0:
+                        fallback_chain_ivs.append(chain_iv_result['normalized_iv'])
+            chain_iv_fallback = None
+            if fallback_chain_ivs:
+                fallback_chain_ivs.sort()
+                chain_iv_fallback = fallback_chain_ivs[len(fallback_chain_ivs) // 2]
             
             # 獲取 IV 值（已在 get_option_chain 中通過 IVNormalizer 標準化）
             raw_iv = call_atm.get('impliedVolatility', 0.0)
@@ -5820,18 +5846,27 @@ class DataFetcher:
                 if iv_result['is_abnormal']:
                     logger.warning(f"  ! IV 異常警告: {iv_result['abnormal_reason']}")
                     # 嘗試使用 Put IV 作為備選
-                    put_iv_raw = put_atm['impliedVolatility']
+                    put_iv_raw = put_atm.get('impliedVolatility', 0.0)
                     put_iv_result = IVNormalizer.normalize_iv(put_iv_raw, source='atm_put_option')
                     if put_iv_result['is_valid'] and not put_iv_result['is_abnormal']:
                         logger.info(f"  * 使用 Put IV 作為備選: {put_iv_result['normalized_iv']:.2f}%")
                         # 使用 Call 和 Put IV 的平均值
                         iv = (iv + put_iv_result['normalized_iv']) / 2
                         logger.info(f"  * 使用 Call/Put IV 平均值: {iv:.2f}%")
+                    elif chain_iv_fallback is not None:
+                        iv = chain_iv_fallback
+                        logger.info(f"  * 使用期權鏈 IV 中位數作為備選: {iv:.2f}%")
+                    elif iv <= 0:
+                        iv = 30.0
+                        logger.warning(f"  ! 使用默認 IV: {iv}%")
             else:
                 logger.error(f"  x IV 值無效: {iv_result['abnormal_reason']}")
-                # 使用默認 IV
-                iv = 30.0
-                logger.warning(f"  ! 使用默認 IV: {iv}%")
+                if chain_iv_fallback is not None:
+                    iv = chain_iv_fallback
+                    logger.info(f"  * 使用期權鏈 IV 中位數作為備選: {iv:.2f}%")
+                else:
+                    iv = 30.0
+                    logger.warning(f"  ! 使用默認 IV: {iv}%")
             
             # 5. 基本面數據
             logger.info("\n[步驟5/6] 獲取基本面數據...")
@@ -6434,7 +6469,13 @@ class DataFetcher:
 
         return None
 
-    def _record_fallback(self, data_type: str, source: str):
+    def _record_fallback(
+        self,
+        data_type: str,
+        source: str,
+        success: bool = True,
+        error_reason: str = None
+    ):
         """
         Record successful fallback usage.
 
@@ -6445,10 +6486,35 @@ class DataFetcher:
         if data_type not in self.fallback_used:
             self.fallback_used[data_type] = []
 
-        self.fallback_used[data_type].append({
+        if not hasattr(self, '_attempt_paths'):
+            self._attempt_paths = {}
+
+        if data_type not in self._attempt_paths:
+            self._attempt_paths[data_type] = {
+                'current_attempt': [],
+                'history': []
+            }
+
+        attempt_record = {
             'source': source,
+            'success': success,
             'timestamp': datetime.now().isoformat()
-        })
+        }
+        if not success and error_reason:
+            attempt_record['error_reason'] = error_reason
+
+        self._attempt_paths[data_type]['current_attempt'].append(attempt_record)
+
+        if success:
+            if source not in self.fallback_used[data_type]:
+                self.fallback_used[data_type].append(source)
+            self._log_attempt_path(data_type)
+            self._attempt_paths[data_type]['history'].append(
+                self._attempt_paths[data_type]['current_attempt'].copy()
+            )
+            self._attempt_paths[data_type]['current_attempt'] = []
+            if len(self._attempt_paths[data_type]['history']) > 50:
+                self._attempt_paths[data_type]['history'] = self._attempt_paths[data_type]['history'][-50:]
 
     def _record_fallback_failure(self, data_type: str, source: str, reason: str):
         """
@@ -6459,8 +6525,7 @@ class DataFetcher:
             source: Data source name
             reason: Failure reason
         """
-        # This is already recorded in _attempt_paths by _fetch_with_fallback
-        pass
+        self._record_fallback(data_type, source, success=False, error_reason=reason)
 
     # Task 16.2: Intelligent retry mechanism with exponential backoff
     def _retry_with_backoff(self, func: callable, max_retries: int = 3, base_delay: float = 2.0, *args, **kwargs):

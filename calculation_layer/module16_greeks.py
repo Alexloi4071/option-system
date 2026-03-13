@@ -1,4 +1,4 @@
-# calculation_layer/module16_greeks.py
+﻿# calculation_layer/module16_greeks.py
 """
 模塊16: Greeks 期權風險指標計算
 書籍來源: 金融工程標準模型
@@ -194,10 +194,10 @@ class GreeksCalculator:
                 
                 if option_type_lower == 'call':
                     # Call Delta: N(d1)
-                    delta = self.bs_calculator.normal_cdf(d1)
+                    delta = math.exp(-dividend_yield * time_to_expiration) * self.bs_calculator.normal_cdf(d1)
                 elif option_type_lower == 'put':
                     # Put Delta: N(d1) - 1
-                    delta = self.bs_calculator.normal_cdf(d1) - 1
+                    delta = math.exp(-dividend_yield * time_to_expiration) * (self.bs_calculator.normal_cdf(d1) - 1)
                 else:
                     raise ValueError(f"無效的期權類型: {option_type}")
             
@@ -272,7 +272,7 @@ class GreeksCalculator:
                 # 計算 Gamma
                 # Γ = N'(d1) / (S × σ × √T)
                 sqrt_t = math.sqrt(time_to_expiration)
-                gamma = (self.bs_calculator.normal_pdf(d1) / 
+                gamma = (math.exp(-dividend_yield * time_to_expiration) * self.bs_calculator.normal_pdf(d1) / 
                         (stock_price * volatility * sqrt_t))
             
             logger.debug(f"  Gamma: {gamma:.6f}")
@@ -331,7 +331,7 @@ class GreeksCalculator:
         discount_factor = math.exp(-risk_free_rate * time_to_expiration)
         
         # 第一項（對 Call 和 Put 都相同）
-        term1 = -(stock_price * self.bs_calculator.normal_pdf(d1) * volatility) / (2 * sqrt_t)
+        term1 = -(stock_price * math.exp(-dividend_yield * time_to_expiration) * self.bs_calculator.normal_pdf(d1) * volatility) / (2 * sqrt_t)
         
         # 第二項（Call 和 Put 不同）
         option_type_lower = option_type.lower()
@@ -339,11 +339,11 @@ class GreeksCalculator:
         if option_type_lower == 'call':
             # Call Theta
             term2 = -risk_free_rate * strike_price * discount_factor * self.bs_calculator.normal_cdf(d2)
-            theta_annual = term1 + term2
+            theta_annual = term1 + term2 + dividend_yield * stock_price * math.exp(-dividend_yield * time_to_expiration) * self.bs_calculator.normal_cdf(d1)
         elif option_type_lower == 'put':
             # Put Theta
             term2 = risk_free_rate * strike_price * discount_factor * self.bs_calculator.normal_cdf(-d2)
-            theta_annual = term1 + term2
+            theta_annual = term1 + term2 - dividend_yield * stock_price * math.exp(-dividend_yield * time_to_expiration) * self.bs_calculator.normal_cdf(-d1)
         else:
             raise ValueError(f"無效的期權類型: {option_type}")
         
@@ -529,7 +529,7 @@ class GreeksCalculator:
                 # 計算 Vega
                 # ν = S × N'(d1) × √T / 100
                 sqrt_t = math.sqrt(time_to_expiration)
-                vega = stock_price * self.bs_calculator.normal_pdf(d1) * sqrt_t / 100
+                vega = stock_price * math.exp(-dividend_yield * time_to_expiration) * self.bs_calculator.normal_pdf(d1) * sqrt_t / 100
                 
             logger.debug(f"  Vega: {vega:.6f}")
             
@@ -774,15 +774,15 @@ class GreeksCalculator:
                 # 計算所有歐式 Greeks
                 # Delta
                 if option_type_lower == 'call':
-                    delta = self.bs_calculator.normal_cdf(d1)
+                    delta = math.exp(-calc_dividend_yield * time_to_expiration) * self.bs_calculator.normal_cdf(d1)
                 else:  # put
-                    delta = self.bs_calculator.normal_cdf(d1) - 1
+                    delta = math.exp(-calc_dividend_yield * time_to_expiration) * (self.bs_calculator.normal_cdf(d1) - 1)
                 
                 # Gamma (T=0 保護)
                 if time_to_expiration < 1e-10:
                     gamma = 0.0
                 else:
-                    gamma = (self.bs_calculator.normal_pdf(d1) / 
+                    gamma = (math.exp(-calc_dividend_yield * time_to_expiration) * self.bs_calculator.normal_pdf(d1) / 
                             (calc_stock_price * volatility * sqrt_t))
                 
                 # Theta (T=0 保護)
@@ -790,17 +790,17 @@ class GreeksCalculator:
                     theta = 0.0
                 else:
                     # 年化 Theta
-                    term1 = -(calc_stock_price * self.bs_calculator.normal_pdf(d1) * volatility) / (2 * sqrt_t)
+                    term1 = -(calc_stock_price * math.exp(-calc_dividend_yield * time_to_expiration) * self.bs_calculator.normal_pdf(d1) * volatility) / (2 * sqrt_t)
                     if option_type_lower == 'call':
                         term2 = -risk_free_rate * strike_price * discount_factor * self.bs_calculator.normal_cdf(d2)
                     else:  # put
                         term2 = risk_free_rate * strike_price * discount_factor * self.bs_calculator.normal_cdf(-d2)
-                    theta_annual = term1 + term2
+                    theta_annual = term1 + term2 + (calc_dividend_yield * calc_stock_price * math.exp(-calc_dividend_yield * time_to_expiration) * self.bs_calculator.normal_cdf(d1) if option_type_lower == 'call' else -calc_dividend_yield * calc_stock_price * math.exp(-calc_dividend_yield * time_to_expiration) * self.bs_calculator.normal_cdf(-d1))
                     # 轉換為每日 Theta
                     theta = theta_annual / 252.0
                 
                 # Vega
-                vega = stock_price * self.bs_calculator.normal_pdf(d1) * sqrt_t / 100
+                vega = calc_stock_price * math.exp(-calc_dividend_yield * time_to_expiration) * self.bs_calculator.normal_pdf(d1) * sqrt_t / 100
                 
                 # Rho
                 if option_type_lower == 'call':

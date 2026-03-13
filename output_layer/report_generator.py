@@ -1256,16 +1256,20 @@ class ReportGenerator:
             call = results['call']
             report += f"│ 📈 Call 期權:\n"
             report += f"│   理論價格: ${call.get('option_price', 0):.2f}\n"
-            report += f"│   d1: {call.get('d1', 0):.6f}\n"
-            report += f"│   d2: {call.get('d2', 0):.6f}\n"
+            if 'd1' in call and float(call.get('d1', 0)) != 0.0:
+                report += f"│   d1: {call.get('d1', 0):.6f}\n"
+            if 'd2' in call and float(call.get('d2', 0)) != 0.0:
+                report += f"│   d2: {call.get('d2', 0):.6f}\n"
             report += "│\n"
         
         if 'put' in results:
             put = results['put']
             report += f"│ 📉 Put 期權:\n"
             report += f"│   理論價格: ${put.get('option_price', 0):.2f}\n"
-            report += f"│   d1: {put.get('d1', 0):.6f}\n"
-            report += f"│   d2: {put.get('d2', 0):.6f}\n"
+            if 'd1' in put and float(put.get('d1', 0)) != 0.0:
+                report += f"│   d1: {put.get('d1', 0):.6f}\n"
+            if 'd2' in put and float(put.get('d2', 0)) != 0.0:
+                report += f"│   d2: {put.get('d2', 0):.6f}\n"
         
         report += "│\n"
         report += "│ 💡 說明: Black-Scholes 模型計算的理論價格\n"
@@ -1830,7 +1834,7 @@ class ReportGenerator:
         report += f"│ 💰 價格比較:\n"
         report += f"│   市場價格: ${market_price:.2f}\n"
         report += f"│   理論價格: ${theoretical_price:.2f}\n"
-        report += f"│   套戥價差: ${spread:.2f} ({spread_pct:+.2f}%)\n"
+        report += f"│   理論偏離: ${spread:.2f} ({spread_pct:+.2f}%)\n"
         report += "│\n"
         
         # IV 來源和值顯示（Requirements 9.1 - 清楚標示 IV 來源）
@@ -4988,7 +4992,10 @@ class ReportGenerator:
         if data_type in fallback_used:
             sources = fallback_used[data_type]
             if isinstance(sources, list) and sources:
-                return sources[-1]  # 返回最後使用的來源
+                last_source = sources[-1]
+                if isinstance(last_source, dict):
+                    return str(last_source.get('source', default))
+                return str(last_source)
             return str(sources)
         return default
     
@@ -5014,6 +5021,8 @@ class ReportGenerator:
         
         # 檢查是否有相關 API 故障
         for api_name, failures in api_failures.items():
+            api_name = str(api_name)
+            data_type = str(data_type)
             if api_name.lower() in data_type.lower() or data_type.lower() in api_name.lower():
                 if isinstance(failures, list) and failures:
                     return f"{api_name} 故障: {failures[-1] if isinstance(failures[-1], str) else '連接失敗'}"

@@ -14,7 +14,7 @@ Session Definitions (Eastern Time):
 
 from datetime import datetime, time
 import pytz
-from typing import Literal
+from typing import Literal, Optional, Union
 
 SessionType = Literal["primary", "premarket", "overnight", "closed"]
 
@@ -33,7 +33,7 @@ OVERNIGHT_SPREAD_THRESHOLD = 0.01   # 1%
 PRIMARY_SPREAD_THRESHOLD   = 0.05   # 5%  (more lenient during day)
 
 
-def get_session_type(dt: datetime | None = None) -> SessionType:
+def get_session_type(dt: Optional[datetime] = None) -> SessionType:
     """
     Return the current (or provided) US market session type.
 
@@ -78,22 +78,22 @@ def get_session_type(dt: datetime | None = None) -> SessionType:
     return "closed"
 
 
-def is_primary_session(dt: datetime | None = None) -> bool:
+def is_primary_session(dt: Optional[datetime] = None) -> bool:
     """Return True if we are inside the primary US trading session."""
     return get_session_type(dt) == "primary"
 
 
-def is_overnight_session(dt: datetime | None = None) -> bool:
+def is_overnight_session(dt: Optional[datetime] = None) -> bool:
     """Return True if we are in the overnight window (20:00–04:00 ET)."""
     return get_session_type(dt) == "overnight"
 
 
-def is_non_primary_session(dt: datetime | None = None) -> bool:
+def is_non_primary_session(dt: Optional[datetime] = None) -> bool:
     """Return True if we are OUTSIDE the primary session (any off-hours)."""
     return get_session_type(dt) != "primary"
 
 
-def get_spread_threshold(dt: datetime | None = None) -> float:
+def get_spread_threshold(dt: Optional[datetime] = None) -> float:
     """
     Return the Bid/Ask spread quality threshold as a fraction of mid-price.
 
@@ -110,9 +110,9 @@ def quote_passes_liquidity_check(
     ask: float,
     bid_size: int   = 0,
     ask_size: int   = 0,
-    dt: datetime | None = None,
+    dt: Optional[datetime] = None,
     min_size: int   = 5,
-) -> tuple[bool, str]:
+) -> Union[bool, str]:
     """
     Check whether a quote meets minimum liquidity requirements for the
     current session.
@@ -151,7 +151,7 @@ def quote_passes_liquidity_check(
     return True, ""
 
 
-def label_data_with_session(data: dict, dt: datetime | None = None) -> dict:
+def label_data_with_session(data: dict, dt: Optional[datetime] = None) -> dict:
     """
     Inject ``session_type`` and ``is_overnight`` keys into an existing data dict.
     This is a pure helper – it does not modify ``data`` in place but returns

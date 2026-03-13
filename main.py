@@ -1585,7 +1585,8 @@ class OptionsAnalysisSystem:
                             risk_free_rate=risk_free_rate,
                             time_to_expiration=time_to_expiration_years,
                             volatility=volatility_estimate,
-                            option_type='call'
+                            option_type='call',
+                            is_american=(not is_index)
                         )
                         
                         # 計算 Put Greeks
@@ -1595,7 +1596,8 @@ class OptionsAnalysisSystem:
                             risk_free_rate=risk_free_rate,
                             time_to_expiration=time_to_expiration_years,
                             volatility=volatility_estimate,
-                            option_type='put'
+                            option_type='put',
+                            is_american=(not is_index)
                         )
                         
                         self.analysis_results['module16_greeks'] = {
@@ -1869,7 +1871,8 @@ class OptionsAnalysisSystem:
                                 risk_free_rate=risk_free_rate,
                                 time_to_expiration=time_to_expiration_years,
                                 volatility=atm_iv,  # 使用 ATM IV
-                                option_type='call'
+                                option_type='call',
+                                is_american=(not is_index)
                             )
                             
                             # 使用 ATM IV 重新計算 Put Greeks
@@ -1879,7 +1882,8 @@ class OptionsAnalysisSystem:
                                 risk_free_rate=risk_free_rate,
                                 time_to_expiration=time_to_expiration_years,
                                 volatility=atm_iv,  # 使用 ATM IV
-                                option_type='put'
+                                option_type='put',
+                                is_american=(not is_index)
                             )
                             
                             # 更新 Module 16 結果，添加 IV 來源標記
@@ -2224,17 +2228,7 @@ class OptionsAnalysisSystem:
                 if strike_price and strike_price > 0 and call_last_price > 0 and put_last_price > 0:
                     parity_validator = PutCallParityValidator()
                     
-                    # 驗證市場價格的 Parity
-                    parity_result = parity_validator.validate_parity(
-                        call_price=call_last_price,
-                        put_price=put_last_price,
-                        stock_price=current_price,
-                        strike_price=strike_price,
-                        risk_free_rate=risk_free_rate,
-                        time_to_expiration=time_to_expiration_years,
-                        dividend_yield=dividend_yield,  # US-1 Task 2.4.3: 傳遞股息率
-                        transaction_cost=0.10  # 假設交易成本 $0.10
-                    )
+                    is_index_for_parity = ticker.upper() in ['SPX', 'VIX', 'NDX', 'RUT', 'DJX']
                     
                     # 也計算理論價格的 Parity（用於驗證）
                     theoretical_parity = parity_validator.validate_with_theoretical_prices(
@@ -2246,15 +2240,41 @@ class OptionsAnalysisSystem:
                         dividend_yield=dividend_yield  # US-1 Task 2.4.3: 傳遞股息率
                     )
                     
+                    if is_index_for_parity:
+                        parity_result = parity_validator.validate_parity(
+                            call_price=call_last_price,
+                            put_price=put_last_price,
+                            stock_price=current_price,
+                            strike_price=strike_price,
+                            risk_free_rate=risk_free_rate,
+                            time_to_expiration=time_to_expiration_years,
+                            dividend_yield=dividend_yield,
+                            transaction_cost=0.10
+                        )
+                        market_parity_dict = parity_result.to_dict()
+                        if parity_result.arbitrage_opportunity:
+                            logger.info("* Module 19: Put-Call parity deviation indicates possible arbitrage")
+                        else:
+                            logger.info("* Module 19: Put-Call parity appears within expected range")
+                    else:
+                        market_parity_dict = {
+                            'call_price': call_last_price,
+                            'put_price': put_last_price,
+                            'stock_price': current_price,
+                            'strike_price': strike_price,
+                            'risk_free_rate': risk_free_rate,
+                            'time_to_expiration': time_to_expiration_years,
+                            'option_style': 'american',
+                            'arbitrage_opportunity': False,
+                            'strategy': '美式期權不適用嚴格 C-P 等式；請使用 parity bounds 判讀',
+                            'note': 'Skipped strict market parity equality check for American options'
+                        }
+                        logger.info("* Module 19: Skipped strict parity equality check for American options")
+                    
                     self.analysis_results['module19_put_call_parity'] = {
-                        'market_prices': parity_result.to_dict(),
+                        'market_prices': market_parity_dict,
                         'theoretical_prices': theoretical_parity.to_dict()
                     }
-                    
-                    if parity_result.arbitrage_opportunity:
-                        logger.info(f"* 模塊19完成: Put-Call Parity 驗證 (發現套利機會! 偏離=${parity_result.deviation:.4f})")
-                    else:
-                        logger.info(f"* 模塊19完成: Put-Call Parity 驗證 (無套利機會, 偏離=${parity_result.deviation:.4f})")
             except Exception as exc:
                 logger.warning("! 模塊19執行失敗: %s", exc)
             
@@ -2670,6 +2690,7 @@ class OptionsAnalysisSystem:
             # ========== 模塊22: 最佳行使價分析 (整合 Module 23 IV 環境) ==========
             report_progress(23, "分析最佳行使價...", "Module 22: 最佳行使價")
             logger.info("\n→ 運行 Module 22: 最佳行使價分析...")
+            option_chain_converted = {'calls': [], 'puts': []}
 
             # ── 非交易時段自動降級 ─────────────────────────────────────────────
             # Module 22 依賴成交量 (Volume) 和未平倉量 (OI) 進行流動性評分
@@ -2697,7 +2718,7 @@ class OptionsAnalysisSystem:
                     iv_rank_value = self.analysis_results.get('module18_historical_volatility', {}).get('iv_rank', 50.0)
                     
                     # 轉換 DataFrame 為 list of dicts（Module 22 期望的格式）
-                    option_chain_converted = {}
+                    option_chain_converted = {'calls': [], 'puts': []}
                     calls_data = option_chain_raw.get('calls')
                     puts_data = option_chain_raw.get('puts')
                     
@@ -2914,6 +2935,13 @@ class OptionsAnalysisSystem:
                     calls_list = option_chain['calls'].to_dict('records') if hasattr(option_chain['calls'], 'to_dict') else option_chain['calls']
                     puts_list = option_chain['puts'].to_dict('records') if hasattr(option_chain['puts'], 'to_dict') else option_chain['puts']
                     
+                    import math
+                    # Fix: Inject actual IV if missing, preventing 1.2% fallback bugs
+                    for opt in calls_list + puts_list:
+                        iv_val = opt.get('impliedVolatility')
+                        if iv_val is None or iv_val == "" or iv_val == 0 or (isinstance(iv_val, float) and math.isnan(iv_val)):
+                            opt['impliedVolatility'] = volatility_estimate
+                    
                     smile_analyzer = VolatilitySmileAnalyzer()
                     smile_result = smile_analyzer.analyze_smile(
                         option_chain={'calls': calls_list, 'puts': puts_list},
@@ -2924,7 +2952,8 @@ class OptionsAnalysisSystem:
                     
                     self.analysis_results['module25_volatility_smile'] = smile_result.to_dict()
                     
-                    logger.info(f"  ATM IV: {smile_result.atm_iv*100:.2f}%")
+                    atm_iv_text = f"{smile_result.atm_iv * 100:.2f}%" if smile_result.atm_iv is not None else "N/A"
+                    logger.info(f"  ATM IV: {atm_iv_text}")
                     logger.info(f"  Skew: {smile_result.skew*100:.2f}% ({smile_result.skew_type})")
                     logger.info(f"  微笑形狀: {smile_result.smile_shape}")
                     logger.info(f"  IV 環境: {smile_result.iv_environment}")
@@ -4058,7 +4087,8 @@ class OptionsAnalysisSystem:
                 time_to_expiration=time_to_expiry,
                 risk_free_rate=0.045,
                 volatility=iv / 100.0,
-                option_type=option_type
+                option_type=option_type,
+                is_american=(not is_index)
             )
             
             # 如果用戶提供了 Greeks，使用用戶的值
@@ -4449,7 +4479,8 @@ class OptionsAnalysisSystem:
                 time_to_expiration=time_to_expiry,
                 risk_free_rate=risk_free_rate / 100.0,
                 volatility=iv / 100.0,
-                option_type=option_type
+                option_type=option_type,
+                is_american=(not is_index)
             )
             
             greeks_dict = greeks_result.to_dict()

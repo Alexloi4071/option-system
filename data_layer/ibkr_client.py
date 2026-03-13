@@ -2064,10 +2064,13 @@ class IBKRClient:
         required_fields = ['bid', 'ask', 'impliedVolatility']
         optional_fields = ['delta', 'gamma', 'theta', 'vega', 'volume', 'openInterest']
         
-        has_bid = ticker_data.bid and self._is_valid_price(ticker_data.bid)
-        has_ask = ticker_data.ask and self._is_valid_price(ticker_data.ask)
-        has_iv = ticker_data.modelGreeks and ticker_data.modelGreeks.impliedVol
-        
+        has_bid = bool(ticker_data.bid is not None and self._is_valid_price(ticker_data.bid))
+        has_ask = bool(ticker_data.ask is not None and self._is_valid_price(ticker_data.ask))
+        has_iv = bool(
+            ticker_data.modelGreeks is not None and
+            ticker_data.modelGreeks.impliedVol is not None
+        )
+
         required_count = sum([has_bid, has_ask, has_iv])
         
         if required_count == 3:
@@ -2535,7 +2538,7 @@ class IBKRClient:
             self.ib.qualifyContracts(contract)
             
             # 請求 tick type 59 包含 IB Dividends
-            ticker_data = self.ib.reqMktData(contract, '59', snapshot=True, subscribe=False)
+            ticker_data = self.ib.reqMktData(contract, '59', True, False)
             self.ib.sleep(2)
             
             discrete_divs = []
@@ -2571,6 +2574,118 @@ class IBKRClient:
             logger.error(f"獲取 IBKR 離散股息失敗 {ticker}: {e}")
             return []
             
+    def get_discrete_dividends(self, ticker: str) -> list:
+        """
+        取得股票的離散股息時程。
+
+        返回:
+            list: [(time_to_ex_date_years, dividend_amount), ...]
+        """
+        if not self.is_connected():
+            return []
+
+        try:
+            from ib_insync import Stock
+
+            now = datetime.now()
+
+            def _extract_discrete_dividends(ticker_data) -> list:
+                discrete_divs = []
+                div = getattr(ticker_data, 'dividends', None)
+                if not div:
+                    return discrete_divs
+
+                next_date = getattr(div, 'nextDate', None)
+                next_amount = getattr(div, 'nextAmount', None)
+                if not next_date or next_amount in (None, ''):
+                    return discrete_divs
+
+                try:
+                    next_date_str = str(next_date).strip()
+                    date_formats = ("%Y%m%d", "%Y-%m-%d")
+                    ex_date = None
+                    for date_format in date_formats:
+                        try:
+                            ex_date = datetime.strptime(next_date_str, date_format)
+                            break
+                        except ValueError:
+                            continue
+
+                    if ex_date is None:
+                        raise ValueError(f"unsupported dividend date format: {next_date_str}")
+
+                    if ex_date <= now:
+                        return discrete_divs
+
+                    days_to_ex = (ex_date - now).days
+                    years_to_ex = days_to_ex / 365.25
+                    amount = float(next_amount)
+                    discrete_divs.append((years_to_ex, amount))
+
+                    # Only the next dividend is exposed, so project a few quarterly payments.
+                    from datetime import timedelta
+                    for i in range(1, 4):
+                        projected_date = ex_date + timedelta(days=91.25 * i)
+                        d_years = (projected_date - now).days / 365.25
+                        if d_years > 0:
+                            discrete_divs.append((d_years, amount))
+                except Exception as e:
+                    logger.warning(f"解析 IB 股息資料失敗 {ticker}: {e}")
+
+                return discrete_divs
+
+            def _request_dividends(contract_to_use) -> list:
+                ticker_data = None
+                try:
+                    # IBKR dividends are exposed on generic tick 456 and must be requested as streaming data.
+                    ticker_data = self.ib.reqMktData(contract_to_use, '456', False, False)
+                    self.ib.sleep(2)
+                    return _extract_discrete_dividends(ticker_data)
+                finally:
+                    if ticker_data is not None:
+                        try:
+                            self.ib.cancelMktData(contract_to_use)
+                        except Exception:
+                            pass
+
+            base_contract = Stock(ticker, 'SMART', 'USD')
+            qualified = self.ib.qualifyContracts(base_contract)
+            contract = qualified[0] if qualified else base_contract
+
+            contracts_to_try = [contract]
+            primary_exchange = getattr(contract, 'primaryExchange', '')
+            if primary_exchange and primary_exchange not in {'', 'SMART'}:
+                direct_contract = Stock(ticker, primary_exchange, 'USD')
+                direct_qualified = self.ib.qualifyContracts(direct_contract)
+                if direct_qualified:
+                    contracts_to_try.append(direct_qualified[0])
+
+            seen_contracts = set()
+            for contract_to_use in contracts_to_try:
+                contract_key = (
+                    getattr(contract_to_use, 'symbol', ''),
+                    getattr(contract_to_use, 'exchange', ''),
+                    getattr(contract_to_use, 'primaryExchange', '')
+                )
+                if contract_key in seen_contracts:
+                    continue
+                seen_contracts.add(contract_key)
+
+                discrete_divs = _request_dividends(contract_to_use)
+                if discrete_divs:
+                    logger.info(
+                        f"IBKR 離散股息 {ticker} ({getattr(contract_to_use, 'exchange', 'SMART')}): "
+                        f"{discrete_divs}"
+                    )
+                    return discrete_divs
+
+            logger.info(f"IBKR 暫無 {ticker} 可用的離散股息資料")
+            return []
+
+        except Exception as e:
+            logger.error(f"取得 IBKR 離散股息失敗 {ticker}: {e}")
+            return []
+
     def req_tick_by_tick_data(
         self,
         contract: Contract,
