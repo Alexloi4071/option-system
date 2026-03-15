@@ -1612,6 +1612,353 @@ class DataFetcher:
         except (ValueError, TypeError):
             return default
     
+    def _get_option_field(self, option_row: Any, *field_names: str) -> Any:
+        """Return the first non-null option field value across camelCase and snake_case names."""
+        if option_row is None:
+            return None
+
+        for field_name in field_names:
+            try:
+                value = option_row.get(field_name) if hasattr(option_row, 'get') else getattr(option_row, field_name, None)
+            except Exception:
+                value = None
+            if value is None or pd.isna(value):
+                continue
+            return value
+
+        return None
+
+    def _safe_option_float(self, option_row: Any, *field_names: str) -> Optional[float]:
+        value = self._get_option_field(option_row, *field_names)
+        if value is None:
+            return None
+        try:
+            float_value = float(value)
+        except (TypeError, ValueError):
+            return None
+        if np.isnan(float_value) or np.isinf(float_value):
+            return None
+        return float_value
+
+    def _get_option_implied_volatility(self, option_row: Any) -> Optional[float]:
+        """Return direct IV only when the feed actually provided a usable value."""
+        iv_value = self._safe_option_float(option_row, 'impliedVolatility', 'implied_volatility')
+        if iv_value is None or iv_value <= 0:
+            return None
+        return iv_value
+
+    def _get_option_market_price(self, option_row: Any) -> Optional[float]:
+        """Return the best usable premium from direct price fields or bid/ask midpoint."""
+        for field_name in (
+            'lastPrice', 'last_price', 'last',
+            'markPrice', 'mark_price',
+            'mid', 'optPrice', 'opt_price'
+        ):
+            market_price = self._safe_option_float(option_row, field_name)
+            if market_price is not None and market_price > 0:
+                return market_price
+
+        bid = self._safe_option_float(option_row, 'bid')
+        ask = self._safe_option_float(option_row, 'ask')
+        if bid is not None and ask is not None and bid > 0 and ask > 0:
+            return (bid + ask) / 2
+
+        return None
+
+    def _has_usable_option_data(self, option_row: Any) -> bool:
+        """Treat premium or IV as usable option data for same-expiry strike fallback."""
+        return (
+            self._get_option_market_price(option_row) is not None or
+            self._get_option_implied_volatility(option_row) is not None
+        )
+
+    def _get_nearest_direct_iv(
+        self,
+        option_df: pd.DataFrame,
+        target_strike: float
+    ) -> Optional[Dict[str, Any]]:
+        """Find the nearest same-expiry contract that already has a direct IV from market data."""
+        if option_df is None or option_df.empty or 'strike' not in option_df.columns:
+            return None
+
+        candidates: List[Dict[str, Any]] = []
+        for _, option_row in option_df.iterrows():
+            strike_value = self._safe_option_float(option_row, 'strike')
+            direct_iv = self._get_option_implied_volatility(option_row)
+            if strike_value is None or direct_iv is None:
+                continue
+
+            candidates.append({
+                'option_row': option_row,
+                'strike': float(strike_value),
+                'iv': float(direct_iv),
+                'distance': abs(float(strike_value) - target_strike),
+            })
+
+        if not candidates:
+            return None
+
+        candidates.sort(key=lambda candidate: candidate['distance'])
+        return candidates[0]
+
+    def _get_nearest_priced_option(
+        self,
+        option_df: pd.DataFrame,
+        target_strike: float
+    ) -> Optional[Dict[str, Any]]:
+        """Find the nearest same-expiry contract that still has a usable market price."""
+        if option_df is None or option_df.empty or 'strike' not in option_df.columns:
+            return None
+
+        candidates: List[Dict[str, Any]] = []
+        for _, option_row in option_df.iterrows():
+            strike_value = self._safe_option_float(option_row, 'strike')
+            market_price = self._get_option_market_price(option_row)
+            if strike_value is None or market_price is None or market_price <= 0:
+                continue
+
+            candidates.append({
+                'option_row': option_row,
+                'strike': float(strike_value),
+                'market_price': float(market_price),
+                'distance': abs(float(strike_value) - target_strike),
+            })
+
+        if not candidates:
+            return None
+
+        candidates.sort(key=lambda candidate: candidate['distance'])
+        return candidates[0]
+
+    def _infer_iv_from_option_price(
+        self,
+        option_row: Any,
+        stock_price: float,
+        strike_price: float,
+        risk_free_rate: float,
+        time_to_expiration: float,
+        option_type: str
+    ) -> Optional[Dict[str, Any]]:
+        """Infer IV from an IBKR option price only when direct IV is unavailable."""
+        if not self.iv_calculator:
+            return None
+        if stock_price is None or stock_price <= 0 or time_to_expiration is None or time_to_expiration <= 0:
+            return None
+
+        market_price = self._get_option_market_price(option_row)
+        if market_price is None or market_price <= 0:
+            return None
+
+        try:
+            iv_result = self.iv_calculator.calculate_implied_volatility(
+                market_price=market_price,
+                stock_price=float(stock_price),
+                strike_price=float(strike_price),
+                risk_free_rate=float(risk_free_rate),
+                time_to_expiration=float(time_to_expiration),
+                option_type=option_type
+            )
+        except Exception as exc:
+            logger.warning(f"  ! IV inversion failed for {option_type} {strike_price}: {exc}")
+            return None
+
+        implied_iv_percent = float(iv_result.implied_volatility) * 100.0
+        if implied_iv_percent <= 0:
+            return None
+
+        return {
+            'iv': implied_iv_percent,
+            'market_price': market_price,
+            'converged': bool(iv_result.converged),
+            'iterations': int(iv_result.iterations),
+        }
+
+    def _resolve_preferred_option_iv(
+        self,
+        call_atm: Any,
+        put_atm: Any,
+        atm_strike: float,
+        calls_df: Optional[pd.DataFrame] = None,
+        puts_df: Optional[pd.DataFrame] = None,
+        stock_price: Optional[float] = None,
+        risk_free_rate: Optional[float] = None,
+        time_to_expiration: Optional[float] = None,
+        allow_price_inversion: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        """Resolve IV in strict order: direct IV, nearest same-expiry direct IV, then price inversion."""
+        target_strike = float(atm_strike)
+        direct_candidates: List[Dict[str, Any]] = []
+
+        for option_row, option_type, side_df in (
+            (call_atm, 'call', calls_df),
+            (put_atm, 'put', puts_df),
+        ):
+            strike_value = self._safe_option_float(option_row, 'strike') or target_strike
+            direct_iv = self._get_option_implied_volatility(option_row)
+            if direct_iv is not None:
+                direct_candidates.append({
+                    'iv': float(direct_iv),
+                    'source': f"ATM direct IV ({option_type} ${strike_value:.2f})",
+                    'option_type': option_type,
+                    'strike': float(strike_value),
+                    'distance': abs(float(strike_value) - target_strike),
+                })
+                continue
+
+            nearest_direct_iv = self._get_nearest_direct_iv(side_df, target_strike)
+            if nearest_direct_iv is not None:
+                direct_candidates.append({
+                    'iv': float(nearest_direct_iv['iv']),
+                    'source': f"nearest direct IV ({option_type} ${nearest_direct_iv['strike']:.2f})",
+                    'option_type': option_type,
+                    'strike': float(nearest_direct_iv['strike']),
+                    'distance': float(nearest_direct_iv['distance']),
+                })
+
+        if direct_candidates:
+            direct_candidates.sort(key=lambda candidate: (candidate['distance'], 0 if candidate['option_type'] == 'call' else 1))
+            return direct_candidates[0]
+
+        if not allow_price_inversion:
+            return None
+
+        if (
+            stock_price is None or stock_price <= 0 or
+            risk_free_rate is None or
+            time_to_expiration is None or time_to_expiration <= 0
+        ):
+            return None
+
+        inversion_candidates: List[Dict[str, Any]] = []
+        for option_row, option_type, side_df in (
+            (call_atm, 'call', calls_df),
+            (put_atm, 'put', puts_df),
+        ):
+            selected_row = option_row
+            strike_value = self._safe_option_float(selected_row, 'strike') or target_strike
+            market_price = self._get_option_market_price(selected_row)
+            price_source = 'ATM'
+
+            if market_price is None or market_price <= 0:
+                nearest_priced_option = self._get_nearest_priced_option(side_df, target_strike)
+                if nearest_priced_option is not None:
+                    selected_row = nearest_priced_option['option_row']
+                    strike_value = float(nearest_priced_option['strike'])
+                    market_price = float(nearest_priced_option['market_price'])
+                    price_source = f"nearest priced {option_type}"
+
+            inversion_result = self._infer_iv_from_option_price(
+                option_row=selected_row,
+                stock_price=float(stock_price),
+                strike_price=float(strike_value),
+                risk_free_rate=float(risk_free_rate),
+                time_to_expiration=float(time_to_expiration),
+                option_type=option_type
+            )
+            if inversion_result is None:
+                continue
+
+            inversion_candidates.append({
+                'iv': float(inversion_result['iv']),
+                'source': (
+                    f"IBKR price inversion ({option_type} ${strike_value:.2f}, "
+                    f"premium ${inversion_result['market_price']:.2f}, "
+                    f"source={price_source}, converged={inversion_result['converged']})"
+                ),
+                'option_type': option_type,
+                'strike': float(strike_value),
+                'distance': abs(float(strike_value) - target_strike),
+            })
+
+        if not inversion_candidates:
+            return None
+
+        inversion_candidates.sort(key=lambda candidate: (candidate['distance'], 0 if candidate['option_type'] == 'call' else 1))
+        return inversion_candidates[0]
+
+    def _add_option_column_aliases(self, option_df: pd.DataFrame) -> pd.DataFrame:
+        """Mirror IBKR snake_case and yfinance camelCase columns without overwriting valid data."""
+        if option_df is None or option_df.empty:
+            return option_df
+
+        alias_pairs = (
+            ('lastPrice', 'last_price'),
+            ('markPrice', 'mark_price'),
+            ('impliedVolatility', 'implied_volatility'),
+            ('openInterest', 'open_interest'),
+        )
+
+        normalized_df = option_df.copy()
+        for camel_name, snake_name in alias_pairs:
+            if camel_name in normalized_df.columns and snake_name not in normalized_df.columns:
+                normalized_df[snake_name] = normalized_df[camel_name]
+            elif snake_name in normalized_df.columns and camel_name not in normalized_df.columns:
+                normalized_df[camel_name] = normalized_df[snake_name]
+            elif camel_name in normalized_df.columns and snake_name in normalized_df.columns:
+                normalized_df[camel_name] = normalized_df[camel_name].where(
+                    normalized_df[camel_name].notna(),
+                    normalized_df[snake_name]
+                )
+                normalized_df[snake_name] = normalized_df[snake_name].where(
+                    normalized_df[snake_name].notna(),
+                    normalized_df[camel_name]
+                )
+
+        return normalized_df
+
+    def _select_best_atm_contract_pair(
+        self,
+        calls_df: pd.DataFrame,
+        puts_df: pd.DataFrame,
+        current_price: float
+    ) -> Optional[Dict[str, Any]]:
+        """Select the nearest same-expiry strike that still has usable premium or IV."""
+        if calls_df is None or puts_df is None or calls_df.empty or puts_df.empty:
+            return None
+        if 'strike' not in calls_df.columns or 'strike' not in puts_df.columns:
+            return None
+
+        candidate_rows: List[Dict[str, Any]] = []
+        common_strikes = sorted(set(calls_df['strike']).intersection(set(puts_df['strike'])))
+        for strike in common_strikes:
+            call_matches = calls_df[calls_df['strike'] == strike]
+            put_matches = puts_df[puts_df['strike'] == strike]
+            if call_matches.empty or put_matches.empty:
+                continue
+
+            call_row = call_matches.iloc[0]
+            put_row = put_matches.iloc[0]
+            call_usable = self._has_usable_option_data(call_row)
+            put_usable = self._has_usable_option_data(put_row)
+            usability_score = int(call_usable) + int(put_usable)
+
+            candidate_rows.append({
+                'strike': float(strike),
+                'call_row': call_row,
+                'put_row': put_row,
+                'distance': abs(float(strike) - current_price),
+                'score': usability_score,
+            })
+
+        if not candidate_rows:
+            return None
+
+        usable_candidates = [candidate for candidate in candidate_rows if candidate['score'] > 0]
+        ranked_candidates = usable_candidates if usable_candidates else candidate_rows
+        ranked_candidates.sort(key=lambda candidate: (candidate['distance'], -candidate['score']))
+        best_candidate = ranked_candidates[0]
+        nearest_strike = min(common_strikes, key=lambda strike: abs(float(strike) - current_price))
+
+        return {
+            'call_atm': best_candidate['call_row'],
+            'put_atm': best_candidate['put_row'],
+            'atm_strike': best_candidate['strike'],
+            'strike_price_diff': best_candidate['distance'],
+            'used_fallback_strike': abs(best_candidate['strike'] - float(nearest_strike)) > 0.009,
+            'call_usable': self._has_usable_option_data(best_candidate['call_row']),
+            'put_usable': self._has_usable_option_data(best_candidate['put_row']),
+        }
+
     def _fill_missing_bid_ask(self, option_df: pd.DataFrame, option_type: str = 'call') -> pd.DataFrame:
         """
         填補缺失的 bid/ask 數據
@@ -3965,8 +4312,8 @@ class DataFetcher:
                 )
                 
                 if chain_data and (chain_data['calls'] or chain_data['puts']):
-                    calls_df = pd.DataFrame(chain_data['calls'])
-                    puts_df = pd.DataFrame(chain_data['puts'])
+                    calls_df = self._add_option_column_aliases(pd.DataFrame(chain_data['calls']))
+                    puts_df = self._add_option_column_aliases(pd.DataFrame(chain_data['puts']))
                     
                     # 應用行使價過濾
                     if not calls_df.empty and 'strike' in calls_df.columns and current_price > 0:
@@ -4062,8 +4409,8 @@ class DataFetcher:
             stock = yf.Ticker(ticker)
             option_chain = stock.option_chain(expiration)
             
-            calls = option_chain.calls.copy()
-            puts = option_chain.puts.copy()
+            calls = self._add_option_column_aliases(option_chain.calls.copy())
+            puts = self._add_option_column_aliases(option_chain.puts.copy())
             
             # 應用行使價過濾
             if not calls.empty and 'strike' in calls.columns and current_price > 0:
@@ -4120,11 +4467,11 @@ class DataFetcher:
             has_valid_call_price = False
             has_valid_put_price = False
             
-            if not calls.empty and 'lastPrice' in calls.columns:
-                has_valid_call_price = (calls['lastPrice'] > 0).sum() > len(calls) * 0.3
+            if not calls.empty:
+                has_valid_call_price = calls.apply(lambda row: (self._get_option_market_price(row) or 0) > 0, axis=1).sum() > len(calls) * 0.3
             
-            if not puts.empty and 'lastPrice' in puts.columns:
-                has_valid_put_price = (puts['lastPrice'] > 0).sum() > len(puts) * 0.3
+            if not puts.empty:
+                has_valid_put_price = puts.apply(lambda row: (self._get_option_market_price(row) or 0) > 0, axis=1).sum() > len(puts) * 0.3
             
             if has_valid_call_price or has_valid_put_price:
                 logger.info(f"* 成功獲取 {ticker} {expiration} 期權鏈 (yfinance)")
@@ -4339,81 +4686,79 @@ class DataFetcher:
             'atm_strike': float,
             'current_price': float,
             'strike_price_diff': float,
-            'strike_price_diff_percent': float
+            'strike_price_diff_percent': float,
+            'used_fallback_strike': bool
         }
-        
-        Requirements: 1.2 - ATM 期權選擇邏輯增強日誌
         """
         try:
             logger.info(f"開始獲取 {ticker} ATM期權...")
-            
-            # 如果沒有提供期權鏈數據，則獲取
+
             if option_chain_data is None:
                 option_chain_data = self.get_option_chain(ticker, expiration)
                 if not option_chain_data:
-                    raise ValueError("無法獲取期權鏈數據")
-            
+                    raise ValueError('無法獲取期權鏈數據')
+
             calls = option_chain_data['calls']
             puts = option_chain_data['puts']
-            
-            # 如果沒有提供當前股價，則獲取
+
             if current_price is None:
                 stock = yf.Ticker(ticker)
                 current_price = stock.info['currentPrice']
-            
-            # 找最接近的行使價
+
             strikes = calls['strike'].values
             logger.debug(f"  可用行使價數量: {len(strikes)}")
             logger.debug(f"  行使價範圍: ${min(strikes):.2f} - ${max(strikes):.2f}")
-            
-            atm_strike = min(strikes, key=lambda x: abs(x - current_price))
-            
-            # 計算價差
-            strike_diff = abs(atm_strike - current_price)
+
+            atm_selection = self._select_best_atm_contract_pair(calls, puts, current_price)
+            if atm_selection is None:
+                raise ValueError('unable to select ATM contract pair')
+
+            atm_strike = atm_selection['atm_strike']
+            strike_diff = atm_selection['strike_price_diff']
             strike_diff_percent = (strike_diff / current_price * 100) if current_price > 0 else 0
-            
-            call_atm = calls[calls['strike'] == atm_strike].iloc[0]
-            put_atm = puts[puts['strike'] == atm_strike].iloc[0]
-            
-            # 增強日誌：記錄選擇的行使價和對應的 IV
+            call_atm = atm_selection['call_atm']
+            put_atm = atm_selection['put_atm']
+            used_fallback_strike = atm_selection.get('used_fallback_strike', False)
+
             logger.info(f"* {ticker} ATM期權選擇結果:")
             logger.info(f"  當前股價: ${current_price:.2f}")
             logger.info(f"  選擇行使價: ${atm_strike:.2f}")
             logger.info(f"  價差: ${strike_diff:.2f} ({strike_diff_percent:.2f}%)")
-            
-            # 記錄 IV 值（已經過 IVNormalizer 標準化）
-            call_iv = call_atm.get('impliedVolatility')
-            put_iv = put_atm.get('impliedVolatility')
-            
+            if used_fallback_strike:
+                logger.warning(f"  ! ATM contract had minimal data; using nearest valid strike ${atm_strike:.2f} within the same expiry")
+
+            call_iv = self._get_option_implied_volatility(call_atm)
+            put_iv = self._get_option_implied_volatility(put_atm)
+
             if call_iv is not None:
                 logger.info(f"  ATM Call IV: {call_iv:.2f}%")
             else:
-                logger.warning(f"  ATM Call IV: N/A")
-            
+                logger.warning("  ATM Call IV: N/A")
+
             if put_iv is not None:
                 logger.info(f"  ATM Put IV: {put_iv:.2f}%")
             else:
-                logger.warning(f"  ATM Put IV: N/A")
-            
-            # 如果 Call 和 Put IV 差異過大，記錄警告
+                logger.warning("  ATM Put IV: N/A")
+
             if call_iv is not None and put_iv is not None:
                 iv_diff = abs(call_iv - put_iv)
-                if iv_diff > 5:  # 差異超過 5%
+                if iv_diff > 5:
                     logger.warning(f"  ! Call/Put IV 差異較大: {iv_diff:.2f}%")
-            
+
             return {
                 'call_atm': call_atm,
                 'put_atm': put_atm,
                 'atm_strike': atm_strike,
                 'current_price': current_price,
                 'strike_price_diff': strike_diff,
-                'strike_price_diff_percent': strike_diff_percent
+                'strike_price_diff_percent': strike_diff_percent,
+                'used_fallback_strike': used_fallback_strike
             }
-            
+
         except Exception as e:
             logger.error(f"x 獲取 {ticker} ATM期權失敗: {e}")
             return None
-    
+
     def extract_implied_volatility(self, ticker, expiration):
         """
         提取隱含波動率 (IV)
@@ -4429,20 +4774,53 @@ class DataFetcher:
             atm_data = self.get_atm_option(ticker, expiration)
             if atm_data is None:
                 return None
-            
-            call_iv = atm_data['call_atm'].get('impliedVolatility')
-            if call_iv is None:
+
+            option_chain = self.get_option_chain(ticker, expiration)
+            calls_df = option_chain.get('calls') if option_chain else None
+            puts_df = option_chain.get('puts') if option_chain else None
+            option_chain_source = str(option_chain.get('data_source', '') or '').lower() if option_chain else ''
+
+            stock_price = atm_data.get('current_price')
+            if stock_price is None or stock_price <= 0:
+                stock_info = self.get_stock_info(ticker)
+                stock_price = stock_info.get('current_price') if stock_info else None
+
+            iv_inversion_risk_free_rate = self.get_risk_free_rate()
+            if iv_inversion_risk_free_rate is None:
+                iv_inversion_risk_free_rate = 5.0
+            iv_inversion_risk_free_rate = float(iv_inversion_risk_free_rate) / 100.0
+
+            iv_time_to_expiration = None
+            try:
+                iv_days_to_exp = (datetime.strptime(expiration, '%Y-%m-%d') - datetime.now()).days
+                if iv_days_to_exp > 0:
+                    iv_time_to_expiration = iv_days_to_exp / 365.0
+            except Exception:
+                iv_time_to_expiration = None
+
+            preferred_iv = self._resolve_preferred_option_iv(
+                call_atm=atm_data['call_atm'],
+                put_atm=atm_data['put_atm'],
+                atm_strike=float(atm_data['atm_strike']),
+                calls_df=calls_df,
+                puts_df=puts_df,
+                stock_price=float(stock_price) if stock_price is not None else None,
+                risk_free_rate=iv_inversion_risk_free_rate,
+                time_to_expiration=iv_time_to_expiration,
+                allow_price_inversion=option_chain_source.startswith('ibkr'),
+            )
+            if preferred_iv is None:
                 return None
-            iv = float(call_iv)
-            
-            logger.info(f"* {ticker} 隱含波動率: {iv:.2f}%")
-            
+
+            iv = float(preferred_iv['iv'])
+            logger.info(f"* {ticker} 隱含波動率: {iv:.2f}% ({preferred_iv['source']})")
+
             return iv
-            
+
         except Exception as e:
             logger.error(f"x 提取 {ticker} IV失敗: {e}")
             return None
-    
+
     def get_implied_volatility_with_validation(
         self,
         ticker: str,
@@ -5819,9 +6197,12 @@ class DataFetcher:
             fallback_chain_ivs = []
             for side in ('calls', 'puts'):
                 side_df = option_chain.get(side)
-                if side_df is None or getattr(side_df, 'empty', True) or 'impliedVolatility' not in side_df.columns:
+                if side_df is None or getattr(side_df, 'empty', True):
                     continue
-                for raw_chain_iv in side_df['impliedVolatility'].tolist():
+                for _, side_row in side_df.iterrows():
+                    raw_chain_iv = self._get_option_implied_volatility(side_row)
+                    if raw_chain_iv is None:
+                        continue
                     chain_iv_result = IVNormalizer.normalize_iv(raw_chain_iv, source=f'{side}_chain')
                     if chain_iv_result['is_valid'] and chain_iv_result['normalized_iv'] > 0:
                         fallback_chain_ivs.append(chain_iv_result['normalized_iv'])
@@ -5829,28 +6210,46 @@ class DataFetcher:
             if fallback_chain_ivs:
                 fallback_chain_ivs.sort()
                 chain_iv_fallback = fallback_chain_ivs[len(fallback_chain_ivs) // 2]
-            
-            # 獲取 IV 值（已在 get_option_chain 中通過 IVNormalizer 標準化）
-            raw_iv = call_atm.get('impliedVolatility', 0.0)
-            if raw_iv is None:
-                raw_iv = 0.0
-            
-            # 使用 IVNormalizer 驗證 IV 值（不再重複轉換）
+
+            iv_inversion_risk_free_rate = self.get_risk_free_rate()
+            if iv_inversion_risk_free_rate is None:
+                iv_inversion_risk_free_rate = 5.0
+            iv_inversion_risk_free_rate = float(iv_inversion_risk_free_rate) / 100.0
+            iv_time_to_expiration = None
+            try:
+                iv_days_to_exp = (datetime.strptime(expiration, '%Y-%m-%d') - datetime.now()).days
+                if iv_days_to_exp > 0:
+                    iv_time_to_expiration = iv_days_to_exp / 365.0
+            except Exception:
+                iv_time_to_expiration = None
+
+            preferred_iv = self._resolve_preferred_option_iv(
+                call_atm=call_atm,
+                put_atm=put_atm,
+                atm_strike=float(atm_strike),
+                calls_df=option_chain.get('calls'),
+                puts_df=option_chain.get('puts'),
+                stock_price=float(current_price),
+                risk_free_rate=iv_inversion_risk_free_rate,
+                time_to_expiration=iv_time_to_expiration,
+                allow_price_inversion=str(option_chain.get('data_source', '') or '').lower().startswith('ibkr'),
+            )
+
+            raw_iv = float(preferred_iv['iv']) if preferred_iv is not None else 0.0
+            iv_source_description = preferred_iv['source'] if preferred_iv is not None else 'atm_option'
+
             iv_result = IVNormalizer.normalize_iv(raw_iv, source='atm_option')
-            
+
             if iv_result['is_valid']:
                 iv = iv_result['normalized_iv']
-                logger.info(f"  * ATM Call IV: {iv:.2f}% (行使價: ${atm_strike:.2f})")
-                
-                # 檢查是否為異常值
+                logger.info(f"  * ATM Call IV: {iv:.2f}% ({iv_source_description})")
+
                 if iv_result['is_abnormal']:
                     logger.warning(f"  ! IV 異常警告: {iv_result['abnormal_reason']}")
-                    # 嘗試使用 Put IV 作為備選
-                    put_iv_raw = put_atm.get('impliedVolatility', 0.0)
+                    put_iv_raw = self._get_option_implied_volatility(put_atm) or 0.0
                     put_iv_result = IVNormalizer.normalize_iv(put_iv_raw, source='atm_put_option')
                     if put_iv_result['is_valid'] and not put_iv_result['is_abnormal']:
                         logger.info(f"  * 使用 Put IV 作為備選: {put_iv_result['normalized_iv']:.2f}%")
-                        # 使用 Call 和 Put IV 的平均值
                         iv = (iv + put_iv_result['normalized_iv']) / 2
                         logger.info(f"  * 使用 Call/Put IV 平均值: {iv:.2f}%")
                     elif chain_iv_fallback is not None:
@@ -5867,7 +6266,7 @@ class DataFetcher:
                 else:
                     iv = 30.0
                     logger.warning(f"  ! 使用默認 IV: {iv}%")
-            
+
             # 5. 基本面數據
             logger.info("\n[步驟5/6] 獲取基本面數據...")
             eps = self.get_eps(ticker)
@@ -6364,16 +6763,8 @@ class DataFetcher:
             logger.warning(f"  ! Finnhub 綜合指標獲取失敗: {e}")
             return None
 
-    # ==================== Task 16: API Degradation Chain and Retry Mechanisms ====================
 
-    # Task 16.1: Enhanced API degradation logic
-    FALLBACK_TRIGGERS = [
-        ConnectionError,
-        TimeoutError,
-        Exception,  # Includes HTTPError, DataValidationError, etc.
-    ]
-
-    def _fetch_with_fallback(self, data_type: str, sources: List[str], fetch_func_map: Dict[str, callable], *args, **kwargs):
+# 使用示例
         """
         Fetch data with fallback mechanism through multiple sources.
 

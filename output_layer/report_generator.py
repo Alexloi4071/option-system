@@ -1,4 +1,4 @@
-# output_layer/report_generator.py
+﻿# output_layer/report_generator.py
 """
 報告生成系統 (重構版 - 整合 CSV/JSON 導出器)
 
@@ -282,8 +282,9 @@ class ReportGenerator:
     
     def _generate_json_report(self, ticker, analysis_date, raw_data, calculation_results, api_status=None):
         """
-        生成JSON報告（使用 JSONExporter）
+        ??JSON????? JSONExporter?
         """
+        summary = self._build_report_summary(raw_data or {}, calculation_results)
         report_data = {
             'metadata': {
                 'system': 'Options Trading Analysis System',
@@ -294,13 +295,14 @@ class ReportGenerator:
             },
             'raw_data': raw_data,
             'calculations': calculation_results,
-            'structured_output': self.get_structured_output(calculation_results)
+            'structured_output': self.get_structured_output(calculation_results),
+            'report_summary': summary,
+            'report_consistency': summary.get('consistency_checks', {}),
         }
-        
-        # 添加 API 狀態信息
+
         if api_status:
             report_data['api_status'] = api_status
-        
+
         return report_data
     
     def _save_json(self, data, filename):
@@ -572,7 +574,7 @@ class ReportGenerator:
         from datetime import datetime
         import gc
         
-        with open(filepath, 'w', encoding='utf-8') as f:
+        with open(filepath, 'w', encoding='utf-8-sig') as f:
             # 報告標題
             f.write("=" * 70 + "\n")
             f.write(f"期權合約深度分析報告 - {ticker}\n")
@@ -604,16 +606,21 @@ class ReportGenerator:
                 if iv_rank is not None:
                     f.write(f"IV Rank: {iv_rank:.2f}%")
                     if iv_rank < 30:
-                        f.write(" (低IV環境)")
+                        f.write(" (?IV??)")
                     elif iv_rank > 70:
-                        f.write(" (高IV環境)")
+                        f.write(" (?IV??)")
                     else:
-                        f.write(" (正常)")
+                        f.write(" (??)")
                     f.write("\n")
-                
+                else:
+                    error_msg = module18_data.get('iv_rank_details', {}).get('error', 'Historical IV data is insufficient')
+                    f.write(f"IV Rank: N/A ({error_msg})\n")
+
                 if iv_percentile is not None:
                     f.write(f"IV Percentile: {iv_percentile:.2f}%\n")
-                
+                else:
+                    f.write("IV Percentile: N/A\n")
+
                 f.write("\n")
             
             # API 狀態信息
@@ -633,44 +640,42 @@ class ReportGenerator:
                         f.write(f"  {api_name}: {len(failures)} 次故障\n")
                 f.write("\n")
             
-            # 異動分析報告 (新增)
             if delta_report:
                 f.write("=" * 70 + "\n")
-                f.write("異動分析 (Changes vs Last Run)\n")
+                f.write("Changes vs Last Run\n")
                 f.write("=" * 70 + "\n")
-                
-                # 顯示警報
+
                 if delta_report.get('opportunity_alert'):
                     for alert in delta_report['opportunity_alert']:
                         f.write(f"{alert}\n")
                     f.write("\n")
                 else:
-                    f.write("無顯著異動\n\n")
-                    
-                # 詳細對比
+                    f.write("No significant changes\n\n")
+
                 px = delta_report.get('price_change', {})
                 if px:
                     prev_px = px.get('previous') or 0
                     curr_px = px.get('current') or 0
                     pct_px = px.get('pct') or 0
-                    f.write(f"價格變化: ${prev_px:.2f} -> ${curr_px:.2f} ({pct_px:+.2f}%)\n")
-                    
+                    f.write(f"Price Change: ${prev_px:.2f} -> ${curr_px:.2f} ({pct_px:+.2f}%)\n")
+
                 iv = delta_report.get('iv_change', {})
                 if iv:
-                    prev_rank = iv.get('previous_rank') or 0
-                    curr_rank = iv.get('current_rank') or 0
-                    rank_diff = iv.get('rank_diff') or 0
-                    f.write(f"IV Rank: {prev_rank:.0f} -> {curr_rank:.0f} (變化 {rank_diff:+.0f})\n")
+                    prev_rank = iv.get('previous_rank')
+                    curr_rank = iv.get('current_rank')
+                    rank_diff = iv.get('rank_diff')
+                    prev_rank_text = f"{prev_rank:.0f}" if prev_rank is not None else "N/A"
+                    curr_rank_text = f"{curr_rank:.0f}" if curr_rank is not None else "N/A"
+                    rank_diff_text = f"{rank_diff:+.0f}" if rank_diff is not None else "N/A"
+                    f.write(f"IV Rank Change: {prev_rank_text} -> {curr_rank_text} (delta {rank_diff_text})\n")
 
-                
                 strat = delta_report.get('strategy_change', {})
                 if strat.get('changed'):
-                    f.write(f"策略變化: {strat.get('previous_top')} -> {strat.get('current_top')}\n")
-                
+                    f.write(f"Strategy Change: {strat.get('previous_top')} -> {strat.get('current_top')}\n")
+
                 f.write("\n")
-            
+
                 f.write("\n")
-            
             # 計算結果
             f.write("=" * 70 + "\n")
             f.write("計算結果詳解\n")
@@ -783,390 +788,346 @@ class ReportGenerator:
                             f.write(f"  場景 {i}: {item}\n")
                 
                 # 每處理完一個模塊後清理內存
-                gc.collect()
-            
-            # 添加綜合建議區塊 (Requirements: 8.1, 8.2, 8.3, 8.4)
-            f.write(self._format_consolidated_recommendation(calculation_results))
-            gc.collect()
-            
-            # 添加數據來源摘要 (Requirements: 14.1, 14.2, 14.3, 14.4, 14.5)
-            f.write(self._format_data_source_summary(raw_data, calculation_results, api_status))
-            gc.collect()
-        
-        logger.info(f"* 文本報告已保存: {filepath}")
-    
-    def _format_decision_summary(self, ticker: str, raw_data: dict, calculation_results: dict) -> str:
-        """
-        格式化決策摘要 - 放在報告最前面幫助用戶快速做出交易決策
-        
-        包含:
-        - 方向判斷 (看漲/看跌/中性)
-        - IV 環境 (高/低/正常)
-        - 推薦策略
-        - 推薦行使價
-        - 最大風險
-        - 盈虧平衡點
-        - 是否建議交易
-        """
-        report = "=" * 70 + "\n"
-        report += "📋 決策摘要 (Quick Decision Summary)\n"
-        report += "=" * 70 + "\n\n"
-        
-        # 確保 raw_data 不為 None
-        if raw_data is None:
-            raw_data = {}
-        
-        try:
-            # ===== 1. 方向判斷 =====
-            direction, direction_confidence, direction_reason = self._get_direction_judgment(calculation_results)
-            
-            direction_emoji = {'Bullish': '📈 看漲', 'Bearish': '📉 看跌', 'Neutral': '➖ 中性'}
-            confidence_emoji = {'High': '🟢 高', 'Medium': '🟡 中', 'Low': '🔴 低'}
-            
-            report += f"🎯 方向判斷: {direction_emoji.get(direction, direction)}\n"
-            report += f"   信心度: {confidence_emoji.get(direction_confidence, direction_confidence)}\n"
-            report += f"   依據: {direction_reason}\n\n"
-            
-            # ===== 2. IV 環境 =====
-            iv_env, iv_recommendation = self._get_iv_environment(calculation_results)
-            
-            iv_emoji = {'HIGH': '🔴 高IV環境', 'LOW': '🔵 低IV環境', 'NORMAL': '🟢 正常IV環境'}
-            report += f"📊 IV 環境: {iv_emoji.get(iv_env, iv_env)}\n"
-            report += f"   建議: {iv_recommendation}\n\n"
-            
-            # ===== 3. 推薦策略 =====
-            recommended_strategy, strategy_reason = self._get_recommended_strategy(
-                direction, direction_confidence, iv_env, calculation_results
-            )
-            
-            report += f"💡 推薦策略: {recommended_strategy}\n"
-            report += f"   理由: {strategy_reason}\n\n"
-            
-            # ===== 4. 推薦行使價 =====
-            strike_info = self._get_recommended_strike(recommended_strategy, calculation_results)
-            
-            if strike_info:
-                report += f"🎯 推薦行使價: ${strike_info['strike']:.2f}\n"
-                if strike_info.get('score'):
-                    report += f"   評分: {strike_info['score']:.1f}/100\n"
-                if strike_info.get('reason'):
-                    report += f"   理由: {strike_info['reason']}\n"
-                report += "\n"
-            
-            # ===== 5. 風險分析 =====
-            risk_info = self._get_risk_analysis(recommended_strategy, calculation_results, raw_data)
-            
-            if risk_info:
-                report += f"⚠️ 風險分析:\n"
-                if risk_info.get('max_loss'):
-                    report += f"   最大風險: {risk_info['max_loss']}\n"
-                if risk_info.get('breakeven'):
-                    report += f"   盈虧平衡點: ${risk_info['breakeven']:.2f}\n"
-                if risk_info.get('probability'):
-                    report += f"   獲利概率: {risk_info['probability']}\n"
-                report += "\n"
-            
-            # ===== 6. 交易建議 =====
-            trade_recommendation, trade_reason = self._get_trade_recommendation(
-                direction, direction_confidence, iv_env, calculation_results
-            )
-            
-            if trade_recommendation == 'NO_TRADE':
-                report += "🚫 交易建議: 【不建議交易】\n"
-                report += f"   原因: {trade_reason}\n\n"
-            elif trade_recommendation == 'CAUTION':
-                report += "⚠️ 交易建議: 【謹慎交易】\n"
-                report += f"   原因: {trade_reason}\n\n"
+    def _build_report_summary(self, raw_data: dict, calculation_results: dict) -> dict:
+        """Build a normalized summary used by both JSON and text reports."""
+        module1 = calculation_results.get('module1_support_resistance_multi', {}) or {}
+        reference_range = (module1.get('results') or {}).get('68%')
+        direction, direction_confidence, direction_reason = self._get_direction_judgment(calculation_results)
+        iv_env, iv_recommendation = self._get_iv_environment(calculation_results)
+        recommended_strategy, strategy_reason = self._get_recommended_strategy(
+            direction, direction_confidence, iv_env, calculation_results
+        )
+        strike_info = self._get_recommended_strike(recommended_strategy, calculation_results)
+        risk_info = self._get_risk_analysis(recommended_strategy, calculation_results, raw_data)
+        trade_recommendation, trade_reason = self._get_trade_recommendation(
+            direction, direction_confidence, iv_env, calculation_results
+        )
+
+        summary = {
+            'direction': direction,
+            'direction_confidence': direction_confidence,
+            'direction_reason': direction_reason,
+            'iv_environment': iv_env,
+            'iv_recommendation': iv_recommendation,
+            'recommended_strategy': recommended_strategy,
+            'strategy_reason': strategy_reason,
+            'recommended_strike': strike_info,
+            'risk_analysis': risk_info,
+            'trade_recommendation': trade_recommendation,
+            'trade_reason': trade_reason,
+            'current_price': raw_data.get('current_price'),
+            'implied_volatility': raw_data.get('implied_volatility'),
+            'days_to_expiration': raw_data.get('days_to_expiration') or module1.get('days_to_expiration', 'N/A'),
+            'reference_range_68': reference_range,
+        }
+        summary['consistency_checks'] = self._evaluate_report_consistency(summary, calculation_results)
+        return summary
+
+    def _evaluate_report_consistency(self, summary: dict, calculation_results: dict) -> dict:
+        """Validate that text-facing summary fields match the final calculations."""
+        warnings = []
+        passed = []
+
+        final_recommendations = calculation_results.get('strategy_recommendations') or []
+        top_rec = final_recommendations[0] if final_recommendations else {}
+        top_strategy = top_rec.get('strategy_name') if isinstance(top_rec, dict) else None
+        if top_strategy:
+            if summary.get('recommended_strategy') == top_strategy:
+                passed.append('Summary strategy matches final strategy_recommendations output')
             else:
-                report += "✅ 交易建議: 【可以交易】\n"
-                report += f"   說明: {trade_reason}\n\n"
-            
-            # ===== 7. 快速參考 =====
-            report += "─" * 70 + "\n"
-            report += "📌 快速參考:\n"
-            
-            current_price = raw_data.get('current_price', 0)
-            iv = raw_data.get('implied_volatility', 0)
-            
-            report += f"   當前股價: ${current_price:.2f}\n"
-            report += f"   當前 IV: {iv:.2f}%\n"
-            
-            # 支撐阻力位 - 使用68%信心度（1個標準差，最佳風險/收益平衡）
-            module1 = calculation_results.get('module1_support_resistance_multi', {})
-            if module1 and module1.get('results', {}).get('68%'):
-                r68 = module1['results']['68%']
-                report += f"   68%信心區間: ${r68['support']:.2f} - ${r68['resistance']:.2f}\n"
-            
-            # 到期天數
-            days = raw_data.get('days_to_expiration') or module1.get('days_to_expiration', 'N/A')
-            report += f"   到期天數: {days}\n"
-            
-            report += "\n"
-            
+                warnings.append(
+                    f"Summary strategy ({summary.get('recommended_strategy')}) does not match final strategy ({top_strategy})"
+                )
+        else:
+            warnings.append('strategy_recommendations is missing; summary had to use fallback logic')
+
+        module18 = calculation_results.get('module18_historical_volatility', {})
+        iv_rank = module18.get('iv_rank') if isinstance(module18, dict) else None
+        strategy_reason = summary.get('strategy_reason', '') or ''
+        if iv_rank is None:
+            if 'IV Rank 50%' in strategy_reason:
+                warnings.append('IV Rank is missing but summary still references a fake 50% IV Rank')
+            else:
+                passed.append('No fake IV Rank default was injected when IV Rank was missing')
+
+        strategy_name = str(summary.get('recommended_strategy', ''))
+        observe_like = any(keyword in strategy_name.upper() for keyword in ('OBSERVE', 'WAIT'))
+        if observe_like:
+            if summary.get('trade_recommendation') == 'TRADE':
+                warnings.append('Observe/wait strategy should not be marked as trade-ready')
+            else:
+                passed.append('Observe/wait strategy is not marked as immediate trade')
+
+            if summary.get('recommended_strike'):
+                warnings.append('Observe/wait strategy should not include a recommended strike')
+            else:
+                passed.append('Observe/wait strategy correctly omits a recommended strike')
+
+        return {
+            'status': 'PASS' if not warnings else 'WARN',
+            'passed_checks': passed,
+            'warnings': warnings,
+        }
+    def _format_decision_summary(self, ticker: str, raw_data: dict, calculation_results: dict) -> str:
+        """Format the decision summary shown at the top of the report."""
+        report = '=' * 70 + '\n'
+        report += 'Decision Summary (Quick Decision Summary)\n'
+        report += '=' * 70 + '\n\n'
+
+        try:
+            summary = self._build_report_summary(raw_data or {}, calculation_results)
+            direction_label = {'Bullish': 'Bullish', 'Bearish': 'Bearish', 'Neutral': 'Neutral'}.get(summary['direction'], summary['direction'])
+            confidence_label = {'High': 'High', 'Medium': 'Medium', 'Low': 'Low'}.get(summary['direction_confidence'], summary['direction_confidence'])
+            iv_label = {'HIGH': 'High IV', 'LOW': 'Low IV', 'NORMAL': 'Normal IV'}.get(summary['iv_environment'], summary['iv_environment'])
+
+            report += f"Direction: {direction_label}\n"
+            report += f"  Confidence: {confidence_label}\n"
+            report += f"  Basis: {summary['direction_reason']}\n\n"
+            report += f"IV Environment: {iv_label}\n"
+            report += f"  Note: {summary['iv_recommendation']}\n\n"
+            report += f"Recommended Strategy: {summary['recommended_strategy']}\n"
+            report += f"  Reason: {summary['strategy_reason']}\n\n"
+
+            strike_info = summary.get('recommended_strike')
+            if strike_info:
+                report += f"Recommended Strike: ${strike_info['strike']:.2f}\n"
+                if strike_info.get('score') is not None:
+                    report += f"  Score: {strike_info['score']:.1f}/100\n"
+                if strike_info.get('reason'):
+                    report += f"  Note: {strike_info['reason']}\n"
+                report += '\n'
+
+            risk_info = summary.get('risk_analysis')
+            if risk_info:
+                report += 'Risk Snapshot:\n'
+                if risk_info.get('max_loss'):
+                    report += f"  Max Loss: {risk_info['max_loss']}\n"
+                if risk_info.get('breakeven'):
+                    report += f"  Break-even: ${risk_info['breakeven']:.2f}\n"
+                if risk_info.get('probability'):
+                    report += f"  Probability: {risk_info['probability']}\n"
+                report += '\n'
+
+            trade_label = {
+                'NO_TRADE': 'Trade Action: No Trade',
+                'CAUTION': 'Trade Action: Caution',
+                'TRADE': 'Trade Action: Trade Allowed',
+            }.get(summary['trade_recommendation'], f"Trade Action: {summary['trade_recommendation']}")
+            report += f"{trade_label}\n"
+            reason_prefix = 'Reason' if summary['trade_recommendation'] in {'NO_TRADE', 'CAUTION'} else 'Comment'
+            report += f"  {reason_prefix}: {summary['trade_reason']}\n\n"
+
+            consistency = summary.get('consistency_checks', {})
+            report += 'Summary Consistency Check:\n'
+            report += f"  Status: {consistency.get('status', 'N/A')}\n"
+            for item in consistency.get('passed_checks', []):
+                report += f"  + {item}\n"
+            for item in consistency.get('warnings', []):
+                report += f"  ! {item}\n"
+            report += '\n'
+
+            report += '-' * 70 + '\n'
+            report += 'Quick Reference:\n'
+            current_price = summary.get('current_price') or 0
+            implied_volatility = summary.get('implied_volatility') or 0
+            report += f"  Current Price: ${current_price:.2f}\n"
+            report += f"  Current IV: {implied_volatility:.2f}%\n"
+            ref_range = summary.get('reference_range_68')
+            if ref_range and ref_range.get('support') is not None and ref_range.get('resistance') is not None:
+                report += f"  68% Range: ${ref_range['support']:.2f} - ${ref_range['resistance']:.2f}\n"
+            report += f"  Days to Expiration: {summary.get('days_to_expiration', 'N/A')}\n\n"
         except Exception as e:
-            logger.warning(f"! 決策摘要生成失敗: {e}")
-            report += f"⚠️ 無法生成完整決策摘要: {str(e)}\n\n"
-        
+            logger.warning(f"! Decision summary generation failed: {e}")
+            report += f"Unable to build full decision summary: {str(e)}\n\n"
+
         return report
-    
     def _get_direction_judgment(self, calculation_results: dict) -> tuple:
-        """
-        獲取方向判斷
-        
-        返回: (direction, confidence, reason)
-        """
-        # 使用一致性檢查器獲取綜合方向
+        """Return (direction, confidence, reason)."""
         try:
             consistency_result = self.consistency_checker.check_consistency(calculation_results)
             direction = consistency_result.consolidated_direction
             confidence = consistency_result.confidence
-            
-            # 生成原因說明
             adopted = consistency_result.adopted_modules
             if adopted:
-                reason = f"基於 {', '.join(adopted)} 的綜合分析"
+                reason = f"Based on consolidated signals from {', '.join(adopted)}"
             else:
                 reason = consistency_result.adoption_reason
-            
             return direction, confidence, reason
         except Exception as e:
-            logger.warning(f"方向判斷失敗: {e}")
-            return 'Neutral', 'Low', '無法獲取方向判斷'
-    
+            logger.warning(f"Direction judgment failed: {e}")
+            return 'Neutral', 'Low', 'Unable to determine direction cleanly'
+
     def _get_iv_environment(self, calculation_results: dict) -> tuple:
-        """
-        獲取 IV 環境
-        
-        返回: (iv_status, recommendation)
-        """
-        # 優先使用 Module 23 動態 IV 閾值
+        """Return (iv_status, recommendation)."""
         module23 = calculation_results.get('module23_dynamic_iv_threshold', {})
-        if module23 and module23.get('iv_status'):
-            iv_status = module23.get('iv_status', 'NORMAL')
-            
-            if iv_status == 'HIGH':
-                recommendation = "考慮賣出期權策略 (Short Call/Put, Credit Spread)"
-            elif iv_status == 'LOW':
-                recommendation = "考慮買入期權策略 (Long Call/Put, Debit Spread)"
-            else:
-                recommendation = "可根據方向判斷選擇策略"
-            
-            return iv_status, recommendation
-        
-        # 備選: 使用 Module 18 IV Rank
+        if module23:
+            raw_status = module23.get('iv_status') or module23.get('status')
+            status_lower = raw_status.lower() if isinstance(raw_status, str) else ''
+            if 'high' in status_lower:
+                return 'HIGH', 'Prefer premium-selling or defined-risk short-vol strategies'
+            if 'low' in status_lower:
+                return 'LOW', 'Prefer long premium or debit strategies'
+            if 'normal' in status_lower:
+                return 'NORMAL', 'IV is in a fair range; strategy should follow direction'
+
         module18 = calculation_results.get('module18_historical_volatility', {})
         iv_rank = module18.get('iv_rank')
-        
         if iv_rank is not None:
             if iv_rank > 70:
-                return 'HIGH', "IV Rank 高，考慮賣出期權策略"
-            elif iv_rank < 30:
-                return 'LOW', "IV Rank 低，考慮買入期權策略"
-            else:
-                return 'NORMAL', "IV Rank 正常，可根據方向選擇策略"
-        
-        return 'NORMAL', "無 IV 數據，建議謹慎"
-    
-    def _get_recommended_strategy(self, direction: str, confidence: str, 
+                return 'HIGH', 'IV Rank is high; prefer premium-selling structures'
+            if iv_rank < 30:
+                return 'LOW', 'IV Rank is low; prefer long premium structures'
+            return 'NORMAL', 'IV Rank is neutral; strategy should follow direction'
+
+        return 'NORMAL', 'IV Rank unavailable; stay conservative'
+
+    def _get_recommended_strategy(self, direction: str, confidence: str,
                                    iv_env: str, calculation_results: dict) -> tuple:
-        """
-        根據方向和 IV 環境推薦策略
-        
-        返回: (strategy_name, reason)
-        """
-        # 策略推薦矩陣
+        """Resolve the summary strategy. Final strategy list is the primary source of truth."""
+        final_recommendations = calculation_results.get('strategy_recommendations') or []
+        if isinstance(final_recommendations, list) and final_recommendations:
+            top_rec = final_recommendations[0] or {}
+            strategy_name = top_rec.get('strategy_name', 'Observe / Wait')
+            reasoning = top_rec.get('reasoning') or []
+            rec_confidence = top_rec.get('confidence', confidence)
+            reason = '; '.join(str(item) for item in reasoning[:3]) if reasoning else 'No detailed reasoning was attached to the final strategy output'
+            if rec_confidence == 'Low' and 'OBSERVE' not in strategy_name.upper() and 'WAIT' not in strategy_name.upper():
+                reason = f"{reason}; confidence is low, so size down"
+            return strategy_name, reason
+
         strategy_matrix = {
-            ('Bullish', 'HIGH'): ('Short Put', '看漲 + 高IV = 賣出 Put 收取高權利金'),
-            ('Bullish', 'LOW'): ('Long Call', '看漲 + 低IV = 買入便宜的 Call'),
-            ('Bullish', 'NORMAL'): ('Bull Call Spread', '看漲 + 正常IV = 牛市價差控制成本'),
-            ('Bearish', 'HIGH'): ('Short Call', '看跌 + 高IV = 賣出 Call 收取高權利金'),
-            ('Bearish', 'LOW'): ('Long Put', '看跌 + 低IV = 買入便宜的 Put'),
-            ('Bearish', 'NORMAL'): ('Bear Put Spread', '看跌 + 正常IV = 熊市價差控制成本'),
-            ('Neutral', 'HIGH'): ('Iron Condor / Short Straddle', '中性 + 高IV = 賣出波動率'),
-            ('Neutral', 'LOW'): ('Long Straddle / Calendar Spread', '中性 + 低IV = 買入波動率'),
-            ('Neutral', 'NORMAL'): ('觀望或 Calendar Spread', '方向不明確，等待更好機會'),
+            ('Bullish', 'HIGH'): ('Bull Put Spread', 'Bullish plus high IV favors defined-risk premium selling'),
+            ('Bullish', 'LOW'): ('Long Call', 'Bullish plus low IV favors buying calls'),
+            ('Bullish', 'NORMAL'): ('Bull Call Spread', 'Bullish plus normal IV favors cost-controlled call spreads'),
+            ('Bearish', 'HIGH'): ('Bear Call Spread', 'Bearish plus high IV favors defined-risk bearish premium selling'),
+            ('Bearish', 'LOW'): ('Long Put', 'Bearish plus low IV favors buying puts'),
+            ('Bearish', 'NORMAL'): ('Bear Put Spread', 'Bearish plus normal IV favors cost-controlled put spreads'),
+            ('Neutral', 'HIGH'): ('Iron Condor', 'Neutral plus high IV favors range premium selling'),
+            ('Neutral', 'LOW'): ('Calendar Spread', 'Neutral plus low IV favors long vega structures'),
+            ('Neutral', 'NORMAL'): ('Observe / Wait', 'No clear directional or volatility edge right now'),
         }
-        
         key = (direction, iv_env)
         if key in strategy_matrix:
             strategy, reason = strategy_matrix[key]
-            
-            # 如果信心度低，調整建議
-            if confidence == 'Low':
-                return f"{strategy} (小倉位)", f"{reason}；信心度低，建議小倉位試探"
-            
+            if confidence == 'Low' and 'OBSERVE' not in strategy.upper() and 'WAIT' not in strategy.upper():
+                return strategy, f"{reason}; confidence is low, so position size should stay small"
             return strategy, reason
+        return 'Observe / Wait', 'Conditions are not strong enough for a high-quality setup' 
         
-        return '觀望', '條件不明確，建議等待更好機會'
-    
     def _get_recommended_strike(self, strategy: str, calculation_results: dict) -> dict:
-        """
-        獲取推薦行使價
-        
-        返回: {'strike': float, 'score': float, 'reason': str}
-        """
+        """Return {'strike': float, 'score': float, 'reason': str} or None."""
+        if not strategy:
+            return None
+        strategy_upper = strategy.upper()
+        if 'OBSERVE' in strategy_upper or 'WAIT' in strategy_upper:
+            return None
         module22 = calculation_results.get('module22_optimal_strike', {})
-        
         if not module22:
             return None
-        
-        # 根據策略選擇對應的行使價推薦
         strategy_mapping = {
             'Long Call': 'long_call',
             'Bull Call Spread': 'long_call',
             'Long Put': 'long_put',
             'Bear Put Spread': 'long_put',
             'Short Put': 'short_put',
+            'Bull Put Spread': 'short_put',
             'Short Call': 'short_call',
+            'Bear Call Spread': 'short_call',
         }
-        
-        # 找到匹配的策略類型
         strategy_key = None
         for key, value in strategy_mapping.items():
             if key in strategy:
                 strategy_key = value
                 break
-        
         if not strategy_key:
-            # 默認使用 ATM
-            strike_selection = calculation_results.get('strike_selection', {})
-            if strike_selection:
-                return {
-                    'strike': strike_selection.get('strike_price', 0),
-                    'reason': 'ATM 行使價'
-                }
             return None
-        
-        # 從 Module 22 獲取推薦
         strategy_data = module22.get(strategy_key, {})
         top_recommendations = strategy_data.get('top_recommendations', [])
-        
         if top_recommendations:
             best = top_recommendations[0]
             return {
                 'strike': best.get('strike', 0),
                 'score': best.get('composite_score', 0),
-                'reason': best.get('reason', 'Module 22 最佳推薦')
+                'reason': best.get('reason', 'Module 22 best recommendation'),
             }
-        
         return None
-    
+
     def _get_risk_analysis(self, strategy: str, calculation_results: dict, raw_data: dict) -> dict:
-        """
-        獲取風險分析
-        
-        返回: {'max_loss': str, 'breakeven': float, 'probability': str}
-        """
+        """Return {'max_loss': str, 'breakeven': float, 'probability': str}."""
         result = {}
-        
-        # 從策略模塊獲取風險數據
         if 'Long Call' in strategy:
             module7 = calculation_results.get('module7_long_call', {})
-            if module7:
-                scenarios = module7.get('scenarios', [])
-                if scenarios:
-                    # 最大損失 = 權利金
-                    premium = scenarios[0].get('option_premium', 0)
-                    result['max_loss'] = f"${premium * 100:.2f} (權利金)"
-                    
-                    # 盈虧平衡點
-                    strike = scenarios[0].get('strike_price', 0)
-                    result['breakeven'] = strike + premium
-        
+            scenarios = module7.get('scenarios', []) if module7 else []
+            if scenarios:
+                premium = scenarios[0].get('option_premium', 0)
+                strike = scenarios[0].get('strike_price', 0)
+                result['max_loss'] = f"${premium * 100:.2f} (premium paid)"
+                result['breakeven'] = strike + premium
         elif 'Long Put' in strategy:
             module8 = calculation_results.get('module8_long_put', {})
-            if module8:
-                scenarios = module8.get('scenarios', [])
-                if scenarios:
-                    premium = scenarios[0].get('option_premium', 0)
-                    result['max_loss'] = f"${premium * 100:.2f} (權利金)"
-                    
-                    strike = scenarios[0].get('strike_price', 0)
-                    result['breakeven'] = strike - premium
-        
+            scenarios = module8.get('scenarios', []) if module8 else []
+            if scenarios:
+                premium = scenarios[0].get('option_premium', 0)
+                strike = scenarios[0].get('strike_price', 0)
+                result['max_loss'] = f"${premium * 100:.2f} (premium paid)"
+                result['breakeven'] = strike - premium
         elif 'Short Put' in strategy:
             module10 = calculation_results.get('module10_short_put', {})
-            if module10:
-                scenarios = module10.get('scenarios', [])
-                if scenarios:
-                    strike = scenarios[0].get('strike_price', 0)
-                    premium = scenarios[0].get('option_premium', 0)
-                    result['max_loss'] = f"${(strike - premium) * 100:.2f} (股價歸零)"
-                    result['breakeven'] = strike - premium
-                    
-                    # 獲取安全概率
-                    module22 = calculation_results.get('module22_optimal_strike', {})
-                    short_put_data = module22.get('short_put', {})
-                    top_recs = short_put_data.get('top_recommendations', [])
-                    if top_recs:
-                        safety_prob = top_recs[0].get('safety_probability')
-                        if safety_prob:
-                            result['probability'] = f"{safety_prob:.1f}% 安全概率"
-        
+            scenarios = module10.get('scenarios', []) if module10 else []
+            if scenarios:
+                strike = scenarios[0].get('strike_price', 0)
+                premium = scenarios[0].get('option_premium', 0)
+                result['max_loss'] = f"${(strike - premium) * 100:.2f} (stock to zero)"
+                result['breakeven'] = strike - premium
+                module22 = calculation_results.get('module22_optimal_strike', {})
+                short_put_data = module22.get('short_put', {})
+                top_recs = short_put_data.get('top_recommendations', [])
+                if top_recs:
+                    safety_prob = top_recs[0].get('safety_probability')
+                    if safety_prob:
+                        result['probability'] = f"{safety_prob:.1f}% safety probability"
         elif 'Short Call' in strategy:
             module9 = calculation_results.get('module9_short_call', {})
-            if module9:
-                scenarios = module9.get('scenarios', [])
-                if scenarios:
-                    premium = scenarios[0].get('option_premium', 0)
-                    strike = scenarios[0].get('strike_price', 0)
-                    result['max_loss'] = "無限 (裸賣 Call)"
-                    result['breakeven'] = strike + premium
-        
+            scenarios = module9.get('scenarios', []) if module9 else []
+            if scenarios:
+                premium = scenarios[0].get('option_premium', 0)
+                strike = scenarios[0].get('strike_price', 0)
+                result['max_loss'] = 'Unlimited (naked short call)'
+                result['breakeven'] = strike + premium
         return result
-    
-    def _get_trade_recommendation(self, direction: str, confidence: str, 
+
+    def _get_trade_recommendation(self, direction: str, confidence: str,
                                    iv_env: str, calculation_results: dict) -> tuple:
-        """
-        獲取交易建議
-        
-        返回: ('TRADE'/'NO_TRADE'/'CAUTION', reason)
-        """
+        """Return ('TRADE'/'NO_TRADE'/'CAUTION', reason)."""
         reasons_no_trade = []
         reasons_caution = []
-        
-        # 1. 檢查方向信心度
         if confidence == 'Low' and direction == 'Neutral':
-            reasons_no_trade.append("方向不明確且信心度低")
+            reasons_no_trade.append('Direction is unclear and confidence is low')
         elif confidence == 'Low':
-            reasons_caution.append("方向信心度低")
-        
-        # 2. 檢查模塊矛盾
+            reasons_caution.append('Directional confidence is low')
         try:
             consistency_result = self.consistency_checker.check_consistency(calculation_results)
             if consistency_result.conflicts:
-                reasons_caution.append(f"存在 {len(consistency_result.conflicts)} 個模塊信號矛盾")
-        except:
+                reasons_caution.append(f"{len(consistency_result.conflicts)} module conflicts remain")
+        except Exception:
             pass
-        
-        # 3. 檢查基本面
         module20 = calculation_results.get('module20_fundamental_health', {})
         health_score = module20.get('health_score', 100)
         if health_score < 40:
-            reasons_no_trade.append(f"基本面健康分數過低 ({health_score}/100)")
+            reasons_no_trade.append(f"Fundamental health score is too weak ({health_score}/100)")
         elif health_score < 60:
-            reasons_caution.append(f"基本面健康分數偏低 ({health_score}/100)")
-        
-        # 4. 檢查動量
+            reasons_caution.append(f"Fundamental health score is below ideal ({health_score}/100)")
         module21 = calculation_results.get('module21_momentum_filter', {})
         momentum_score = module21.get('momentum_score', 0.5)
-        
-        # 如果方向與動量不一致
         if direction == 'Bullish' and momentum_score < 0.3:
-            reasons_caution.append("看漲但動量轉弱")
+            reasons_caution.append('Bullish view conflicts with weak momentum')
         elif direction == 'Bearish' and momentum_score > 0.7:
-            reasons_caution.append("看跌但動量強勁")
-        
-        # 5. 檢查 IV 環境與策略匹配
-        # (已在策略推薦中考慮)
-        
-        # 生成最終建議
+            reasons_caution.append('Bearish view conflicts with strong momentum')
         if reasons_no_trade:
-            return 'NO_TRADE', '；'.join(reasons_no_trade)
-        elif reasons_caution:
-            return 'CAUTION', '；'.join(reasons_caution)
-        else:
-            return 'TRADE', "各項指標正常，可根據推薦策略進行交易"
+            return 'NO_TRADE', '; '.join(reasons_no_trade)
+        if reasons_caution:
+            return 'CAUTION', '; '.join(reasons_caution)
+        return 'TRADE', 'No major blockers remain; follow the recommended structure with risk control' 
     
     def _format_module1_multi_confidence(self, ticker: str, results: dict) -> str:
         """格式化Module 1多信心度結果"""
@@ -3792,196 +3753,119 @@ class ReportGenerator:
         return report
     
     def _format_module23_dynamic_iv_threshold(self, results: dict, iv_rank_data: dict = None) -> str:
-        """
-        格式化 Module 23 動態IV閾值結果
-        
-        增強功能 (Requirements 11.1, 11.2, 11.3, 11.4):
-        - 11.1: 解釋動態 IV 與 Module 17 隱含波動率的區別
-        - 11.2: 說明閾值計算方法（基於歷史百分位）
-        - 11.3: 添加邊界預警（當前 IV 接近閾值邊界）
-        - 11.4: 與 Module 18 IV Rank 交叉驗證
-        
-        參數:
-            results: Module 23 計算結果
-            iv_rank_data: Module 18 IV Rank 數據（用於交叉驗證）
-        """
-        report = "\n┌─ Module 23: 動態IV閾值計算 ───────────────────┐\n"
-        report += "│\n"
-        
-        # 檢查是否錯誤
+        """Format Module 23 dynamic IV threshold output."""
+        report = '\n+-- Module 23: Dynamic IV Threshold ----------------+\n'
+        report += '|\n'
+
         if results.get('status') == 'error':
-            report += f"│ x 狀態: 執行錯誤\n"
-            report += f"│ 原因: {results.get('reason', 'N/A')}\n"
-            report += "│\n"
-            report += "└────────────────────────────────────────────────┘\n"
+            report += '| x Status: error\n'
+            report += f"| Reason: {results.get('reason', 'N/A')}\n"
+            report += '|\n'
+            report += '+--------------------------------------------------+\n'
             return report
-        
-        # 正常結果
+
         current_iv = results.get('current_iv', 0)
         high_threshold = results.get('high_threshold', 0)
         low_threshold = results.get('low_threshold', 0)
-        # 兼容兩種字段名: 'status' (IVThresholdResult) 和 'iv_status' (舊版)
         iv_status = results.get('status', results.get('iv_status', 'N/A'))
         data_quality = results.get('data_quality', 'N/A')
-        
-        report += f"│ 📊 當前IV狀態:\n"
-        report += f"│   當前IV: {current_iv:.2f}%\n"
-        report += f"│   高閾值: {high_threshold:.2f}%\n"
-        report += f"│   低閾值: {low_threshold:.2f}%\n"
-        report += "│\n"
-        
-        # IV範圍可視化
+
+        report += '| IV Status Snapshot:\n'
+        report += f"|   Current IV: {current_iv:.2f}%\n"
+        report += f"|   High Threshold: {high_threshold:.2f}%\n"
+        report += f"|   Low Threshold: {low_threshold:.2f}%\n"
+        report += '|\n'
+
         range_width = high_threshold - low_threshold
         if range_width > 0:
             current_position = (current_iv - low_threshold) / range_width
             current_position = max(0, min(1, current_position))
-            
             bar_pos = int(current_position * 20)
-            bar = '░' * bar_pos + '█' + '░' * (20 - bar_pos - 1)
-            
-            report += f"│ IV範圍可視化:\n"
-            report += f"│ 低 [{bar}] 高\n"
-            report += f"│ {low_threshold:.1f}%         {current_iv:.1f}%         {high_threshold:.1f}%\n"
-            report += "│\n"
-        
-        # 狀態解讀 - 改進邏輯
+            bar = '-' * bar_pos + '#' + '-' * (20 - bar_pos - 1)
+            report += '| IV Range Visualization:\n'
+            report += f"| Low [{bar}] High\n"
+            report += f"| {low_threshold:.1f}%         {current_iv:.1f}%         {high_threshold:.1f}%\n"
+            report += '|\n'
+
         status_lower = iv_status.lower() if isinstance(iv_status, str) else ''
-        
         if 'high' in status_lower or current_iv > high_threshold:
-            emoji = '🔴'
-            display_status = 'HIGH (IV偏高)'
+            display_status = 'HIGH (IV elevated)'
         elif 'low' in status_lower or current_iv < low_threshold:
-            emoji = '🔵'
-            display_status = 'LOW (IV偏低)'
+            display_status = 'LOW (IV depressed)'
         elif 'normal' in status_lower or (low_threshold <= current_iv <= high_threshold):
-            emoji = '🟢'
-            display_status = 'NORMAL (IV合理)'
+            display_status = 'NORMAL (IV fair)'
         else:
-            emoji = '⚪'
-            display_status = iv_status
-        
-        report += f"│ {emoji} IV狀態: {display_status}\n"
-        
-        # Requirement 11.3: 添加邊界預警
+            display_status = str(iv_status)
+
+        report += f"| State: {display_status}\n"
         boundary_warning = self._get_iv_boundary_warning(current_iv, high_threshold, low_threshold)
         if boundary_warning:
-            report += f"│ ⚠️ 邊界預警: {boundary_warning}\n"
-        
-        # 交易建議
+            report += f"| Boundary Warning: {boundary_warning}\n"
+
         if 'trading_suggestion' in results:
             suggestion = results['trading_suggestion']
             if isinstance(suggestion, dict):
-                report += f"│ 💡 交易建議: {suggestion.get('action', 'N/A')}\n"
+                report += f"| Action: {suggestion.get('action', 'N/A')}\n"
                 if 'reason' in suggestion:
-                    report += f"│    理由: {suggestion.get('reason', 'N/A')}\n"
+                    report += f"| Reason: {suggestion.get('reason', 'N/A')}\n"
             else:
-                report += f"│ 💡 交易建議: {suggestion}\n"
+                report += f"| Action: {suggestion}\n"
         else:
-            # 如果沒有交易建議，根據狀態生成
             if current_iv > high_threshold:
-                report += f"│ 💡 交易建議: Short\n"
-                report += f"│    理由: 當前IV {current_iv:.1f}% 高於閾值 {high_threshold:.1f}%\n"
+                report += '| Action: Short-vol bias\n'
+                report += f"| Reason: Current IV {current_iv:.1f}% is above threshold {high_threshold:.1f}%\n"
             elif current_iv < low_threshold:
-                report += f"│ 💡 交易建議: Long\n"
-                report += f"│    理由: 當前IV {current_iv:.1f}% 低於閾值 {low_threshold:.1f}%\n"
+                report += '| Action: Long-vol bias\n'
+                report += f"| Reason: Current IV {current_iv:.1f}% is below threshold {low_threshold:.1f}%\n"
             else:
-                report += f"│ 💡 交易建議: 觀望\n"
-                report += f"│    理由: 當前IV {current_iv:.1f}% 在合理範圍內\n"
-        
-        report += "│\n"
-        
-        # Requirement 11.2: 說明閾值計算方法
-        report += "│ 📐 閾值計算方法:\n"
+                report += '| Action: Observe / Wait\n'
+                report += f"| Reason: Current IV {current_iv:.1f}% is inside the fair range\n"
+
+        report += '|\n'
+        report += '| Threshold Method:\n'
         percentile_75 = results.get('percentile_75', high_threshold)
         percentile_25 = results.get('percentile_25', low_threshold)
         historical_days = results.get('historical_days', 0)
-        
-        if data_quality == 'sufficient' or data_quality == 'limited':
-            report += f"│   方法: 基於 {historical_days} 天歷史 IV 數據的百分位計算\n"
-            report += f"│   高閾值: 75th 百分位 = {percentile_75:.2f}%\n"
-            report += f"│   低閾值: 25th 百分位 = {percentile_25:.2f}%\n"
+        if data_quality in ('sufficient', 'limited'):
+            report += f"|   Based on {historical_days} days of historical IV percentiles\n"
+            report += f"|   High Threshold (75th pct): {percentile_75:.2f}%\n"
+            report += f"|   Low Threshold (25th pct): {percentile_25:.2f}%\n"
             median_iv = results.get('median_iv', 0)
             if median_iv > 0:
-                report += f"│   中位數: {median_iv:.2f}%\n"
+                report += f"|   Median IV: {median_iv:.2f}%\n"
         else:
-            report += f"│   方法: VIX 靜態閾值（歷史數據不足）\n"
-            report += f"│   高閾值: 基準 IV × 1.25\n"
-            report += f"│   低閾值: 基準 IV × 0.75\n"
-        report += "│\n"
-        
-        # Requirement 11.4: 與 Module 18 IV Rank 交叉驗證
+            report += '|   Historical IV is insufficient; static fallback was used\n'
+            report += '|   High Threshold: baseline IV x 1.25\n'
+            report += '|   Low Threshold: baseline IV x 0.75\n'
+        report += '|\n'
+
         if iv_rank_data:
-            cross_validation = self._cross_validate_iv_with_rank(
-                current_iv, high_threshold, low_threshold, iv_rank_data
-            )
-            report += "│ 🔄 與 Module 18 IV Rank 交叉驗證:\n"
-            report += f"│   Module 18 IV Rank: {cross_validation['iv_rank']:.2f}%\n"
-            report += f"│   Module 23 IV 狀態: {display_status}\n"
-            report += f"│   一致性: {cross_validation['consistency_emoji']} {cross_validation['consistency']}\n"
+            cross_validation = self._cross_validate_iv_with_rank(current_iv, high_threshold, low_threshold, iv_rank_data)
+            report += '| Cross-check vs Module 18 IV Rank:\n'
+            report += f"|   Module 18 IV Rank: {cross_validation['iv_rank']:.2f}%\n"
+            report += f"|   Module 23 Status: {display_status}\n"
+            report += f"|   Consistency: {cross_validation['consistency']}\n"
             if cross_validation.get('explanation'):
-                report += f"│   說明: {cross_validation['explanation']}\n"
-            report += "│\n"
-        
-        # 數據質量和可靠性 (Requirements 5.2, 5.3)
+                report += f"|   Note: {cross_validation['explanation']}\n"
+            report += '|\n'
+
         reliability = results.get('reliability', 'unknown')
         warning = results.get('warning', None)
-        
-        # 可靠性圖標
-        reliability_emoji = {
-            'reliable': '✅',
-            'moderate': '⚠️',
-            'unreliable': '❌',
-            'unknown': '❓'
-        }.get(reliability, '❓')
-        
-        # 數據質量圖標
-        quality_emoji = {
-            'sufficient': '✅',
-            'limited': '⚠️',
-            'insufficient': '❌'
-        }.get(data_quality, '❓')
-        
-        report += f"│ 📌 數據質量: {quality_emoji} {data_quality}\n"
-        report += f"│    歷史數據: {historical_days} 天\n"
-        report += f"│    可靠性: {reliability_emoji} {reliability}\n"
-        
-        # 顯示警告 (Requirements 5.2, 5.3)
+        report += f"| Data Quality: {data_quality}\n"
+        report += f"| Historical Days: {historical_days}\n"
+        report += f"| Reliability: {reliability}\n"
         if warning:
-            report += f"│\n"
-            report += f"│ ⚠️ 警告: {warning}\n"
+            report += f"| Warning: {warning}\n"
         elif historical_days < 252 and historical_days > 0:
-            report += f"│\n"
-            report += f"│ ⚠️ 警告: 歷史數據少於 252 天，建議謹慎參考\n"
-        
-        # 數據質量說明
-        if data_quality == 'insufficient':
-            report += f"│    說明: 歷史IV數據不足，使用VIX靜態閾值\n"
-        elif data_quality == 'limited':
-            report += f"│    說明: 歷史數據有限，結果需謹慎參考\n"
-        
-        report += "│\n"
-        
-        # Requirement 11.1: 解釋動態 IV 與 Module 17 隱含波動率的區別
-        report += "│ 📖 動態 IV 閾值 vs Module 17 隱含波動率:\n"
-        report += "│   ┌────────────────────────────────────────────┐\n"
-        report += "│   │ Module 17 (隱含波動率):                    │\n"
-        report += "│   │   - 從期權市場價格反推的「當前」波動率     │\n"
-        report += "│   │   - 反映市場對未來波動的即時預期           │\n"
-        report += "│   │   - 用於期權定價和 Greeks 計算             │\n"
-        report += "│   ├────────────────────────────────────────────┤\n"
-        report += "│   │ Module 23 (動態 IV 閾值):                  │\n"
-        report += "│   │   - 基於歷史 IV 數據計算的「相對」位置     │\n"
-        report += "│   │   - 判斷當前 IV 是否偏高/偏低              │\n"
-        report += "│   │   - 用於決定買入或賣出期權策略             │\n"
-        report += "│   └────────────────────────────────────────────┘\n"
-        report += "│\n"
-        report += "│ 📖 解讀:\n"
-        report += "│   🔴 HIGH: IV 偏高，考慮賣出期權\n"
-        report += "│   🟢 NORMAL: IV 合理，等待機會\n"
-        report += "│   🔵 LOW: IV 偏低，考慮買入期權\n"
-        report += "└────────────────────────────────────────────────┘\n"
+            report += '| Warning: Less than 252 days of history; use with caution\n'
+
+        report += '|\n'
+        report += '| Interpretation:\n'
+        report += '|   HIGH: IV is elevated, so premium-selling structures are preferred\n'
+        report += '|   NORMAL: IV is fair, so direction matters more than vol edge\n'
+        report += '|   LOW: IV is depressed, so long premium structures are preferred\n'
+        report += '+--------------------------------------------------+\n'
         return report
-    
     def _get_iv_boundary_warning(self, current_iv: float, high_threshold: float, low_threshold: float) -> str:
         """
         獲取 IV 邊界預警
@@ -4084,148 +3968,85 @@ class ReportGenerator:
         }
     
     def _format_module24_technical_direction(self, results: dict) -> str:
-        """格式化 Module 24 技術方向分析結果"""
-        report = "\n┌─ Module 24: 技術方向分析 ─────────────────────┐\n"
-        report += "│\n"
-        
-        # 檢查是否錯誤或跳過
+        """Format Module 24 technical direction output."""
+        report = '\n+-- Module 24: Technical Direction ----------------+\n'
+        report += '|\n'
+
         if results.get('status') in ['error', 'skipped']:
-            report += f"│ x 狀態: {results.get('status')}\n"
-            report += f"│ 原因: {results.get('reason', 'N/A')}\n"
-            report += "│\n"
-            report += "└────────────────────────────────────────────────┘\n"
+            report += f"| x Status: {results.get('status')}\n"
+            report += f"| Reason: {results.get('reason', 'N/A')}\n"
+            report += '|\n'
+            report += '+--------------------------------------------------+\n'
             return report
-        
-        # 日線趨勢
+
         daily = results.get('daily_trend', {})
         trend = daily.get('trend', 'N/A')
-        trend_emoji = {'Bullish': '🟢 看漲', 'Bearish': '🔴 看跌', 'Neutral': '🟡 中性'}.get(trend, trend)
-        
-        report += "│ 📈 日線趨勢分析:\n"
-        report += f"│   趨勢方向: {trend_emoji}\n"
-        report += f"│   趨勢得分: {daily.get('score', 0):.1f} (-100 到 +100)\n"
-        report += "│\n"
-        
-        # 均線系統
+        report += '| Daily Trend:\n'
+        report += f"|   Direction: {trend}\n"
+        report += f"|   Score: {daily.get('score', 0):.1f} (-100 to +100)\n"
+        report += '|\n'
+
         sma = daily.get('sma', {})
-        price = daily.get('price', 0)
         price_vs_sma = daily.get('price_vs_sma', {})
-        
         if sma:
-            report += "│   均線系統:\n"
+            report += '|   Moving Averages:\n'
             for key, value in sma.items():
                 if value:
-                    above = '✓' if price_vs_sma.get(f'above_{key}', False) else '✗'
-                    report += f"│     {key.upper()}: ${value:.2f} ({above} 價格{'在上' if price_vs_sma.get(f'above_{key}', False) else '在下'})\n"
-        
-        # MACD
+                    above = 'above' if price_vs_sma.get(f'above_{key}', False) else 'below'
+                    report += f"|     {key.upper()}: ${value:.2f} (price is {above})\n"
+
         macd = daily.get('macd', {})
         if macd.get('macd') is not None:
-            report += "│\n"
-            report += f"│   MACD: {macd.get('macd', 0):.4f}\n"
-            report += f"│   Signal: {macd.get('signal', 0):.4f}\n"
-            report += f"│   Histogram: {macd.get('histogram', 0):.4f}"
-            if macd.get('histogram', 0) > 0:
-                report += " (金叉)\n"
-            else:
-                report += " (死叉)\n"
-        
-        # RSI
+            report += '|\n'
+            report += f"|   MACD: {macd.get('macd', 0):.4f}\n"
+            report += f"|   Signal: {macd.get('signal', 0):.4f}\n"
+            report += f"|   Histogram: {macd.get('histogram', 0):.4f}\n"
+
         rsi = daily.get('rsi')
-        if rsi:
-            report += f"│   RSI (14): {rsi:.1f}"
-            if rsi > 70:
-                report += " (超買)\n"
-            elif rsi < 30:
-                report += " (超賣)\n"
-            else:
-                report += "\n"
-        
-        # ADX
+        if rsi is not None:
+            report += f"|   RSI (14): {rsi:.1f}\n"
+
         adx = daily.get('adx')
-        if adx:
-            report += f"│   ADX: {adx:.1f}"
-            if adx > 25:
-                report += " (趨勢明確)\n"
-            else:
-                report += " (趨勢不明確)\n"
-        
-        # 日線信號
+        if adx is not None:
+            strength = 'trend confirmed' if adx > 25 else 'trend weak'
+            report += f"|   ADX: {adx:.1f} ({strength})\n"
+
         signals = daily.get('signals', [])
         if signals:
-            report += "│\n"
-            report += "│   📋 日線信號:\n"
-            for sig in signals[:5]:  # 最多顯示5個
-                report += f"│     • {sig}\n"
-        
-        # 15分鐘入場信號
+            report += '|   Signals:\n'
+            for sig in signals[:5]:
+                report += f"|     - {sig}\n"
+
         intraday = results.get('intraday_signal', {})
+        report += '|\n'
+        report += '| Intraday Entry:\n'
         if intraday.get('available', False):
-            report += "│\n"
-            report += "│ 🎯 15分鐘入場信號:\n"
-            
-            signal = intraday.get('signal', 'N/A')
-            signal_emoji = {
-                'Enter': '✅ 可以入場',
-                'Wait_Pullback': '⏳ 等待回調',
-                'Wait_Breakout': '⏳ 等待突破',
-                'Hold': '⏸️ 觀望'
-            }.get(signal, signal)
-            
-            report += f"│   入場信號: {signal_emoji}\n"
-            
-            # 15分鐘指標
+            report += f"|   Signal: {intraday.get('signal', 'N/A')}\n"
             intraday_rsi = intraday.get('rsi')
-            if intraday_rsi:
-                report += f"│   RSI (9): {intraday_rsi:.1f}"
-                if intraday_rsi > 70:
-                    report += " (短線超買)\n"
-                elif intraday_rsi < 30:
-                    report += " (短線超賣)\n"
-                else:
-                    report += "\n"
-            
+            if intraday_rsi is not None:
+                report += f"|   RSI (9): {intraday_rsi:.1f}\n"
             stoch = intraday.get('stochastic', {})
-            if stoch.get('k'):
-                report += f"│   Stochastic: K={stoch.get('k', 0):.1f}, D={stoch.get('d', 0):.1f}\n"
-            
-            # 15分鐘信號
+            if stoch.get('k') is not None and stoch.get('d') is not None:
+                report += f"|   Stochastic: K={stoch.get('k', 0):.1f}, D={stoch.get('d', 0):.1f}\n"
             intraday_signals = intraday.get('signals', [])
-            if intraday_signals:
-                report += "│\n"
-                report += "│   📋 15分鐘信號:\n"
-                for sig in intraday_signals[:3]:
-                    report += f"│     • {sig}\n"
+            for sig in intraday_signals[:3]:
+                report += f"|     - {sig}\n"
         else:
-            report += "│\n"
-            report += "│ 🎯 15分鐘入場信號: 數據不可用\n"
-        
-        # 綜合方向
-        report += "│\n"
-        report += "│ ═══════════════════════════════════════════════\n"
-        
-        direction = results.get('combined_direction', 'N/A')
-        confidence = results.get('confidence', 'N/A')
-        direction_emoji = {'Call': '📈 Call (看漲)', 'Put': '📉 Put (看跌)', 'Neutral': '➖ 中性'}.get(direction, direction)
-        confidence_emoji = {'High': '🟢', 'Medium': '🟡', 'Low': '🔴'}.get(confidence, '')
-        
-        report += f"│ 🎯 綜合方向: {direction_emoji}\n"
-        report += f"│ 📊 信心度: {confidence_emoji} {confidence}\n"
-        
-        entry_timing = results.get('entry_timing', '')
+            report += '|   Signal: unavailable\n'
+
+        report += '|\n'
+        report += '| Final Direction:\n'
+        report += f"|   Combined Direction: {results.get('combined_direction', 'N/A')}\n"
+        report += f"|   Confidence: {results.get('confidence', 'N/A')}\n"
+        entry_timing = results.get('entry_timing')
         if entry_timing:
-            report += f"│ ⏰ 入場時機: {entry_timing}\n"
-        
-        recommendation = results.get('recommendation', '')
+            report += f"|   Entry Timing: {entry_timing}\n"
+        recommendation = results.get('recommendation')
         if recommendation:
-            report += "│\n"
-            report += f"│ 💡 建議: {recommendation}\n"
-        
-        report += "│\n"
-        report += f"│ 📌 數據來源: {results.get('data_source', 'N/A')}\n"
-        report += "└────────────────────────────────────────────────┘\n"
+            report += f"|   Recommendation: {recommendation}\n"
+        report += f"|   Data Source: {results.get('data_source', 'N/A')}\n"
+        report += '+--------------------------------------------------+\n'
         return report
-    
     def _format_module25_volatility_smile(self, results: dict) -> str:
         """格式化 Module 25 波動率微笑分析結果"""
         report = "\n┌─ Module 25: 波動率微笑分析 ───────────────────┐\n"

@@ -188,246 +188,213 @@ class StrategyRecommender:
 
     def recommend(self,
                  current_price: float,
-                 iv_rank: float, # 0-100
-                 iv_percentile: float, # 0-100
+                 iv_rank: Optional[float],
+                 iv_percentile: Optional[float],
                  iv_hv_ratio: float,
                  support_level: float,
                  resistance_level: float,
-                 trend: str, # 'Up', 'Down', 'Sideways'
-                 valuation: str, # 'Undervalued', 'Overvalued', 'Fair'
+                 trend: str,
+                 valuation: str,
                  days_to_expiry: int) -> List[StrategyRecommendation]:
-        
         recommendations = []
-        logger.info(f"* 開始策略推薦分析: Price=${current_price}, IV Rank={iv_rank:.1f}, IV/HV={iv_hv_ratio:.2f}, Trend={trend}")
-        
-        # 1. 判斷波動率狀態
-        is_high_iv = iv_rank > 50 or iv_hv_ratio > 1.2
-        is_low_iv = iv_rank < 30 or iv_hv_ratio < 0.8
-        is_neutral_iv = not is_high_iv and not is_low_iv  # IV 在中性區間
-        
-        logger.info(f"  IV狀態: High={is_high_iv}, Low={is_low_iv}, Neutral={is_neutral_iv}")
-        
-        # 2. 判斷價格位置（處理無效的支持/阻力位）
+        iv_rank_text = f"{iv_rank:.1f}%" if iv_rank is not None else "N/A"
+        iv_percentile_text = f"{iv_percentile:.1f}%" if iv_percentile is not None else "N/A"
+        logger.info(
+            f"* Strategy recommendation analysis: Price=${current_price}, IV Rank={iv_rank_text}, "
+            f"IV Percentile={iv_percentile_text}, IV/HV={iv_hv_ratio:.2f}, Trend={trend}"
+        )
+
+        iv_rank_high = iv_rank is not None and iv_rank > 50
+        iv_rank_low = iv_rank is not None and iv_rank < 30
+        iv_percentile_high = iv_percentile is not None and iv_percentile > 70
+        iv_percentile_low = iv_percentile is not None and iv_percentile < 30
+        is_high_iv = iv_rank_high or iv_percentile_high or iv_hv_ratio > 1.2
+        is_low_iv = iv_rank_low or iv_percentile_low or iv_hv_ratio < 0.8
+        is_neutral_iv = not is_high_iv and not is_low_iv
+        missing_iv_rank = iv_rank is None and iv_percentile is None
+
+        logger.info(f"  IV regime: High={is_high_iv}, Low={is_low_iv}, Neutral={is_neutral_iv}")
+        if missing_iv_rank:
+            logger.info("  IV Rank/Percentile unavailable, using IV/HV ratio as fallback")
+
+        def iv_reason(level: str) -> str:
+            if level == 'high':
+                if iv_rank_high:
+                    return f"IV Rank {iv_rank:.0f}% is elevated"
+                if iv_percentile_high:
+                    return f"IV Percentile {iv_percentile:.0f}% is elevated"
+                return f"IV/HV ratio {iv_hv_ratio:.2f} is elevated"
+
+            if level == 'low':
+                if iv_rank_low:
+                    return f"IV Rank {iv_rank:.0f}% is depressed"
+                if iv_percentile_low:
+                    return f"IV Percentile {iv_percentile:.0f}% is depressed"
+                return f"IV/HV ratio {iv_hv_ratio:.2f} is depressed"
+
+            if iv_rank is not None:
+                return f"IV Rank {iv_rank:.0f}% is neutral"
+            if iv_percentile is not None:
+                return f"IV Percentile {iv_percentile:.0f}% is neutral"
+            return f"IV Rank missing; IV/HV ratio {iv_hv_ratio:.2f} is near fair value"
+
+        fallback_vol_reasons = []
+        if missing_iv_rank:
+            fallback_vol_reasons.append("IV Rank/Percentile unavailable; decision falls back to IV/HV ratio")
+
         has_valid_levels = support_level > 0 and resistance_level > 0 and resistance_level > support_level
-        
         if has_valid_levels:
-            dist_to_support = (current_price - support_level) / current_price
-            dist_to_resistance = (resistance_level - current_price) / current_price
-            is_near_support = dist_to_support < 0.03  # 3% 以內
-            is_near_resistance = dist_to_resistance < 0.03  # 3% 以內
+            is_near_support = (current_price - support_level) / current_price < 0.03
+            is_near_resistance = (resistance_level - current_price) / current_price < 0.03
         else:
-            dist_to_support = 1.0
-            dist_to_resistance = 1.0
             is_near_support = False
             is_near_resistance = False
-            logger.warning(f"  ! 支持/阻力位無效: support={support_level}, resistance={resistance_level}")
-        
-        # ========== 策略邏輯 ==========
-        
-        # A. 看漲策略 (Bullish)
+            logger.warning(f"  ! Invalid support/resistance levels: support={support_level}, resistance={resistance_level}")
+
+        bullish_stop = support_level * 0.98 if support_level > 0 else current_price * 0.95
+        bullish_target = resistance_level if resistance_level > current_price else current_price * 1.08
+        bearish_stop = resistance_level * 1.02 if resistance_level > 0 else current_price * 1.05
+        bearish_target = support_level if 0 < support_level < current_price else current_price * 0.92
+
         if trend == 'Up' or (trend == 'Sideways' and is_near_support) or valuation == 'Undervalued':
             reasoning = []
-            if trend == 'Up': reasoning.append("趨勢向上")
-            if is_near_support: reasoning.append(f"接近支持位 ${support_level:.2f}")
-            if valuation == 'Undervalued': reasoning.append("估值偏低")
-            
-            if is_low_iv:
-                # 低波動率 -> 買入期權 (Long Call)
-                rec = StrategyRecommendation(
-                    strategy_name="Long Call (買入認購)",
-                    direction="Bullish",
-                    confidence="High" if len(reasoning) >= 2 else "Medium",
-                    reasoning=reasoning + ["IV 偏低，適合買入期權"],
-                    key_levels={'stop_loss': support_level * 0.98, 'target': resistance_level},
-                    suggested_strike=self._round_to_strike(resistance_level if days_to_expiry > 30 else current_price * 1.02)
-                )
-                recommendations.append(rec)
-                
-                # Bull Call Spread
-                rec_spread = StrategyRecommendation(
-                    strategy_name="Bull Call Spread (牛市價差)",
-                    direction="Bullish",
-                    confidence="Medium",
-                    reasoning=reasoning + ["降低時間值損耗"],
-                    key_levels={'stop_loss': support_level, 'target': resistance_level},
-                    suggested_strike=self._round_to_strike(current_price)
-                )
-                recommendations.append(rec_spread)
-                
-            elif is_high_iv:
-                # 高波動率 -> 賣出期權 (Short Put)
-                rec = StrategyRecommendation(
-                    strategy_name="Short Put (賣出認沽)",
-                    direction="Bullish",
-                    confidence="High" if is_near_support else "Medium",
-                    reasoning=reasoning + ["IV 偏高，適合賣出期權收取期權金"],
-                    key_levels={'break_even': support_level},
-                    suggested_strike=self._round_to_strike(support_level)
-                )
-                recommendations.append(rec)
-                
-                # Bull Put Spread
-                rec_spread = StrategyRecommendation(
-                    strategy_name="Bull Put Spread (牛市認沽價差)",
-                    direction="Bullish",
-                    confidence="Medium",
-                    reasoning=reasoning + ["風險有限的收租策略"],
-                    key_levels={'break_even': support_level},
-                    suggested_strike=self._round_to_strike(support_level)
-                )
-                recommendations.append(rec_spread)
+            if trend == 'Up':
+                reasoning.append('Trend is up')
+            if is_near_support:
+                reasoning.append(f'Price is near support ${support_level:.2f}')
+            if valuation == 'Undervalued':
+                reasoning.append('Valuation is attractive')
 
-        # B. 看跌策略 (Bearish)
+            if is_low_iv:
+                recommendations.append(StrategyRecommendation(
+                    strategy_name='Long Call',
+                    direction='Bullish',
+                    confidence='High' if len(reasoning) >= 2 else 'Medium',
+                    reasoning=reasoning + [iv_reason('low'), 'Low IV favors long premium exposure'] + fallback_vol_reasons,
+                    key_levels={'stop_loss': bullish_stop, 'target': bullish_target},
+                    suggested_strike=self._round_to_strike(current_price if days_to_expiry <= 30 else bullish_target)
+                ))
+                recommendations.append(StrategyRecommendation(
+                    strategy_name='Bull Call Spread',
+                    direction='Bullish',
+                    confidence='Medium',
+                    reasoning=reasoning + [iv_reason('low'), 'Use a spread to control cost and theta'] + fallback_vol_reasons,
+                    key_levels={'stop_loss': support_level if support_level > 0 else bullish_stop, 'target': bullish_target},
+                    suggested_strike=self._round_to_strike(current_price)
+                ))
+            elif is_high_iv:
+                recommendations.append(StrategyRecommendation(
+                    strategy_name='Bull Put Spread',
+                    direction='Bullish',
+                    confidence='High' if is_near_support else 'Medium',
+                    reasoning=reasoning + [iv_reason('high'), 'Prefer defined-risk premium selling in high IV'] + fallback_vol_reasons,
+                    key_levels={'break_even': support_level if support_level > 0 else current_price * 0.97, 'target': bullish_target},
+                    suggested_strike=self._round_to_strike(support_level if support_level > 0 else current_price * 0.97)
+                ))
+
         if trend == 'Down' or (trend == 'Sideways' and is_near_resistance) or valuation == 'Overvalued':
             reasoning = []
-            if trend == 'Down': reasoning.append("趨勢向下")
-            if is_near_resistance: reasoning.append(f"接近阻力位 ${resistance_level:.2f}")
-            if valuation == 'Overvalued': reasoning.append("估值偏高")
-            
-            if is_low_iv:
-                # 低波動率 -> 買入期權 (Long Put)
-                rec = StrategyRecommendation(
-                    strategy_name="Long Put (買入認沽)",
-                    direction="Bearish",
-                    confidence="High" if len(reasoning) >= 2 else "Medium",
-                    reasoning=reasoning + ["IV 偏低，適合買入期權"],
-                    key_levels={'stop_loss': resistance_level * 1.02, 'target': support_level},
-                    suggested_strike=self._round_to_strike(support_level if days_to_expiry > 30 else current_price * 0.98)
-                )
-                recommendations.append(rec)
-                
-            elif is_high_iv:
-                # 高波動率 -> 賣出期權 (Short Call)
-                rec = StrategyRecommendation(
-                    strategy_name="Short Call (賣出認購)",
-                    direction="Bearish",
-                    confidence="Medium", # Short Call 風險無限，信心度調低
-                    reasoning=reasoning + ["IV 偏高，適合賣出期權"],
-                    key_levels={'break_even': resistance_level},
-                    suggested_strike=self._round_to_strike(resistance_level)
-                )
-                recommendations.append(rec)
-                
-                # Bear Call Spread
-                rec_spread = StrategyRecommendation(
-                    strategy_name="Bear Call Spread (熊市認購價差)",
-                    direction="Bearish",
-                    confidence="High" if is_near_resistance else "Medium",
-                    reasoning=reasoning + ["風險有限的看跌收租策略"],
-                    key_levels={'break_even': resistance_level},
-                    suggested_strike=self._round_to_strike(resistance_level)
-                )
-                recommendations.append(rec_spread)
+            if trend == 'Down':
+                reasoning.append('Trend is down')
+            if is_near_resistance:
+                reasoning.append(f'Price is near resistance ${resistance_level:.2f}')
+            if valuation == 'Overvalued':
+                reasoning.append('Valuation is stretched')
 
-        # C. 盤整策略 (Neutral)
-        if trend == 'Sideways' and not is_near_support and not is_near_resistance:
-            reasoning = ["股價處於區間震盪", "未突破關鍵位"]
-            
-            if is_high_iv:
-                # Iron Condor
-                rec = StrategyRecommendation(
-                    strategy_name="Iron Condor (鐵鷹)",
-                    direction="Neutral",
-                    confidence="High",
-                    reasoning=reasoning + ["IV 高，適合區間收租"],
-                    key_levels={'upper': resistance_level, 'lower': support_level},
-                    suggested_strike=self._round_to_strike(current_price)
-                )
-                recommendations.append(rec)
-                
-                # Short Straddle (高風險)
-                rec_straddle = StrategyRecommendation(
-                    strategy_name="Short Straddle (賣出跨式)",
-                    direction="Neutral",
-                    confidence="Medium",
-                    reasoning=reasoning + ["IV 高，收取高額期權金", "⚠️ 風險無限"],
-                    key_levels={'pivot': current_price},
-                    suggested_strike=self._round_to_strike(current_price)
-                )
-                recommendations.append(rec_straddle)
-                
-            elif is_low_iv:
-                # Calendar Spread (Long Vega)
-                rec = StrategyRecommendation(
-                    strategy_name="Calendar Spread (日曆價差)",
-                    direction="Neutral",
-                    confidence="Medium",
-                    reasoning=reasoning + ["IV 低，預期波動率回歸"],
-                    key_levels={'pivot': current_price},
-                    suggested_strike=self._round_to_strike(current_price)
-                )
-                recommendations.append(rec)
-                
-                # Long Straddle (預期波動)
-                rec_straddle = StrategyRecommendation(
-                    strategy_name="Long Straddle (買入跨式)",
-                    direction="Neutral",
-                    confidence="Low",
-                    reasoning=reasoning + ["IV 低，預期波動率上升", "需要大幅波動才能獲利"],
-                    key_levels={'pivot': current_price},
-                    suggested_strike=self._round_to_strike(current_price)
-                )
-                recommendations.append(rec_straddle)
-                
-            else:
-                # IV 中性 - 提供觀望建議
-                rec = StrategyRecommendation(
-                    strategy_name="觀望 / 等待機會",
-                    direction="Neutral",
-                    confidence="Low",
-                    reasoning=reasoning + [f"IV Rank {iv_rank:.0f}% 處於中性區間", "建議等待更明確的方向或波動率信號"],
-                    key_levels={'upper': resistance_level, 'lower': support_level},
-                    suggested_strike=self._round_to_strike(current_price)
-                )
-                recommendations.append(rec)
-        
-        # D. 如果沒有任何推薦，提供基於 IV 的默認建議
-        if not recommendations:
-            logger.info("  未匹配任何策略條件，生成基於 IV 的默認建議")
             if is_low_iv:
-                rec = StrategyRecommendation(
-                    strategy_name="Long Call/Put (買入期權)",
-                    direction="Neutral",
-                    confidence="Low",
-                    reasoning=[f"IV Rank {iv_rank:.0f}% 偏低", "適合買入期權", "需配合方向判斷選擇 Call 或 Put"],
+                recommendations.append(StrategyRecommendation(
+                    strategy_name='Long Put',
+                    direction='Bearish',
+                    confidence='High' if len(reasoning) >= 2 else 'Medium',
+                    reasoning=reasoning + [iv_reason('low'), 'Low IV favors buying downside protection'] + fallback_vol_reasons,
+                    key_levels={'stop_loss': bearish_stop, 'target': bearish_target},
+                    suggested_strike=self._round_to_strike(current_price if days_to_expiry <= 30 else bearish_target)
+                ))
+            elif is_high_iv:
+                recommendations.append(StrategyRecommendation(
+                    strategy_name='Bear Call Spread',
+                    direction='Bearish',
+                    confidence='High' if is_near_resistance else 'Medium',
+                    reasoning=reasoning + [iv_reason('high'), 'Prefer defined-risk bearish premium selling in high IV'] + fallback_vol_reasons,
+                    key_levels={'break_even': resistance_level if resistance_level > 0 else current_price * 1.03, 'target': bearish_target},
+                    suggested_strike=self._round_to_strike(resistance_level if resistance_level > 0 else current_price * 1.03)
+                ))
+
+        if trend == 'Sideways' and not is_near_support and not is_near_resistance:
+            reasoning = ['Price is range-bound', 'No clear breakout or breakdown signal']
+
+            if is_high_iv:
+                recommendations.append(StrategyRecommendation(
+                    strategy_name='Iron Condor',
+                    direction='Neutral',
+                    confidence='High',
+                    reasoning=reasoning + [iv_reason('high'), 'Range plus high IV favors premium-selling range structures'] + fallback_vol_reasons,
+                    key_levels={'upper': resistance_level if resistance_level > 0 else current_price * 1.05, 'lower': support_level if support_level > 0 else current_price * 0.95},
+                    suggested_strike=self._round_to_strike(current_price)
+                ))
+                recommendations.append(StrategyRecommendation(
+                    strategy_name='Butterfly Spread',
+                    direction='Neutral',
+                    confidence='Medium',
+                    reasoning=reasoning + [iv_reason('high'), 'Butterfly keeps risk defined while targeting a range'] + fallback_vol_reasons,
+                    key_levels={'pivot': current_price},
+                    suggested_strike=self._round_to_strike(current_price)
+                ))
+            elif is_low_iv:
+                recommendations.append(StrategyRecommendation(
+                    strategy_name='Calendar Spread',
+                    direction='Neutral',
+                    confidence='Medium',
+                    reasoning=reasoning + [iv_reason('low'), 'Calendar spread benefits if IV normalizes higher'] + fallback_vol_reasons,
+                    key_levels={'pivot': current_price},
+                    suggested_strike=self._round_to_strike(current_price)
+                ))
+                recommendations.append(StrategyRecommendation(
+                    strategy_name='Long Straddle',
+                    direction='Neutral',
+                    confidence='Low',
+                    reasoning=reasoning + [iv_reason('low'), 'Only valid if a large move is expected soon'] + fallback_vol_reasons,
+                    key_levels={'pivot': current_price},
+                    suggested_strike=self._round_to_strike(current_price)
+                ))
+            else:
+                recommendations.append(StrategyRecommendation(
+                    strategy_name='Observe / Wait',
+                    direction='Neutral',
+                    confidence='Low',
+                    reasoning=reasoning + [iv_reason('neutral'), 'No clear edge in direction or volatility right now'] + fallback_vol_reasons,
+                    key_levels={'upper': resistance_level if resistance_level > 0 else current_price * 1.03, 'lower': support_level if support_level > 0 else current_price * 0.97},
+                    suggested_strike=None
+                ))
+
+        if not recommendations:
+            logger.info('  No strong setup matched; generating conservative fallback recommendation')
+            if is_low_iv:
+                recommendations.append(StrategyRecommendation(
+                    strategy_name='Long Call/Put',
+                    direction='Neutral',
+                    confidence='Low',
+                    reasoning=[iv_reason('low'), 'Low IV favors long premium strategies', 'Choose Call or Put only after direction is clearer'] + fallback_vol_reasons,
                     key_levels={'current': current_price},
                     suggested_strike=self._round_to_strike(current_price)
-                )
-                recommendations.append(rec)
-            elif is_high_iv:
-                rec = StrategyRecommendation(
-                    strategy_name="Short Put (賣出認沽)",
-                    direction="Bullish",
-                    confidence="Low",
-                    reasoning=[f"IV Rank {iv_rank:.0f}% 偏高", "適合賣出期權收取期權金", "需確認支持位"],
-                    key_levels={'current': current_price},
-                    suggested_strike=self._round_to_strike(current_price * 0.95)
-                )
-                recommendations.append(rec)
+                ))
             else:
-                rec = StrategyRecommendation(
-                    strategy_name="觀望 / 等待機會",
-                    direction="Neutral",
-                    confidence="Low",
-                    reasoning=["趨勢不明確", f"IV Rank {iv_rank:.0f}% 處於中性區間", "建議等待更明確的信號"],
+                recommendations.append(StrategyRecommendation(
+                    strategy_name='Observe / Wait',
+                    direction='Neutral',
+                    confidence='Low',
+                    reasoning=[iv_reason('neutral' if is_neutral_iv else 'high'), 'Conditions are not strong enough for a high-quality trade setup'] + fallback_vol_reasons,
                     key_levels={'current': current_price},
                     suggested_strike=None
-                )
-                recommendations.append(rec)
-                
-        # 排序推薦 (按信心度)
+                ))
+
         confidence_map = {'High': 3, 'Medium': 2, 'Low': 1}
-        
-        # 為每個推薦計算 R/R 比率並調整信心度
+
         for rec in recommendations:
-            # 估算期權金（使用股價的 2.5%）
             premium = current_price * 0.025
-            
-            # 獲取目標價和止損價
-            target_price = rec.key_levels.get('target', None)
-            stop_loss = rec.key_levels.get('stop_loss', None)
-            
-            # 計算 R/R 比率
+            target_price = rec.key_levels.get('target')
+            stop_loss = rec.key_levels.get('stop_loss')
+
             if rec.suggested_strike:
                 rr_result = self._calculate_risk_reward_ratio(
                     strategy_name=rec.strategy_name,
@@ -437,27 +404,23 @@ class StrategyRecommender:
                     target_price=target_price,
                     stop_loss=stop_loss
                 )
-                
-                # 更新推薦結果
+
                 rec.risk_reward_ratio = rr_result['risk_reward_ratio']
                 rec.max_profit = rr_result['max_profit']
                 rec.max_loss = rr_result['max_loss']
-                
-                # 根據 R/R 比率調整信心度
+
                 if rec.risk_reward_ratio:
                     if rec.risk_reward_ratio > 2.0 and rec.confidence == 'Medium':
                         rec.confidence = 'High'
-                        rec.reasoning.append(f"風險回報比優秀 ({rec.risk_reward_ratio:.2f}:1)")
-                        logger.info(f"  提升信心度: {rec.strategy_name} R/R={rec.risk_reward_ratio:.2f}")
+                        rec.reasoning.append(f'Risk/reward improved to {rec.risk_reward_ratio:.2f}:1')
+                        logger.info(f"  Confidence upgraded: {rec.strategy_name} R/R={rec.risk_reward_ratio:.2f}")
                     elif rec.risk_reward_ratio < 1.0 and rec.confidence == 'High':
                         rec.confidence = 'Medium'
-                        rec.reasoning.append(f"風險回報比偏低 ({rec.risk_reward_ratio:.2f}:1)")
-                        logger.info(f"  降低信心度: {rec.strategy_name} R/R={rec.risk_reward_ratio:.2f}")
+                        rec.reasoning.append(f'Risk/reward weakened to {rec.risk_reward_ratio:.2f}:1')
+                        logger.info(f"  Confidence downgraded: {rec.strategy_name} R/R={rec.risk_reward_ratio:.2f}")
                     elif rec.risk_reward_ratio >= 1.0:
-                        rec.reasoning.append(f"風險回報比 {rec.risk_reward_ratio:.2f}:1")
-        
+                        rec.reasoning.append(f'Risk/reward ratio {rec.risk_reward_ratio:.2f}:1')
+
         recommendations.sort(key=lambda x: confidence_map.get(x.confidence, 0), reverse=True)
-        
-        logger.info(f"* 策略推薦完成: 生成 {len(recommendations)} 個建議")
-        
+        logger.info(f"* Strategy recommendation complete: {len(recommendations)} recommendations")
         return recommendations

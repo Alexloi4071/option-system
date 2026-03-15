@@ -3673,6 +3673,7 @@ class OptionsAnalysisSystem:
                     logger.error(f"  x Position Tracker 執行失敗: {e}")
 
             # 生成報告
+            report_progress(30, 'Generating report...', 'Report Generation')
             report = self.report_generator.generate(
                 ticker=ticker,
                 analysis_date=analysis_data['analysis_date'],
@@ -4169,6 +4170,7 @@ class OptionsAnalysisSystem:
                 'data_source': 'manual_input'
             }
             
+            report_progress(30, 'Generating report...', 'Report Generation')
             report = self.report_generator.generate(
                 ticker=ticker,
                 analysis_date=analysis_date_str,
@@ -4530,6 +4532,7 @@ class OptionsAnalysisSystem:
             
             # 生成報告
             logger.info("\n→ 生成分析報告...")
+            report_progress(30, 'Generating report...', 'Report Generation')
             report = self.report_generator.generate(
                 ticker=ticker,
                 analysis_date=analysis_date_str,

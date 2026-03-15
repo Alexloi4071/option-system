@@ -141,9 +141,10 @@ class StrikeAnalysis:
     
     # IV 指標
     iv: float = 0.0
-    iv_rank: float = 50.0
+    iv_rank: Optional[float] = None
     iv_skew: float = 0.0  # 相對於ATM的IV差異
     iv_source: str = 'unknown'  # IV 來源: 'module17', 'yahoo', 'default'
+    iv_score_note: str = ''
     
     # 評分
     liquidity_score: float = 0.0
@@ -194,9 +195,11 @@ class StrikeAnalysis:
             'open_interest': self.open_interest,
             'bid_ask_spread_pct': round(self.bid_ask_spread_pct, 2),
             'iv': round(self.iv, 2),
-            'iv_rank': round(self.iv_rank, 2),
+            'iv_rank': round(self.iv_rank, 2) if self.iv_rank is not None else None,
+            'iv_rank_available': self.iv_rank is not None,
             'iv_skew': round(self.iv_skew, 2),
             'iv_source': self.iv_source,
+            'iv_score_note': self.iv_score_note,
             'liquidity_score': round(self.liquidity_score, 2),
             'greeks_score': round(self.greeks_score, 2),
             'iv_score': round(self.iv_score, 2),
@@ -559,7 +562,6 @@ class OptimalStrikeCalculator:
         # 策略 3: 使用默認值
         logger.warning(f"  IV 數據無效或缺失，使用默認值 {self.DEFAULT_IV}")
         return (self.DEFAULT_IV, 'default')
-    
     def analyze_strikes(
         self,
         ticker: str,
@@ -567,48 +569,32 @@ class OptimalStrikeCalculator:
         option_chain: Dict[str, Any],
         strategy_type: str,
         days_to_expiration: int = 30,
-        iv_rank: float = 50.0,
+        iv_rank: Optional[float] = None,
         target_price: Optional[float] = None,
         support_resistance_data: Optional[Dict] = None,
         enable_max_profit_analysis: bool = False
     ) -> Dict[str, Any]:
-        """
-        分析多個行使價並計算綜合評分
-        
-        參數:
-            ticker: 股票代碼
-            current_price: 當前股價
-            option_chain: 期權鏈數據 {'calls': [...], 'puts': [...]}
-            strategy_type: 策略類型 ('long_call', 'long_put', 'short_call', 'short_put')
-            days_to_expiration: 到期天數
-            iv_rank: IV Rank (0-100)
-            target_price: 目標價格（用於計算風險回報）
-            support_resistance_data: 支持阻力位數據 {'support_level': float, 'resistance_level': float}
-            enable_max_profit_analysis: 是否啟用最大利潤分析
-        
-        返回:
-            Dict: 分析結果
-        """
+        """Analyze strikes and compute composite scores."""
         try:
-            logger.info(f"開始最佳行使價分析...")
-            logger.info(f"  當前股價: ${current_price:.2f}")
-            logger.info(f"  策略類型: {strategy_type}")
-            logger.info(f"  到期天數: {days_to_expiration}")
-            
-            # 如果未提供 target_price，嘗試從 support_resistance_data 推導
+            logger.info("Starting optimal strike analysis...")
+            logger.info(f"  Current price: ${current_price:.2f}")
+            logger.info(f"  Strategy type: {strategy_type}")
+            logger.info(f"  Days to expiration: {days_to_expiration}")
+            if iv_rank is None:
+                logger.info("  IV Rank: N/A, using neutral IV score fallback")
+            else:
+                logger.info(f"  IV Rank: {iv_rank:.1f}")
+
             if target_price is None and support_resistance_data:
                 if strategy_type in ['long_call', 'short_put']:
-                    # 看漲策略：目標價為阻力位
                     target_price = support_resistance_data.get('resistance_level')
                     if target_price:
-                        logger.info(f"  使用阻力位作為目標價: ${target_price:.2f}")
+                        logger.info(f"  Using resistance as target price: ${target_price:.2f}")
                 elif strategy_type in ['long_put', 'short_call']:
-                    # 看跌策略：目標價為支持位
                     target_price = support_resistance_data.get('support_level')
                     if target_price:
-                        logger.info(f"  使用支持位作為目標價: ${target_price:.2f}")
-            
-            # 確定分析的期權類型
+                        logger.info(f"  Using support as target price: ${target_price:.2f}")
+
             if strategy_type in ['long_call', 'short_call']:
                 option_type = 'call'
                 options_data = option_chain.get('calls', [])
@@ -913,8 +899,8 @@ class OptimalStrikeCalculator:
             
             return (True, "")
         except Exception as e:
-            logger.error(f"Short Put 過濾失敗: {e}")
-            return (False, f"過濾錯誤: {e}")
+            logger.error(f"Short Put ????: {e}")
+            return (False, f"????: {e}")
     
     def _analyze_single_strike(
         self,
@@ -924,11 +910,11 @@ class OptimalStrikeCalculator:
         current_price: float,
         strategy_type: str,
         days_to_expiration: int,
-        iv_rank: float,
+        iv_rank: Optional[float],
         target_price: Optional[float],
-        uoa_signals: List[Any] = None  # 新增參數
+        uoa_signals: List[Any] = None
     ) -> Optional[StrikeAnalysis]:
-        """分析單個行使價"""
+        """Analyze one strike."""
         try:
             strike = option.get('strike', 0)
             bid = option.get('bid', 0) or 0
@@ -936,11 +922,7 @@ class OptimalStrikeCalculator:
             last_price = option.get('lastPrice', 0) or 0
             volume = option.get('volume', 0) or 0
             oi = option.get('openInterest', 0) or 0
-            
-            # Bid/Ask 價格過濾邏輯
-            # - Bid = 0 且 Ask = 0：跳過（無法交易）
-            # - 只有 Bid（Ask = 0）：只能用於 Short 策略
-            # - 只有 Ask（Bid = 0）：只能用於 Long 策略
+
             is_long_strategy = strategy_type in ['long_call', 'long_put']
             is_short_strategy = strategy_type in ['short_call', 'short_put']
             
@@ -1163,104 +1145,71 @@ class OptimalStrikeCalculator:
         return min(100.0, max(0.0, score))
     
     def _calculate_greeks_score(self, analysis: StrikeAnalysis, strategy_type: str) -> float:
-        """
-        計算 Greeks 評分 (0-100)
-        
-        根據策略類型調整評分，使用連續函數而非離散區間:
-        - Long Call/Put: 偏好較高 Delta (0.3-0.7), 較低 Theta 損失
-        - Short Call/Put: 偏好較低 Delta (0.1-0.3), 較高 Theta 收益
-        """
+        """Calculate Greeks score (0-100)."""
         delta = abs(analysis.delta)
-        
+
         if strategy_type in ['long_call', 'long_put']:
-            # Long 策略: 偏好 Delta 0.4-0.6 (ATM)
-            # 使用高斯函數，中心在 0.5，標準差 0.15
-            # 這樣 Delta=0.5 得分最高，越遠離 0.5 分數越低
             delta_center = 0.5
             delta_std = 0.15
             delta_score = 50.0 * (2.718 ** (-((delta - delta_center) ** 2) / (2 * delta_std ** 2)))
-            
-            # Theta 評分: Long 策略希望 Theta 損失小（Theta 是負數）
-            # Theta 越接近 0 越好，使用線性函數
-            # 假設 Theta 範圍 [-0.5, 0]，-0.5 得 0 分，0 得 30 分
+
             if analysis.theta < 0:
-                theta_score = max(0, 30.0 + analysis.theta * 60)  # -0.5 -> 0, 0 -> 30
+                theta_score = max(0, 30.0 + analysis.theta * 60)
             else:
                 theta_score = 30.0
-            
-            # Vega 評分: Long 策略希望 Vega 高（受益於 IV 上升）
-            # 假設 Vega 範圍 [0, 50]，使用對數函數
+
             if analysis.vega > 0:
                 import math
                 vega_score = min(20.0, 5.0 * math.log(1 + analysis.vega))
             else:
                 vega_score = 0
-            
-        else:  # short_call, short_put
-            # Short 策略: 偏好 Delta 0.15-0.25
-            # 使用高斯函數，中心在 0.2，標準差 0.08
+        else:
             delta_center = 0.20
             delta_std = 0.08
             delta_score = 50.0 * (2.718 ** (-((delta - delta_center) ** 2) / (2 * delta_std ** 2)))
-            
-            # Theta 評分: Short 策略希望 Theta 收益高（Theta 是負數，對 Short 有利）
-            # Theta 越負越好，使用線性函數
+
             if analysis.theta < 0:
-                theta_score = min(30.0, abs(analysis.theta) * 40)  # -0.75 -> 30
+                theta_score = min(30.0, abs(analysis.theta) * 40)
             else:
                 theta_score = 0
-            
-            # Vega 評分: Short 策略希望 Vega 低（不受 IV 上升影響）
-            # Vega 越低越好
+
             if analysis.vega >= 0:
                 vega_score = max(0, 20.0 - analysis.vega * 0.5)
             else:
                 vega_score = 20.0
-        
+
         score = delta_score + theta_score + vega_score
         return min(100.0, max(0.0, score))
-    
+
     def _calculate_iv_score(self, analysis: StrikeAnalysis, strategy_type: str) -> float:
-        """
-        計算 IV 評分 (0-100)
-        
-        根據策略類型調整評分，使用連續函數:
-        - Long 策略: 偏好低 IV Rank (買便宜的期權)
-        - Short 策略: 偏好高 IV Rank (賣貴的期權)
-        """
+        """Calculate IV score (0-100)."""
         iv_rank = analysis.iv_rank
-        
-        if strategy_type in ['long_call', 'long_put']:
-            # Long 策略: IV Rank 越低越好
-            # 使用線性函數: IV Rank 0 -> 60 分, IV Rank 100 -> 10 分
+
+        if iv_rank is None:
+            iv_rank_score = 20.0
+            analysis.iv_score_note = 'IV Rank unavailable; used neutral base score with IV skew only'
+        elif strategy_type in ['long_call', 'long_put']:
             iv_rank_score = 60.0 - (iv_rank / 100.0) * 50.0
+            analysis.iv_score_note = ''
         else:
-            # Short 策略: IV Rank 越高越好
-            # 使用線性函數: IV Rank 0 -> 10 分, IV Rank 100 -> 60 分
             iv_rank_score = 10.0 + (iv_rank / 100.0) * 50.0
-        
-        # IV Skew 評分 (40%)
-        # 負 Skew 表示該行使價 IV 低於 ATM，正 Skew 表示高於 ATM
+            analysis.iv_score_note = ''
+
         skew = analysis.iv_skew
-        
         if strategy_type in ['long_call', 'long_put']:
-            # Long 策略: 偏好負 Skew (IV 低於 ATM)
-            # 使用線性函數: Skew -10 -> 40 分, Skew 0 -> 25 分, Skew +10 -> 10 分
             if skew <= 0:
-                skew_score = 25.0 + min(15.0, abs(skew) * 1.5)  # -10 -> 40
+                skew_score = 25.0 + min(15.0, abs(skew) * 1.5)
             else:
-                skew_score = max(10.0, 25.0 - skew * 1.5)  # +10 -> 10
+                skew_score = max(10.0, 25.0 - skew * 1.5)
         else:
-            # Short 策略: 偏好正 Skew (IV 高於 ATM)
-            # 使用線性函數: Skew +10 -> 40 分, Skew 0 -> 25 分, Skew -10 -> 10 分
             if skew >= 0:
-                skew_score = 25.0 + min(15.0, skew * 1.5)  # +10 -> 40
+                skew_score = 25.0 + min(15.0, skew * 1.5)
             else:
-                skew_score = max(10.0, 25.0 + skew * 1.5)  # -10 -> 10
-        
+                skew_score = max(10.0, 25.0 + skew * 1.5)
+
         score = iv_rank_score + skew_score
         return min(100.0, max(0.0, score))
-    
+
     def _calculate_risk_reward_score(
         self,
         analysis: StrikeAnalysis,
@@ -1268,49 +1217,37 @@ class OptimalStrikeCalculator:
         strategy_type: str,
         target_price: Optional[float]
     ) -> float:
-        """
-        計算風險回報評分 (0-100)
-        
-        計算:
-        - 最大損失
-        - 盈虧平衡點
-        - 潛在收益
-        """
+        """Calculate risk/reward score (0-100)."""
         score = 0.0
         premium = analysis.last_price if analysis.last_price > 0 else (analysis.bid + analysis.ask) / 2
         strike = analysis.strike
-        
-        # 設定目標價格（如果未提供，使用 ±10% 作為目標）
+
         if target_price is None:
             if strategy_type in ['long_call', 'short_put']:
-                target_price = current_price * 1.10  # 看漲目標
+                target_price = current_price * 1.10
             else:
-                target_price = current_price * 0.90  # 看跌目標
-        
+                target_price = current_price * 0.90
+
         if strategy_type == 'long_call':
             analysis.max_loss = premium
             analysis.breakeven = strike + premium
             analysis.potential_profit = max(0, target_price - strike - premium)
-            
         elif strategy_type == 'long_put':
             analysis.max_loss = premium
             analysis.breakeven = strike - premium
             analysis.potential_profit = max(0, strike - target_price - premium)
-            
         elif strategy_type == 'short_call':
-            analysis.max_loss = float('inf')  # 理論上無限
+            analysis.max_loss = float('inf')
             analysis.breakeven = strike + premium
             analysis.potential_profit = premium
-            
         elif strategy_type == 'short_put':
-            analysis.max_loss = strike - premium  # 最大損失是股票跌到0
+            analysis.max_loss = strike - premium
             analysis.breakeven = strike - premium
             analysis.potential_profit = premium
-        
-        # 計算風險回報比
+
         if analysis.max_loss > 0 and analysis.max_loss != float('inf'):
             risk_reward_ratio = analysis.potential_profit / analysis.max_loss
-            
+
             if risk_reward_ratio >= 3:
                 score = 100.0
             elif risk_reward_ratio >= 2:
@@ -1322,16 +1259,15 @@ class OptimalStrikeCalculator:
             else:
                 score = 20.0
         elif strategy_type in ['short_call', 'short_put']:
-            # Short 策略: 評估收益相對於風險
             if premium > 0:
-                score = min(80.0, premium / current_price * 1000)  # 權金佔股價比例
+                score = min(80.0, premium / current_price * 1000)
             else:
                 score = 20.0
         else:
             score = 20.0
-        
+
         return min(100.0, max(0.0, score))
-    
+
     def _calculate_risk_reward_score_v2(
         self,
         analysis: StrikeAnalysis,

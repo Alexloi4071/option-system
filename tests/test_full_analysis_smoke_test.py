@@ -68,8 +68,9 @@ def test_full_analysis_smoke_test():
     logger.info("FULL ANALYSIS SMOKE TEST - Task 13")
     logger.info("=" * 80)
     
-    # Initialize system
-    analyzer = OptionsAnalysisSystem(use_ibkr=False)
+    # The production data policy is IBKR-first for option chains.
+    # This smoke test must exercise that path instead of forcing public fallbacks.
+    analyzer = OptionsAnalysisSystem(use_ibkr=True)
     
     # Create progress tracker
     tracker = ProgressTracker()
@@ -106,27 +107,27 @@ def test_full_analysis_smoke_test():
         
         # Check that all progress calls use the same total
         assert len(tracker.totals_seen) == 1, \
-            f"❌ Progress total inconsistency detected! Found {len(tracker.totals_seen)} different totals: {tracker.totals_seen}"
+            f"Progress total inconsistency detected! Found {len(tracker.totals_seen)} different totals: {tracker.totals_seen}"
         
         total_used = list(tracker.totals_seen)[0]
         assert total_used == TOTAL_ANALYSIS_STEPS, \
-            f"❌ Progress total mismatch! Expected {TOTAL_ANALYSIS_STEPS}, got {total_used}"
+            f"Progress total mismatch! Expected {TOTAL_ANALYSIS_STEPS}, got {total_used}"
         
-        logger.info(f"✅ All progress calls use unified total: {TOTAL_ANALYSIS_STEPS}")
+        logger.info(f"All progress calls use unified total: {TOTAL_ANALYSIS_STEPS}")
         
         # Check monotonicity
         steps = tracker.steps_seen
         for i in range(1, len(steps)):
             assert steps[i] >= steps[i-1], \
-                f"❌ Non-monotonic progress detected! Step {steps[i]} < {steps[i-1]}"
+                f"Non-monotonic progress detected! Step {steps[i]} < {steps[i-1]}"
         
-        logger.info(f"✅ Progress is monotonic: {steps[0]} → {steps[-1]}")
+        logger.info(f"Progress is monotonic: {steps[0]} -> {steps[-1]}")
         
         # Check that we reached the final step
         assert steps[-1] == TOTAL_ANALYSIS_STEPS, \
-            f"❌ Analysis did not complete all steps! Expected {TOTAL_ANALYSIS_STEPS}, reached {steps[-1]}"
+            f"Analysis did not complete all steps! Expected {TOTAL_ANALYSIS_STEPS}, reached {steps[-1]}"
         
-        logger.info(f"✅ Analysis completed all {TOTAL_ANALYSIS_STEPS} steps")
+        logger.info(f"Analysis completed all {TOTAL_ANALYSIS_STEPS} steps")
         
         # ===================================================================
         # VERIFICATION 2: DataFrame Schema Immutability (BR-02)
@@ -137,18 +138,18 @@ def test_full_analysis_smoke_test():
         module27_result = result.get('analysis_results', {}).get('module27_multi_expiry_comparison')
         
         if module27_result:
-            logger.info("✅ Module 27 executed successfully")
+            logger.info("Module 27 executed successfully")
             
             # Check that no temporary columns leaked into results
             # Module 27 should not expose 'strike_diff' or other temporary fields
             result_str = str(module27_result)
             
             assert 'strike_diff' not in result_str.lower(), \
-                "❌ Temporary column 'strike_diff' found in Module 27 results!"
+                "Temporary column 'strike_diff' found in Module 27 results!"
             
-            logger.info("✅ No temporary columns found in Module 27 results")
+            logger.info("No temporary columns found in Module 27 results")
         else:
-            logger.warning("⚠️  Module 27 results not found (may be skipped due to data availability)")
+            logger.warning("Module 27 results not found (may be skipped due to data availability)")
         
         # ===================================================================
         # VERIFICATION 3: Import Resolution (BR-03)
@@ -158,16 +159,16 @@ def test_full_analysis_smoke_test():
         # Verify that american_option_pricer can be imported
         try:
             from calculation_layer.american_option_pricer import AmericanOptionPricer
-            logger.info("✅ american_option_pricer imports successfully")
+            logger.info("american_option_pricer imports successfully")
         except ImportError as e:
-            pytest.fail(f"❌ Failed to import american_option_pricer: {e}")
+            pytest.fail(f"Failed to import american_option_pricer: {e}")
         
         # Verify that module32_complex_strategies can be imported
         try:
             from calculation_layer.module32_complex_strategies import ComplexStrategyAnalyzer
-            logger.info("✅ module32_complex_strategies imports successfully")
+            logger.info("module32_complex_strategies imports successfully")
         except ImportError as e:
-            pytest.fail(f"❌ Failed to import module32_complex_strategies: {e}")
+            pytest.fail(f"Failed to import module32_complex_strategies: {e}")
         
         # Verify no duplicate module32 files exist
         import glob
@@ -175,12 +176,12 @@ def test_full_analysis_smoke_test():
         
         # Should only have module32_complex_strategies.py
         assert len(calc_layer_files) == 1, \
-            f"❌ Multiple module32 files found: {calc_layer_files}"
+            f"Multiple module32 files found: {calc_layer_files}"
         
         assert 'module32_complex_strategies.py' in calc_layer_files[0], \
-            f"❌ Expected module32_complex_strategies.py, found {calc_layer_files}"
+            f"Expected module32_complex_strategies.py, found {calc_layer_files}"
         
-        logger.info("✅ No duplicate module32 numbering detected")
+        logger.info("No duplicate module32 numbering detected")
         
         # ===================================================================
         # VERIFICATION 4: Functional Completeness
@@ -189,7 +190,7 @@ def test_full_analysis_smoke_test():
         
         # Check that result contains expected keys
         assert 'status' in result or 'analysis_results' in result or 'ticker' in result, \
-            "❌ Result missing expected structure"
+            "Result missing expected structure"
         
         # Check that analysis_results exists (even if status is error, some results may be generated)
         # The result structure may vary - check both possible locations
@@ -209,19 +210,19 @@ def test_full_analysis_smoke_test():
             acceptable_errors = ['no_data', 'missing_price', 'no_option_chain', 'empty_options']
             
             assert error_type in acceptable_errors, \
-                f"❌ Unexpected error type: {error_type} - {result.get('message')}"
+                f"Unexpected error type: {error_type} - {result.get('message')}"
             
-            logger.warning(f"⚠️  Analysis returned error due to data availability: {error_type}")
+            logger.warning(f"Analysis returned error due to data availability: {error_type}")
             logger.warning("This is acceptable for smoke test purposes")
             
             # Even with errors, some modules may have executed
             if len(analysis_results) > 0:
-                logger.info(f"✅ Generated {len(analysis_results)} partial analysis results despite error")
+                logger.info(f"Generated {len(analysis_results)} partial analysis results despite error")
         else:
             # For successful runs, we expect some results
             # But if we hit API rate limits, we may have partial results
             if len(analysis_results) > 0:
-                logger.info(f"✅ Generated {len(analysis_results)} analysis results")
+                logger.info(f"Generated {len(analysis_results)} analysis results")
                 
                 # Check that key modules executed
                 expected_modules = [
@@ -233,9 +234,9 @@ def test_full_analysis_smoke_test():
                 
                 for module in expected_modules:
                     if module in analysis_results:
-                        logger.info(f"✅ {module} executed successfully")
+                        logger.info(f"{module} executed successfully")
             else:
-                logger.warning("⚠️  No analysis results generated (likely due to API rate limits)")
+                logger.warning("No analysis results generated (likely due to API rate limits)")
                 logger.warning("This is acceptable for smoke test - the key verifications (BR-01, BR-02, BR-03) passed")
         
         # ===================================================================
@@ -244,16 +245,16 @@ def test_full_analysis_smoke_test():
         logger.info("\n" + "=" * 80)
         logger.info("SMOKE TEST SUMMARY")
         logger.info("=" * 80)
-        logger.info("✅ BR-01: Progress is monotonic and uses unified total")
-        logger.info("✅ BR-02: No DataFrame pollution detected")
-        logger.info("✅ BR-03: All imports resolve correctly, no duplicate numbering")
-        logger.info("✅ All modules executed without structural errors")
+        logger.info("BR-01: Progress is monotonic and uses unified total")
+        logger.info("BR-02: No DataFrame pollution detected")
+        logger.info("BR-03: All imports resolve correctly, no duplicate numbering")
+        logger.info("All modules executed without structural errors")
         logger.info("=" * 80)
-        logger.info("SMOKE TEST PASSED ✅")
+        logger.info("SMOKE TEST PASSED")
         logger.info("=" * 80)
         
     except Exception as e:
-        logger.error(f"\n❌ SMOKE TEST FAILED: {e}")
+        logger.error(f"\nSMOKE TEST FAILED: {e}")
         logger.error(f"Progress calls made: {len(tracker.progress_calls)}")
         logger.error(f"Totals seen: {tracker.totals_seen}")
         logger.error(f"Steps seen: {tracker.steps_seen}")
@@ -263,3 +264,5 @@ def test_full_analysis_smoke_test():
 if __name__ == '__main__':
     # Run the test directly
     test_full_analysis_smoke_test()
+
+
